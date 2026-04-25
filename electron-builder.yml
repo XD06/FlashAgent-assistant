@@ -1,0 +1,27 @@
+appId: com.selectionassistant.lite
+productName: AIA划词助手
+icon: build/icon.png
+directories:
+  buildResources: build
+files:
+  - out/**
+  - package.json
+asarUnpack:
+  - node_modules/selection-hook/**
+mac:
+  icon: build/icon.icns
+  category: public.app-category.productivity
+  target:
+    - dmg
+    - zip
+  extendInfo:
+    NSAppleEventsUsageDescription: AIA划词助手 uses accessibility APIs to detect selected text.
+    NSSystemAdministrationUsageDescription: AIA划词助手 needs accessibility permission to detect selected text.
+win:
+  icon: build/icon.ico
+  target:
+    - nsis
+    - portable
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true

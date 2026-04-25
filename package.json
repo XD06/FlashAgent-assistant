@@ -1,0 +1,67 @@
+{
+  "name": "selection-assistant-lite",
+  "version": "0.1.0",
+  "description": "AIA划词助手 is a lightweight cross-platform selection assistant for macOS and Windows.",
+  "main": "out/main/index.js",
+  "author": "selection-assistant-lite contributors",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/<your-github-username>/selection-assistant-lite.git"
+  },
+  "bugs": {
+    "url": "https://github.com/<your-github-username>/selection-assistant-lite/issues"
+  },
+  "homepage": "https://github.com/<your-github-username>/selection-assistant-lite#readme",
+  "keywords": [
+    "electron",
+    "selection",
+    "ai",
+    "desktop-app",
+    "openai-compatible",
+    "anthropic",
+    "translation",
+    "productivity"
+  ],
+  "type": "module",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "start": "electron-vite preview",
+    "build": "pnpm typecheck && electron-vite build",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "test": "vitest run",
+    "dist:mac": "pnpm build && electron-builder --mac dmg zip",
+    "dist:win": "pnpm build && electron-builder --win nsis portable",
+    "dist:win:x64": "pnpm build && electron-builder --win nsis portable --x64"
+  },
+  "dependencies": {
+    "@electron-toolkit/preload": "^3.0.0",
+    "@electron-toolkit/utils": "^4.0.0",
+    "electron-store": "^8.2.0",
+    "lucide-react": "^0.468.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "selection-hook": "2.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8",
+    "electron-vite": "^2.3.0",
+    "typescript": "^5.7.2",
+    "vite": "^5.4.21",
+    "vitest": "^2.1.8"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "electron",
+      "esbuild",
+      "selection-hook"
+    ]
+  }
+}

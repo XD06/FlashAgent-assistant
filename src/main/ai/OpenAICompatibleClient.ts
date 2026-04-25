@@ -1,0 +1,209 @@
+import type { ProviderApiType, ProviderSettings } from '@shared/types'
+
+export class AiConfigurationError extends Error {}
+const ANTHROPIC_VERSION = '2023-06-01'
+
+export function normalizeBaseUrl(baseUrl: string): string {
+  return baseUrl.replace(/\/+$/, '')
+}
+
+function normalizeAnthropicBaseUrl(baseUrl: string): string {
+  return normalizeBaseUrl(baseUrl).replace(/\/v1(?:\/messages|\/models)?$/i, '')
+}
+
+function buildProviderUrl(provider: ProviderSettings, path: 'chat/completions' | 'models' | 'messages'): string {
+  if (provider.apiType === 'anthropic') {
+    const base = normalizeAnthropicBaseUrl(provider.baseUrl)
+    if (path === 'messages') return `${base}/v1/messages`
+    if (path === 'models') return `${base}/v1/models`
+    return `${base}/v1/messages`
+  }
+  return `${normalizeBaseUrl(provider.baseUrl)}/${path}`
+}
+
+function buildProviderHeaders(provider: ProviderSettings): Record<string, string> {
+  if (provider.apiType === 'anthropic') {
+    return {
+      'content-type': 'application/json',
+      'x-api-key': provider.apiKey,
+      'anthropic-version': ANTHROPIC_VERSION
+    }
+  }
+
+  return {
+    'content-type': 'application/json',
+    authorization: `Bearer ${provider.apiKey}`
+  }
+}
+
+function assertProviderReady(provider: ProviderSettings, requireModel = true): void {
+  if (!provider.apiKey.trim()) {
+    throw new AiConfigurationError('Missing API key. Open Settings and configure your API provider.')
+  }
+  if (requireModel && !provider.model.trim()) {
+    throw new AiConfigurationError('Missing model. Open Settings and set a model name.')
+  }
+}
+
+async function readProviderError(response: Response): Promise<string> {
+  const body = await response.text().catch(() => '')
+  return `Provider request failed (${response.status}): ${body || response.statusText}`
+}
+
+export function parseOpenAIStreamEvent(raw: string): string | null {
+  const lines = raw
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith('data:'))
+
+  for (const line of lines) {
+    const payload = line.slice(5).trim()
+    if (!payload || payload === '[DONE]') return null
+    const parsed = JSON.parse(payload) as {
+      choices?: Array<{ delta?: { content?: string }; message?: { content?: string } }>
+    }
+    const text = parsed.choices?.[0]?.delta?.content ?? parsed.choices?.[0]?.message?.content
+    if (typeof text === 'string') return text
+  }
+  return null
+}
+
+export function parseAnthropicStreamEvent(raw: string): string | null {
+  const lines = raw
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith('data:'))
+
+  for (const line of lines) {
+    const payload = line.slice(5).trim()
+    if (!payload) return null
+
+    const parsed = JSON.parse(payload) as {
+      type?: string
+      delta?: { type?: string; text?: string }
+    }
+
+    if (parsed.type === 'content_block_delta' && parsed.delta?.type === 'text_delta' && parsed.delta.text) {
+      return parsed.delta.text
+    }
+  }
+  return null
+}
+
+function parseProviderStreamEvent(apiType: ProviderApiType, raw: string): string | null {
+  return apiType === 'anthropic' ? parseAnthropicStreamEvent(raw) : parseOpenAIStreamEvent(raw)
+}
+
+export async function streamChatCompletion(
+  provider: ProviderSettings,
+  prompt: string,
+  systemPrompt: string,
+  signal: AbortSignal,
+  onDelta: (delta: string) => void
+): Promise<void> {
+  assertProviderReady(provider)
+
+  const body =
+    provider.apiType === 'anthropic'
+      ? {
+          model: provider.model,
+          temperature: provider.temperature,
+          max_tokens: 1024,
+          stream: true,
+          system: systemPrompt,
+          messages: [{ role: 'user', content: prompt }]
+        }
+      : {
+          model: provider.model,
+          temperature: provider.temperature,
+          stream: true,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: prompt }
+          ]
+        }
+
+  const response = await fetch(buildProviderUrl(provider, provider.apiType === 'anthropic' ? 'messages' : 'chat/completions'), {
+    method: 'POST',
+    signal,
+    headers: buildProviderHeaders(provider),
+    body: JSON.stringify(body)
+  })
+
+  if (!response.ok) {
+    throw new Error(await readProviderError(response))
+  }
+  if (!response.body) throw new Error('Provider returned an empty response body.')
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  while (true) {
+    const { value, done } = await reader.read()
+    if (done) break
+
+    buffer += decoder.decode(value, { stream: true })
+    const events = buffer.split('\n\n')
+    buffer = events.pop() ?? ''
+
+    for (const event of events) {
+      const delta = parseProviderStreamEvent(provider.apiType, event)
+      if (delta) onDelta(delta)
+    }
+  }
+
+  if (buffer.trim()) {
+    const delta = parseProviderStreamEvent(provider.apiType, buffer)
+    if (delta) onDelta(delta)
+  }
+}
+
+export async function listModels(provider: ProviderSettings): Promise<string[]> {
+  assertProviderReady(provider, false)
+  const response = await fetch(buildProviderUrl(provider, 'models'), {
+    method: 'GET',
+    headers: buildProviderHeaders(provider)
+  })
+
+  if (!response.ok) throw new Error(await readProviderError(response))
+
+  const body = (await response.json()) as { data?: Array<{ id?: unknown }> }
+  return (body.data ?? [])
+    .map((model) => model.id)
+    .filter((id): id is string => typeof id === 'string' && id.trim().length > 0)
+    .sort((a, b) => a.localeCompare(b))
+}
+
+export async function testModel(provider: ProviderSettings): Promise<void> {
+  assertProviderReady(provider)
+  const body =
+    provider.apiType === 'anthropic'
+      ? {
+          model: provider.model,
+          temperature: provider.temperature,
+          stream: false,
+          max_tokens: 8,
+          system: 'Reply with OK only.',
+          messages: [{ role: 'user', content: 'ping' }]
+        }
+      : {
+          model: provider.model,
+          temperature: 0,
+          stream: false,
+          max_completion_tokens: 8,
+          messages: [
+            { role: 'system', content: 'Reply with OK only.' },
+            { role: 'user', content: 'ping' }
+          ]
+        }
+
+  const response = await fetch(buildProviderUrl(provider, provider.apiType === 'anthropic' ? 'messages' : 'chat/completions'), {
+    method: 'POST',
+    headers: buildProviderHeaders(provider),
+    body: JSON.stringify(body)
+  })
+
+  if (!response.ok) throw new Error(await readProviderError(response))
+  await response.json().catch(() => undefined)
+}

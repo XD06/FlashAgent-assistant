@@ -1,0 +1,448 @@
+import { BrowserWindow, clipboard, ipcMain, screen, systemPreferences } from 'electron'
+import { createRequire } from 'node:module'
+import { join } from 'node:path'
+import { IPC } from '@shared/ipc'
+import { shouldProcessProgram } from '@shared/selectionFilter'
+import type { ActionPayload, AppSettings, SelectedTextPayload } from '@shared/types'
+import { isMac, isWin } from './platform'
+import type {
+  KeyboardEventData,
+  MouseEventData,
+  SelectionHookConstructor,
+  SelectionHookInstance,
+  TextSelectionData
+} from 'selection-hook'
+
+const require = createRequire(import.meta.url)
+
+type Point = { x: number; y: number }
+type Orientation = 'topLeft' | 'topRight' | 'topMiddle' | 'bottomLeft' | 'bottomRight' | 'bottomMiddle'
+
+const TOOLBAR_HEIGHT = 36
+const DEFAULT_TOOLBAR_WIDTH = 390
+const TOOLBAR_SCREEN_MARGIN = 8
+const ACTION_WIDTH = 560
+const ACTION_HEIGHT = 420
+
+export class SelectionService {
+  private hookCtor: SelectionHookConstructor | null = null
+  private hook: SelectionHookInstance | null = null
+  private toolbarWindow: BrowserWindow | null = null
+  private actionWindows = new Set<BrowserWindow>()
+  private started = false
+  private toolbarWidth = DEFAULT_TOOLBAR_WIDTH
+  private lastActionSize = { width: ACTION_WIDTH, height: ACTION_HEIGHT }
+  private hideListenerActive = false
+
+  constructor(
+    private getSettings: () => AppSettings,
+    private preloadPath: string,
+    private rendererDir: string
+  ) {
+    try {
+      this.hookCtor = require('selection-hook') as SelectionHookConstructor
+      this.hook = new this.hookCtor()
+    } catch (error) {
+      console.error('Failed to load selection-hook', error)
+    }
+  }
+
+  get isAvailable(): boolean {
+    return !!this.hook && !!this.hookCtor
+  }
+
+  get isRunning(): boolean {
+    return this.started
+  }
+
+  start(): boolean {
+    if (!this.hook || !this.hookCtor || this.started) return false
+    if (isMac && !systemPreferences.isTrustedAccessibilityClient(false)) return false
+
+    this.createToolbarWindow()
+    this.hook.on('text-selection', this.handleSelection)
+
+    if (!this.hook.start({ debug: !process.env.NODE_ENV || process.env.NODE_ENV === 'development' })) return false
+
+    this.started = true
+    this.applySettings(this.getSettings())
+    return true
+  }
+
+  stop(): void {
+    if (!this.hook || !this.started) return
+    this.stopHideListeners()
+    this.hook.stop()
+    this.hook.cleanup()
+    this.toolbarWindow?.close()
+    this.toolbarWindow = null
+    for (const win of this.actionWindows) {
+      if (!win.isDestroyed()) win.close()
+    }
+    this.actionWindows.clear()
+    this.started = false
+  }
+
+  dispose(): void {
+    this.stop()
+    this.hook = null
+  }
+
+  applySettings(settings: AppSettings): void {
+    if (!this.hook || !this.hookCtor || !this.started) return
+
+    const modeMap = {
+      default: this.hookCtor.FilterMode.DEFAULT,
+      whitelist: this.hookCtor.FilterMode.INCLUDE_LIST,
+      blacklist: this.hookCtor.FilterMode.EXCLUDE_LIST
+    }
+    this.hook.setGlobalFilterMode(modeMap[settings.filterMode], settings.filterList)
+
+    this.hook.setSelectionPassiveMode(settings.triggerMode === 'shortcut')
+  }
+
+  processShortcutSelection(): void {
+    if (!this.hook || !this.started || this.getSettings().triggerMode !== 'shortcut') return
+    const selection = this.hook.getCurrentSelection()
+    if (selection) this.handleSelection(selection)
+  }
+
+  hideToolbar(): void {
+    this.stopHideListeners()
+    if (!this.toolbarWindow || this.toolbarWindow.isDestroyed()) return
+    this.toolbarWindow.hide()
+    this.toolbarWindow.webContents.send(IPC.SelectionVisibility, false)
+  }
+
+  writeClipboard(text: string): boolean {
+    if (this.hook && this.started) {
+      try {
+        return this.hook.writeToClipboard(text)
+      } catch {
+        // Fall through to Electron clipboard.
+      }
+    }
+    clipboard.writeText(text)
+    return true
+  }
+
+  setToolbarSize(width: number): void {
+    if (!Number.isFinite(width) || width <= 0) return
+    this.toolbarWidth = this.clampToolbarWidth(Math.ceil(width))
+    if (!this.toolbarWindow || this.toolbarWindow.isDestroyed() || !this.toolbarWindow.isVisible()) return
+
+    const bounds = this.toolbarWindow.getBounds()
+    const display = screen.getDisplayMatching(bounds)
+    const area = display.workArea
+    const x = Math.round(Math.max(area.x, Math.min(bounds.x, area.x + area.width - this.toolbarWidth)))
+    this.toolbarWindow.setBounds({ x, y: bounds.y, width: this.toolbarWidth, height: TOOLBAR_HEIGHT })
+  }
+
+  processAction(payload: ActionPayload): void {
+    const settings = this.getSettings()
+    const existing = Array.from(this.actionWindows).find((win) => !win.isDestroyed() && win.isVisible())
+    const win = existing ?? this.createActionWindow()
+    const show = () => {
+      win.webContents.send(IPC.SelectionProcessAction, payload)
+      this.positionAndShowActionWindow(win, settings)
+    }
+
+    if (win.webContents.isLoading()) {
+      win.webContents.once('did-finish-load', show)
+    } else {
+      show()
+    }
+  }
+
+  closeActionWindow(sender: Electron.WebContents): void {
+    const win = BrowserWindow.fromWebContents(sender)
+    if (win && !win.isDestroyed()) win.close()
+  }
+
+  minimizeActionWindow(sender: Electron.WebContents): void {
+    const win = BrowserWindow.fromWebContents(sender)
+    if (win && !win.isDestroyed()) win.minimize()
+  }
+
+  pinActionWindow(sender: Electron.WebContents, pinned: boolean): void {
+    const win = BrowserWindow.fromWebContents(sender)
+    if (win && !win.isDestroyed()) win.setAlwaysOnTop(pinned)
+  }
+
+  registerIpc(): void {
+    ipcMain.handle(IPC.SelectionStart, () => this.start())
+    ipcMain.handle(IPC.SelectionStop, () => this.stop())
+    ipcMain.handle(IPC.SelectionHideToolbar, () => this.hideToolbar())
+    ipcMain.handle(IPC.SelectionWriteClipboard, (_event, text: string) => this.writeClipboard(text))
+    ipcMain.handle(IPC.SelectionDetermineToolbarSize, (_event, width: number) => this.setToolbarSize(width))
+    ipcMain.handle(IPC.SelectionProcessAction, (_event, payload: ActionPayload) => this.processAction(payload))
+    ipcMain.handle(IPC.WindowClose, (event) => this.closeActionWindow(event.sender))
+    ipcMain.handle(IPC.WindowMinimize, (event) => this.minimizeActionWindow(event.sender))
+    ipcMain.handle(IPC.WindowPin, (event, pinned: boolean) => this.pinActionWindow(event.sender, pinned))
+    ipcMain.handle(IPC.SelectionGetAccessibility, () =>
+      isMac ? systemPreferences.isTrustedAccessibilityClient(false) : true
+    )
+    ipcMain.handle(IPC.SelectionRequestAccessibility, () =>
+      isMac ? systemPreferences.isTrustedAccessibilityClient(true) : true
+    )
+  }
+
+  private createToolbarWindow(): void {
+    if (this.toolbarWindow && !this.toolbarWindow.isDestroyed()) return
+
+    this.toolbarWindow = new BrowserWindow({
+      width: this.toolbarWidth,
+      height: TOOLBAR_HEIGHT,
+      show: false,
+      frame: false,
+      transparent: true,
+      alwaysOnTop: true,
+      skipTaskbar: true,
+      resizable: false,
+      minimizable: false,
+      maximizable: false,
+      fullscreenable: false,
+      hasShadow: false,
+      autoHideMenuBar: true,
+      ...(isMac ? { type: 'panel' as const, hiddenInMissionControl: true, acceptFirstMouse: true } : {}),
+      ...(!isMac ? { type: 'toolbar' as const, focusable: false } : {}),
+      webPreferences: {
+        preload: this.preloadPath,
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: false
+      }
+    })
+
+    this.toolbarWindow.on('blur', () => this.hideToolbar())
+    this.toolbarWindow.on('closed', () => {
+      this.toolbarWindow = null
+    })
+    this.loadRenderer(this.toolbarWindow, 'selectionToolbar.html')
+  }
+
+  private createActionWindow(): BrowserWindow {
+    const settings = this.getSettings()
+    const win = new BrowserWindow({
+      width: settings.rememberWindowSize ? this.lastActionSize.width : ACTION_WIDTH,
+      height: settings.rememberWindowSize ? this.lastActionSize.height : ACTION_HEIGHT,
+      minWidth: 320,
+      minHeight: 240,
+      show: false,
+      frame: false,
+      transparent: true,
+      hasShadow: false,
+      autoHideMenuBar: true,
+      titleBarStyle: 'hidden',
+      trafficLightPosition: { x: 12, y: 10 },
+      webPreferences: {
+        preload: this.preloadPath,
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: false
+      }
+    })
+
+    win.on('closed', () => this.actionWindows.delete(win))
+    win.on('resized', () => {
+      if (this.getSettings().rememberWindowSize && !win.isDestroyed()) {
+        const bounds = win.getBounds()
+        this.lastActionSize = { width: bounds.width, height: bounds.height }
+      }
+    })
+    this.actionWindows.add(win)
+    this.loadRenderer(win, 'selectionAction.html')
+    return win
+  }
+
+  private loadRenderer(win: BrowserWindow, page: string): void {
+    if (process.env.ELECTRON_RENDERER_URL) {
+      void win.loadURL(`${process.env.ELECTRON_RENDERER_URL}/${page}`)
+    } else {
+      void win.loadFile(join(this.rendererDir, page))
+    }
+  }
+
+  private handleSelection = (selection: TextSelectionData): void => {
+    const text = selection.text?.trim()
+    if (!text) return
+    const settings = this.getSettings()
+    if (!settings.enabled || !shouldProcessProgram(selection.programName, settings.filterMode, settings.filterList)) {
+      return
+    }
+    if (this.toolbarWindow?.isVisible()) return
+
+    this.createToolbarWindow()
+    const { point, orientation } = this.resolveSelectionAnchor(selection)
+    this.showToolbar(point, orientation, {
+      text,
+      programName: selection.programName,
+      isFullscreen: selection.isFullscreen
+    })
+  }
+
+  private resolveSelectionAnchor(selection: TextSelectionData): { point: Point; orientation: Orientation } {
+    const positionLevel = this.hookCtor?.PositionLevel
+    let point: Point = screen.getCursorScreenPoint()
+    let orientation: Orientation = 'bottomMiddle'
+    let isLogical = true
+
+    if (positionLevel && selection.posLevel === positionLevel.MOUSE_SINGLE) {
+      point = { x: selection.mousePosEnd.x, y: selection.mousePosEnd.y + 16 }
+      isLogical = false
+    } else if (positionLevel && selection.posLevel === positionLevel.MOUSE_DUAL) {
+      const yDistance = selection.mousePosEnd.y - selection.mousePosStart.y
+      const xDistance = selection.mousePosEnd.x - selection.mousePosStart.x
+      if (Math.abs(yDistance) > 14) {
+        orientation = yDistance > 0 ? 'bottomLeft' : 'topRight'
+        point = { x: selection.mousePosEnd.x, y: selection.mousePosEnd.y + (yDistance > 0 ? 16 : -16) }
+      } else {
+        orientation = xDistance > 0 ? 'bottomLeft' : 'bottomRight'
+        point = { x: selection.mousePosEnd.x, y: Math.max(selection.mousePosEnd.y, selection.mousePosStart.y) + 16 }
+      }
+      isLogical = false
+    } else if (
+      positionLevel &&
+      (selection.posLevel === positionLevel.SEL_FULL || selection.posLevel === positionLevel.SEL_DETAILED)
+    ) {
+      const sameLine =
+        selection.startTop.y === selection.endTop.y && selection.startBottom.y === selection.endBottom.y
+      const mouseDirectionY = selection.mousePosEnd.y - selection.mousePosStart.y
+      if (sameLine) {
+        const direction = selection.mousePosEnd.x - selection.mousePosStart.x
+        orientation = direction >= 0 ? 'bottomLeft' : 'bottomRight'
+        point = direction >= 0 ? selection.endBottom : selection.startBottom
+      } else {
+        orientation = mouseDirectionY >= 0 ? 'bottomLeft' : 'topRight'
+        point = mouseDirectionY >= 0 ? selection.endBottom : selection.startTop
+      }
+      point = { x: point.x, y: point.y + (orientation === 'topRight' ? -4 : 4) }
+      isLogical = false
+    }
+
+    if (!isLogical && isWin) point = screen.screenToDipPoint(point)
+    return { point: { x: Math.round(point.x), y: Math.round(point.y) }, orientation }
+  }
+
+  private showToolbar(anchor: Point, orientation: Orientation, payload: SelectedTextPayload): void {
+    if (!this.toolbarWindow || this.toolbarWindow.isDestroyed()) return
+    const position = this.calculateToolbarPosition(anchor, orientation)
+    this.toolbarWindow.setBounds({ ...position, width: this.toolbarWidth, height: TOOLBAR_HEIGHT })
+    this.toolbarWindow.setAlwaysOnTop(true, 'screen-saver')
+    this.toolbarWindow.webContents.send(IPC.SelectionSelected, payload)
+    this.toolbarWindow.webContents.send(IPC.SelectionVisibility, true)
+    if (isMac) {
+      this.toolbarWindow.showInactive()
+    } else {
+      this.toolbarWindow.show()
+    }
+    this.startHideListeners()
+  }
+
+  private calculateToolbarPosition(anchor: Point, orientation: Orientation): Point {
+    const display = screen.getDisplayNearestPoint(anchor)
+    const area = display.workArea
+    this.toolbarWidth = this.clampToolbarWidthForArea(this.toolbarWidth, area.width)
+    let x = anchor.x - this.toolbarWidth / 2
+    let y = anchor.y
+
+    if (orientation === 'topLeft') {
+      x = anchor.x - this.toolbarWidth
+      y = anchor.y - TOOLBAR_HEIGHT
+    } else if (orientation === 'topRight') {
+      x = anchor.x
+      y = anchor.y - TOOLBAR_HEIGHT
+    } else if (orientation === 'topMiddle') {
+      y = anchor.y - TOOLBAR_HEIGHT
+    } else if (orientation === 'bottomLeft') {
+      x = anchor.x - this.toolbarWidth
+    } else if (orientation === 'bottomRight') {
+      x = anchor.x
+    }
+
+    return {
+      x: Math.round(Math.max(area.x, Math.min(x, area.x + area.width - this.toolbarWidth))),
+      y: Math.round(Math.max(area.y, Math.min(y, area.y + area.height - TOOLBAR_HEIGHT)))
+    }
+  }
+
+  private clampToolbarWidth(width: number): number {
+    const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
+    return this.clampToolbarWidthForArea(width, display.workArea.width)
+  }
+
+  private clampToolbarWidthForArea(width: number, areaWidth: number): number {
+    const maxWidth = Math.max(120, areaWidth - TOOLBAR_SCREEN_MARGIN * 2)
+    return Math.min(width, maxWidth)
+  }
+
+  private positionAndShowActionWindow(win: BrowserWindow, settings: AppSettings): void {
+    const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
+    const area = display.workArea
+    const width = settings.rememberWindowSize ? this.lastActionSize.width : ACTION_WIDTH
+    const height = settings.rememberWindowSize ? this.lastActionSize.height : ACTION_HEIGHT
+    let x = Math.round(area.x + (area.width - width) / 2)
+    let y = Math.round(area.y + (area.height - height) / 2)
+
+    if (settings.followToolbar && this.toolbarWindow && !this.toolbarWindow.isDestroyed()) {
+      const toolbar = this.toolbarWindow.getBounds()
+      x = Math.round(toolbar.x + (toolbar.width - width) / 2)
+      y = Math.round(toolbar.y + toolbar.height + 8)
+      x = Math.max(area.x + 8, Math.min(x, area.x + area.width - width - 8))
+      y = Math.max(area.y + 8, Math.min(y, area.y + area.height - height - 8))
+    }
+
+    win.setBounds({ x, y, width, height })
+    if (settings.autoPin) win.setAlwaysOnTop(true)
+    if (isMac && settings.autoPin) win.showInactive()
+    else win.show()
+  }
+
+  private startHideListeners(): void {
+    if (!this.hook || this.hideListenerActive) return
+    this.hook.on('mouse-down', this.handleMouseDownHide)
+    this.hook.on('mouse-wheel', this.handleHide)
+    this.hook.on('key-down', this.handleKeyDownHide)
+    this.hideListenerActive = true
+  }
+
+  private stopHideListeners(): void {
+    if (!this.hook || !this.hideListenerActive) return
+    this.hook.off('mouse-down', this.handleMouseDownHide)
+    this.hook.off('mouse-wheel', this.handleHide)
+    this.hook.off('key-down', this.handleKeyDownHide)
+    this.hideListenerActive = false
+  }
+
+  private handleHide = (): void => this.hideToolbar()
+
+  private handleMouseDownHide = (event: MouseEventData): void => {
+    if (!this.toolbarWindow || this.toolbarWindow.isDestroyed()) return
+    const point = isWin ? screen.screenToDipPoint({ x: event.x, y: event.y }) : { x: event.x, y: event.y }
+    const bounds = this.toolbarWindow.getBounds()
+    const inside =
+      point.x >= bounds.x && point.x <= bounds.x + bounds.width && point.y >= bounds.y && point.y <= bounds.y + bounds.height
+    if (!inside) this.hideToolbar()
+  }
+
+  private handleKeyDownHide = (event: KeyboardEventData): void => {
+    if (this.isModifierKey(event.vkCode)) return
+    this.hideToolbar()
+  }
+
+  private isModifierKey(vkCode: number): boolean {
+    return this.isCtrlKey(vkCode) || this.isShiftKey(vkCode) || this.isAltKey(vkCode)
+  }
+
+  private isCtrlKey(vkCode: number): boolean {
+    return isMac ? vkCode === 59 || vkCode === 62 : vkCode === 162 || vkCode === 163
+  }
+
+  private isShiftKey(vkCode: number): boolean {
+    return isMac ? vkCode === 56 || vkCode === 60 : vkCode === 160 || vkCode === 161
+  }
+
+  private isAltKey(vkCode: number): boolean {
+    return isMac ? vkCode === 58 || vkCode === 61 : vkCode === 164 || vkCode === 165
+  }
+}
