@@ -1,5 +1,6 @@
 <p align="center">
-  <img src="./build/icon.png" alt="AIA Selection Assistant icon" width="72" />
+  <img src="./docs/images/icon-readme-light.svg#gh-light-mode-only" alt="AIA Selection Assistant icon" width="72" />
+  <img src="./docs/images/icon-readme-dark.svg#gh-dark-mode-only" alt="AIA Selection Assistant icon" width="72" />
 </p>
 
 # AIA Selection Assistant
