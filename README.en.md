@@ -2,40 +2,48 @@
 
 [中文文档](./README.md)
 
-GitHub repository: `AIA-selection-assistan`
+`AIA Selection Assistant` is a lightweight desktop app for people who often read, write, translate, or look things up with AI. When you select text in almost any app, it pops up a small toolbar so you can translate, explain, summarize, search, or copy right away without breaking your flow.
 
-Lightweight cross-platform AI selection assistant for macOS and Windows. After selecting text, you can use a floating toolbar to translate, explain, summarize, search, or copy instantly, with support for both OpenAI-compatible and Anthropic APIs.
+It currently supports macOS and Windows, with both OpenAI-compatible and Anthropic APIs. The goal is simple: stay lightweight, open fast, and keep setup easy.
 
 ## Overview
 
 - Electron desktop app for macOS and Windows
-- System-level text selection detection with a floating toolbar
-- Configurable actions, API templates, theme modes, and toolbar behavior
-- Supports OpenAI-compatible APIs and Anthropic Messages API
+- Floating toolbar appears after text selection
+- API templates make it easy to switch models, keys, and providers
+- Light, dark, and follow-system theme modes
+- Result window supports Markdown rendering
 
 ## Screenshots
 
-### Floating Toolbar
+### Everyday Flow
 
-![Floating Toolbar](./docs/images/悬浮工具栏.png)
+<p>
+  <img src="./docs/images/悬浮工具栏.png" alt="Floating Toolbar" width="48%" />
+  <img src="./docs/images/结果窗口页.png" alt="Result Window" width="48%" />
+</p>
 
-### Result Window
+### API and Action Setup
 
-![Result Window](./docs/images/结果窗口页.png)
+<p>
+  <img src="./docs/images/api配置页.png" alt="API Settings" width="48%" />
+  <img src="./docs/images/动作配置页.png" alt="Action Settings" width="48%" />
+</p>
 
-### API Settings
+### Selection and Window Settings
 
-![API Settings](./docs/images/api配置页.png)
+<p>
+  <img src="./docs/images/划词配置页.png" alt="Selection Settings" width="48%" />
+  <img src="./docs/images/窗口配置页.png" alt="Window Settings" width="48%" />
+</p>
 
 ## Features
 
-- Floating toolbar appears after text selection for quick actions
-- Built-in actions include translate, explain, summarize, polish, search, and copy
-- Multiple API templates let you switch providers and models quickly
-- Theme modes: light, dark, or follow system
-- Toolbar options include compact mode and app icon visibility
-- Result window renders Markdown output
-- Closing the app minimizes it to the menu bar or system tray instead of exiting
+- Shows a floating toolbar right after text selection
+- Built-in actions for translate, explain, summarize, polish, search, and copy
+- Supports multiple API templates for quick provider/model switching
+- Toolbar can run in compact mode and can hide the app icon
+- Closing the app minimizes it to the menu bar or system tray instead of quitting
 
 ## Platform Notes
 
@@ -43,13 +51,13 @@ Lightweight cross-platform AI selection assistant for macOS and Windows. After s
 
 - Accessibility permission is required for system-level text selection detection
 - Closing the main window minimizes the app to the menu bar
-- Floating toolbar and result window behavior should be verified after the first permission grant
+- On first launch, it is worth testing text selection and popup behavior manually
 
 ### Windows
 
 - Supports staying resident in the system tray
-- Closing the main window minimizes the app to the tray instead of quitting
-- Selection detection may vary depending on the target app, elevated permissions, or IME state
+- Closing the main window minimizes it to the tray instead of quitting
+- Selection behavior can vary depending on the target app, elevation level, or IME state
 
 ## Installation and Local Development
 
@@ -57,7 +65,7 @@ Lightweight cross-platform AI selection assistant for macOS and Windows. After s
 
 - Node.js 20+ recommended
 - `pnpm` 10+
-- macOS or Windows for full runtime testing
+- Use macOS or Windows if you want to test the full runtime behavior
 
 ### Install
 
@@ -94,7 +102,7 @@ pnpm dist:win
 Notes:
 
 - Build artifacts should not be committed to the repository
-- If you want to distribute binaries later, publish them through GitHub Releases
+- If you want to distribute binaries, GitHub Releases is the recommended path
 
 ## Configuration
 
@@ -102,7 +110,7 @@ Notes:
 
 - OpenAI-compatible: uses `/chat/completions` and `/models`
 - Anthropic: uses `/v1/messages` and `/v1/models`
-- In Anthropic mode, the Base URL field should contain only the base endpoint; `/v1` is appended automatically
+- In Anthropic mode, you only need to enter the base URL; `/v1` is appended automatically
 
 ### API Templates
 
@@ -111,22 +119,22 @@ Notes:
 
 ### Theme and UI
 
-- Light, dark, and system-follow modes
-- Toolbar supports compact mode
-- Toolbar can optionally hide the app icon
-- The settings window includes API, Selection, Window, and Actions sections, with matching UI screenshots in `docs/images`
+- Light, dark, and follow-system modes
+- Compact toolbar mode is supported
+- The app icon in the floating toolbar can be hidden
+- The settings window is organized into API, Selection, Window, and Actions sections
 
 ## Privacy
 
 - Selected text is only sent to the configured provider when you explicitly trigger an AI action
 - API keys are stored locally through Electron Store
-- This repository should not include your local settings, build artifacts, or dependency directories
+- This repository should not contain your local settings, dependencies, or build artifacts
 
 ## Known Limitations
 
-- System-level selection depends on the third-party `selection-hook` package and may behave differently across apps
-- Linux is not currently a first-class supported platform
-- Selection positioning and window follow behavior may vary across apps and IME environments
+- System-level selection depends on the third-party `selection-hook` package, so behavior can vary across apps
+- Linux is not a first-class supported platform yet
+- Selection position and follow-window behavior may differ in some apps or IME environments
 - The current provider layer supports OpenAI-compatible and Anthropic APIs only
 
 ## Contributing
