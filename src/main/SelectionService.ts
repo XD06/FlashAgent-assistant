@@ -196,6 +196,7 @@ export class SelectionService {
       show: false,
       frame: false,
       transparent: true,
+      backgroundColor: '#00000000',
       alwaysOnTop: true,
       skipTaskbar: true,
       resizable: false,
@@ -205,7 +206,7 @@ export class SelectionService {
       hasShadow: false,
       autoHideMenuBar: true,
       ...(isMac ? { type: 'panel' as const, hiddenInMissionControl: true, acceptFirstMouse: true } : {}),
-      ...(!isMac ? { type: 'toolbar' as const, focusable: false } : {}),
+      ...(!isMac ? { focusable: true } : {}),
       webPreferences: {
         preload: this.preloadPath,
         contextIsolation: true,
@@ -214,7 +215,9 @@ export class SelectionService {
       }
     })
 
-    this.toolbarWindow.on('blur', () => this.hideToolbar())
+    if (isMac) {
+      this.toolbarWindow.on('blur', () => this.hideToolbar())
+    }
     this.toolbarWindow.on('closed', () => {
       this.toolbarWindow = null
     })
@@ -331,7 +334,7 @@ export class SelectionService {
     this.toolbarWindow.setAlwaysOnTop(true, 'screen-saver')
     this.toolbarWindow.webContents.send(IPC.SelectionSelected, payload)
     this.toolbarWindow.webContents.send(IPC.SelectionVisibility, true)
-    if (isMac) {
+    if (isMac || isWin) {
       this.toolbarWindow.showInactive()
     } else {
       this.toolbarWindow.show()

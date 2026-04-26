@@ -837,9 +837,15 @@ html[data-theme='dark'] .inline-icon-button:hover {
   box-shadow:
     0 10px 24px rgba(0, 0, 0, 0.12),
     inset 0 0 0 1px var(--toolbar-border);
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
   user-select: none;
   color: var(--toolbar-text);
+}
+
+.toolbar-root::-webkit-scrollbar {
+  display: none;
 }
 
 .toolbar-logo {
@@ -863,6 +869,7 @@ html[data-theme='dark'] .inline-icon-button:hover {
 .toolbar-button {
   height: 28px;
   min-height: 28px;
+  flex-shrink: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;

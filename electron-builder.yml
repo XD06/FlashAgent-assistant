@@ -1,6 +1,8 @@
 appId: com.selectionassistant.lite
 productName: AIA划词助手
 icon: build/icon.png
+npmRebuild: false
+afterPack: scripts/after-pack.mjs
 directories:
   buildResources: build
 files:
@@ -20,8 +22,12 @@ mac:
 win:
   icon: build/icon.ico
   target:
-    - nsis
-    - portable
+    - target: nsis
+      arch:
+        - x64
+    - target: portable
+      arch:
+        - x64
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true

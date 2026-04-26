@@ -7,12 +7,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/<your-github-username>/selection-assistant-lite.git"
+    "url": "git+https://github.com/zcx960/AIA-selection-assistan.git"
   },
   "bugs": {
-    "url": "https://github.com/<your-github-username>/selection-assistant-lite/issues"
+    "url": "https://github.com/zcx960/AIA-selection-assistan/issues"
   },
-  "homepage": "https://github.com/<your-github-username>/selection-assistant-lite#readme",
+  "homepage": "https://github.com/zcx960/AIA-selection-assistan#readme",
   "keywords": [
     "electron",
     "selection",
@@ -28,17 +28,18 @@
     "dev": "electron-vite dev",
     "start": "electron-vite preview",
     "build": "pnpm typecheck && electron-vite build",
+    "prepare:selection-hook": "node scripts/prepare-selection-hook.js",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
     "dist:mac": "pnpm build && electron-builder --mac dmg zip",
-    "dist:win": "pnpm build && electron-builder --win nsis portable",
-    "dist:win:x64": "pnpm build && electron-builder --win nsis portable --x64"
+    "dist:win": "pnpm build && pnpm prepare:selection-hook && electron-builder --win nsis portable --x64",
+    "dist:win:x64": "pnpm build && pnpm prepare:selection-hook && electron-builder --win nsis portable --x64",
+    "dist:win:arm64": "pnpm build && pnpm prepare:selection-hook && electron-builder --win nsis portable --arm64"
   },
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.0",
     "@electron-toolkit/utils": "^4.0.0",
     "electron-store": "^8.2.0",
-    "lucide-react": "^0.468.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-markdown": "^10.1.0",

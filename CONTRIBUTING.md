@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for your interest in contributing to `selection-assistant-lite`.
+Thanks for your interest in contributing to `AIA-selection-assistan`.
 
 ## Setup
 
