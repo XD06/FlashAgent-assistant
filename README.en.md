@@ -15,7 +15,17 @@ Lightweight cross-platform AI selection assistant for macOS and Windows. After s
 
 ## Screenshots
 
-This repository does not yet include finalized screenshots. Before the first public release, add screenshots for the settings window, floating toolbar, and result window here.
+### Floating Toolbar
+
+![Floating Toolbar](./docs/images/悬浮工具栏.png)
+
+### Result Window
+
+![Result Window](./docs/images/结果窗口页.png)
+
+### API Settings
+
+![API Settings](./docs/images/api配置页.png)
 
 ## Features
 
@@ -104,6 +114,7 @@ Notes:
 - Light, dark, and system-follow modes
 - Toolbar supports compact mode
 - Toolbar can optionally hide the app icon
+- The settings window includes API, Selection, Window, and Actions sections, with matching UI screenshots in `docs/images`
 
 ## Privacy
 
