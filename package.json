@@ -1,7 +1,7 @@
 {
   "name": "selection-assistant-lite",
   "version": "0.1.0",
-  "description": "AIA划词助手 is a lightweight cross-platform selection assistant for macOS and Windows.",
+  "description": "轻量跨平台 AI 划词助手，支持 OpenAI-compatible 与 Anthropic API。",
   "main": "out/main/index.js",
   "author": "selection-assistant-lite contributors",
   "license": "MIT",
@@ -31,7 +31,7 @@
     "prepare:selection-hook": "node scripts/prepare-selection-hook.js",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
-    "dist:mac": "pnpm build && electron-builder --mac dmg zip",
+    "dist:mac": "pnpm build && pnpm prepare:selection-hook && electron-builder --mac dmg zip",
     "dist:win": "pnpm build && pnpm prepare:selection-hook && electron-builder --win nsis portable --x64",
     "dist:win:x64": "pnpm build && pnpm prepare:selection-hook && electron-builder --win nsis portable --x64",
     "dist:win:arm64": "pnpm build && pnpm prepare:selection-hook && electron-builder --win nsis portable --arm64"
