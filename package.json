@@ -31,10 +31,10 @@
     "prepare:selection-hook": "node scripts/prepare-selection-hook.js",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
-    "dist:mac": "pnpm build && pnpm prepare:selection-hook && electron-builder --mac dmg zip",
-    "dist:win": "pnpm build && pnpm prepare:selection-hook && electron-builder --win nsis portable --x64",
-    "dist:win:x64": "pnpm build && pnpm prepare:selection-hook && electron-builder --win nsis portable --x64",
-    "dist:win:arm64": "pnpm build && pnpm prepare:selection-hook && electron-builder --win nsis portable --arm64"
+    "dist:mac": "pnpm build && pnpm prepare:selection-hook && electron-builder --mac dmg zip --publish never",
+    "dist:win": "pnpm build && pnpm prepare:selection-hook && electron-builder --win nsis portable --x64 --publish never",
+    "dist:win:x64": "pnpm build && pnpm prepare:selection-hook && electron-builder --win nsis portable --x64 --publish never",
+    "dist:win:arm64": "pnpm build && pnpm prepare:selection-hook && electron-builder --win nsis portable --arm64 --publish never"
   },
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.0",
