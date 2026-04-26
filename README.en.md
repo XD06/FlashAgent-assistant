@@ -1,11 +1,22 @@
-<p align="center">
-  <img src="./docs/images/icon-readme-light.svg#gh-light-mode-only" alt="AIA Selection Assistant icon" width="72" />
-  <img src="./docs/images/icon-readme-dark.svg#gh-dark-mode-only" alt="AIA Selection Assistant icon" width="72" />
-</p>
+<div align="center">
+  <img src="./docs/images/icon-readme-light.svg#gh-light-mode-only" alt="AIA Selection Assistant icon" width="88" />
+  <img src="./docs/images/icon-readme-dark.svg#gh-dark-mode-only" alt="AIA Selection Assistant icon" width="88" />
 
-# AIA Selection Assistant
+  <h1>AIA Selection Assistant</h1>
 
-[中文文档](./README.md)
+  <p>A lightweight desktop helper that brings translation, explanation, summaries, and search right next to your text selection.</p>
+
+  <p>
+    <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-2f6fed?style=flat-square" alt="Platform" />
+    <img src="https://img.shields.io/badge/Electron-33-3e4a5f?style=flat-square" alt="Electron 33" />
+    <img src="https://img.shields.io/badge/React-18-2d9cdb?style=flat-square" alt="React 18" />
+    <img src="https://img.shields.io/badge/TypeScript-5-3178c6?style=flat-square" alt="TypeScript 5" />
+    <img src="https://img.shields.io/badge/API-OpenAI%20%7C%20Anthropic-3a7f52?style=flat-square" alt="API Support" />
+    <img src="https://img.shields.io/badge/License-MIT-c9a227?style=flat-square" alt="MIT License" />
+  </p>
+
+  <p><strong>English</strong> | <a href="./README.md">中文</a></p>
+</div>
 
 `AIA Selection Assistant` is a lightweight desktop app for people who often read, write, translate, or look things up with AI. When you select text in almost any app, it pops up a small toolbar so you can translate, explain, summarize, search, or copy right away without breaking your flow.
 
@@ -145,6 +156,10 @@ Notes:
 ## Contributing
 
 Issues and pull requests are welcome. Please read [CONTRIBUTING.md](./CONTRIBUTING.md) before contributing.
+
+## 🙏 Acknowledgments
+
+- [LINUX DO](https://linux.do/) — Community support and inspiration
 
 ## Security
 

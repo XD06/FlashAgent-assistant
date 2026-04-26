@@ -1,11 +1,22 @@
-<p align="center">
-  <img src="./docs/images/icon-readme-light.svg#gh-light-mode-only" alt="AIA划词助手图标" width="72" />
-  <img src="./docs/images/icon-readme-dark.svg#gh-dark-mode-only" alt="AIA划词助手图标" width="72" />
-</p>
+<div align="center">
+  <img src="./docs/images/icon-readme-light.svg#gh-light-mode-only" alt="AIA划词助手图标" width="88" />
+  <img src="./docs/images/icon-readme-dark.svg#gh-dark-mode-only" alt="AIA划词助手图标" width="88" />
 
-# AIA划词助手
+  <h1>AIA划词助手</h1>
 
-[English README](./README.en.md)
+  <p>轻量常驻，划词即用，把翻译、解释、总结这些 AI 操作放到手边。</p>
+
+  <p>
+    <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-2f6fed?style=flat-square" alt="Platform" />
+    <img src="https://img.shields.io/badge/Electron-33-3e4a5f?style=flat-square" alt="Electron 33" />
+    <img src="https://img.shields.io/badge/React-18-2d9cdb?style=flat-square" alt="React 18" />
+    <img src="https://img.shields.io/badge/TypeScript-5-3178c6?style=flat-square" alt="TypeScript 5" />
+    <img src="https://img.shields.io/badge/API-OpenAI%20%7C%20Anthropic-3a7f52?style=flat-square" alt="API Support" />
+    <img src="https://img.shields.io/badge/License-MIT-c9a227?style=flat-square" alt="MIT License" />
+  </p>
+
+  <p><a href="./README.en.md">English</a> | <strong>中文</strong></p>
+</div>
 
 `AIA划词助手` 是一个轻量级桌面工具，适合在阅读、写作、翻译、查资料时随手调用 AI。你在任意应用里选中文本后，它会弹出一个小工具栏，让你直接翻译、解释、总结、搜索或复制，不用来回切应用。
 
@@ -145,6 +156,10 @@ pnpm dist:win
 ## 贡献
 
 欢迎提 issue 或 pull request。开始之前建议先看一下 [CONTRIBUTING.md](./CONTRIBUTING.md)。
+
+## 🙏 Acknowledgments
+
+- [LINUX DO](https://linux.do/) — Community support and inspiration
 
 ## 安全
 
