@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="./build/icon.png" alt="AIA划词助手图标" width="72" />
+</p>
+
 # AIA划词助手
 
 [English README](./README.en.md)

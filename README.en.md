@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="./build/icon.png" alt="AIA Selection Assistant icon" width="72" />
+</p>
+
 # AIA Selection Assistant
 
 [中文文档](./README.md)
