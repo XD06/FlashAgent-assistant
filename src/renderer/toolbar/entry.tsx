@@ -26,8 +26,15 @@ function ToolbarApp() {
 
   React.useEffect(() => window.assistantLite.selection.onSelected(setSelection), [])
   React.useEffect(() => {
-    const width = rootRef.current?.getBoundingClientRect().width ?? 0
-    if (width > 0) void window.assistantLite.selection.determineToolbarSize(width)
+    const measure = () => {
+      const root = rootRef.current
+      if (!root) return
+      const width = Math.max(root.scrollWidth, root.getBoundingClientRect().width)
+      if (width > 0) void window.assistantLite.selection.determineToolbarSize(width)
+    }
+
+    const frame = window.requestAnimationFrame(measure)
+    return () => window.cancelAnimationFrame(frame)
   }, [settings.compactToolbar, settings.showToolbarAppIcon, settings.actions])
 
   const enabledActions = settings.actions.filter((action) => action.enabled)
