@@ -1,5 +1,6 @@
 import { app, BrowserWindow, Menu, Tray, globalShortcut, ipcMain, nativeImage, shell } from 'electron'
 import { electronApp, optimizer } from '@electron-toolkit/utils'
+import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { buildAssistantSystemPrompt } from '@shared/actions'
@@ -22,9 +23,28 @@ let tray: Tray | null = null
 let isQuitting = false
 const abortControllers = new Map<string, AbortController>()
 
-const selectionService = new SelectionService(getSettings, preloadPath, rendererDir)
-const appIcon = nativeImage.createFromDataURL(APP_ICON_DATA_URL)
-const trayIcon = nativeImage.createFromDataURL(APP_TRAY_DATA_URL)
+function createNativeImageFromFile(paths: string[], fallbackDataUrl: string): Electron.NativeImage {
+  for (const path of paths) {
+    if (!existsSync(path)) continue
+    const image = nativeImage.createFromPath(path)
+    if (!image.isEmpty()) return image
+  }
+  return nativeImage.createFromDataURL(fallbackDataUrl)
+}
+
+const appIcon = createNativeImageFromFile(
+  app.isPackaged
+    ? [join(process.resourcesPath, 'build', 'icon.png')]
+    : [join(__dirname, '../../build/icon.png'), join(process.cwd(), 'build', 'icon.png')],
+  APP_ICON_DATA_URL
+)
+const trayIcon = createNativeImageFromFile(
+  app.isPackaged
+    ? [join(process.resourcesPath, 'build', 'icon.png')]
+    : [join(__dirname, '../../build/icon.png'), join(process.cwd(), 'build', 'icon.png')],
+  APP_TRAY_DATA_URL
+)
+const selectionService = new SelectionService(getSettings, preloadPath, rendererDir, appIcon)
 
 function getTrayIcon(): Electron.NativeImage {
   return trayIcon.resize({ width: 18, height: 18 })

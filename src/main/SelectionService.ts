@@ -21,8 +21,10 @@ type Orientation = 'topLeft' | 'topRight' | 'topMiddle' | 'bottomLeft' | 'bottom
 const TOOLBAR_HEIGHT = 36
 const DEFAULT_TOOLBAR_WIDTH = 390
 const TOOLBAR_SCREEN_MARGIN = 8
+const TOOLBAR_SHADOW_PADDING = 16
 const ACTION_WIDTH = 560
 const ACTION_HEIGHT = 420
+const ACTION_SHADOW_PADDING = 18
 
 export class SelectionService {
   private hookCtor: SelectionHookConstructor | null = null
@@ -37,7 +39,8 @@ export class SelectionService {
   constructor(
     private getSettings: () => AppSettings,
     private preloadPath: string,
-    private rendererDir: string
+    private rendererDir: string,
+    private windowIcon: Electron.NativeImage
   ) {
     try {
       this.hookCtor = require('selection-hook') as SelectionHookConstructor
@@ -134,8 +137,14 @@ export class SelectionService {
     const bounds = this.toolbarWindow.getBounds()
     const display = screen.getDisplayMatching(bounds)
     const area = display.workArea
-    const x = Math.round(Math.max(area.x, Math.min(bounds.x, area.x + area.width - this.toolbarWidth)))
-    this.toolbarWindow.setBounds({ x, y: bounds.y, width: this.toolbarWidth, height: TOOLBAR_HEIGHT })
+    const visibleX = bounds.x + TOOLBAR_SHADOW_PADDING
+    const x = Math.round(Math.max(area.x, Math.min(visibleX, area.x + area.width - this.toolbarWidth)))
+    this.toolbarWindow.setBounds({
+      x: x - TOOLBAR_SHADOW_PADDING,
+      y: bounds.y,
+      width: this.getToolbarWindowWidth(),
+      height: this.getToolbarWindowHeight()
+    })
   }
 
   processAction(payload: ActionPayload): void {
@@ -191,8 +200,8 @@ export class SelectionService {
     if (this.toolbarWindow && !this.toolbarWindow.isDestroyed()) return
 
     this.toolbarWindow = new BrowserWindow({
-      width: this.toolbarWidth,
-      height: TOOLBAR_HEIGHT,
+      width: this.getToolbarWindowWidth(),
+      height: this.getToolbarWindowHeight(),
       show: false,
       frame: false,
       transparent: true,
@@ -226,18 +235,21 @@ export class SelectionService {
 
   private createActionWindow(): BrowserWindow {
     const settings = this.getSettings()
+    const width = settings.rememberWindowSize ? this.lastActionSize.width : ACTION_WIDTH
+    const height = settings.rememberWindowSize ? this.lastActionSize.height : ACTION_HEIGHT
     const win = new BrowserWindow({
-      width: settings.rememberWindowSize ? this.lastActionSize.width : ACTION_WIDTH,
-      height: settings.rememberWindowSize ? this.lastActionSize.height : ACTION_HEIGHT,
-      minWidth: 320,
-      minHeight: 240,
+      width: this.getActionWindowWidth(width),
+      height: this.getActionWindowHeight(height),
+      minWidth: this.getActionWindowWidth(320),
+      minHeight: this.getActionWindowHeight(240),
       show: false,
       frame: false,
       transparent: true,
       hasShadow: false,
+      icon: this.windowIcon,
       autoHideMenuBar: true,
       titleBarStyle: 'hidden',
-      trafficLightPosition: { x: 12, y: 10 },
+      trafficLightPosition: { x: ACTION_SHADOW_PADDING + 12, y: ACTION_SHADOW_PADDING + 10 },
       webPreferences: {
         preload: this.preloadPath,
         contextIsolation: true,
@@ -250,7 +262,10 @@ export class SelectionService {
     win.on('resized', () => {
       if (this.getSettings().rememberWindowSize && !win.isDestroyed()) {
         const bounds = win.getBounds()
-        this.lastActionSize = { width: bounds.width, height: bounds.height }
+        this.lastActionSize = {
+          width: Math.max(320, bounds.width - ACTION_SHADOW_PADDING * 2),
+          height: Math.max(240, bounds.height - ACTION_SHADOW_PADDING * 2)
+        }
       }
     })
     this.actionWindows.add(win)
@@ -330,7 +345,12 @@ export class SelectionService {
   private showToolbar(anchor: Point, orientation: Orientation, payload: SelectedTextPayload): void {
     if (!this.toolbarWindow || this.toolbarWindow.isDestroyed()) return
     const position = this.calculateToolbarPosition(anchor, orientation)
-    this.toolbarWindow.setBounds({ ...position, width: this.toolbarWidth, height: TOOLBAR_HEIGHT })
+    this.toolbarWindow.setBounds({
+      x: position.x - TOOLBAR_SHADOW_PADDING,
+      y: position.y - TOOLBAR_SHADOW_PADDING,
+      width: this.getToolbarWindowWidth(),
+      height: this.getToolbarWindowHeight()
+    })
     this.toolbarWindow.setAlwaysOnTop(true, 'screen-saver')
     this.toolbarWindow.webContents.send(IPC.SelectionSelected, payload)
     this.toolbarWindow.webContents.send(IPC.SelectionVisibility, true)
@@ -379,6 +399,22 @@ export class SelectionService {
     return Math.min(width, maxWidth)
   }
 
+  private getToolbarWindowWidth(): number {
+    return this.toolbarWidth + TOOLBAR_SHADOW_PADDING * 2
+  }
+
+  private getToolbarWindowHeight(): number {
+    return TOOLBAR_HEIGHT + TOOLBAR_SHADOW_PADDING * 2
+  }
+
+  private getActionWindowWidth(width: number): number {
+    return width + ACTION_SHADOW_PADDING * 2
+  }
+
+  private getActionWindowHeight(height: number): number {
+    return height + ACTION_SHADOW_PADDING * 2
+  }
+
   private positionAndShowActionWindow(win: BrowserWindow, settings: AppSettings): void {
     const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
     const area = display.workArea
@@ -389,13 +425,18 @@ export class SelectionService {
 
     if (settings.followToolbar && this.toolbarWindow && !this.toolbarWindow.isDestroyed()) {
       const toolbar = this.toolbarWindow.getBounds()
-      x = Math.round(toolbar.x + (toolbar.width - width) / 2)
-      y = Math.round(toolbar.y + toolbar.height + 8)
+      x = Math.round(toolbar.x + TOOLBAR_SHADOW_PADDING + (this.toolbarWidth - width) / 2)
+      y = Math.round(toolbar.y + TOOLBAR_SHADOW_PADDING + TOOLBAR_HEIGHT + 8)
       x = Math.max(area.x + 8, Math.min(x, area.x + area.width - width - 8))
       y = Math.max(area.y + 8, Math.min(y, area.y + area.height - height - 8))
     }
 
-    win.setBounds({ x, y, width, height })
+    win.setBounds({
+      x: x - ACTION_SHADOW_PADDING,
+      y: y - ACTION_SHADOW_PADDING,
+      width: this.getActionWindowWidth(width),
+      height: this.getActionWindowHeight(height)
+    })
     if (settings.autoPin) win.setAlwaysOnTop(true)
     if (isMac && settings.autoPin) win.showInactive()
     else win.show()
@@ -424,7 +465,10 @@ export class SelectionService {
     const point = isWin ? screen.screenToDipPoint({ x: event.x, y: event.y }) : { x: event.x, y: event.y }
     const bounds = this.toolbarWindow.getBounds()
     const inside =
-      point.x >= bounds.x && point.x <= bounds.x + bounds.width && point.y >= bounds.y && point.y <= bounds.y + bounds.height
+      point.x >= bounds.x + TOOLBAR_SHADOW_PADDING &&
+      point.x <= bounds.x + TOOLBAR_SHADOW_PADDING + this.toolbarWidth &&
+      point.y >= bounds.y + TOOLBAR_SHADOW_PADDING &&
+      point.y <= bounds.y + TOOLBAR_SHADOW_PADDING + TOOLBAR_HEIGHT
     if (!inside) this.hideToolbar()
   }
 

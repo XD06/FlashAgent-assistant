@@ -8,6 +8,9 @@ directories:
 files:
   - out/**
   - package.json
+extraResources:
+  - from: build/icon.png
+    to: build/icon.png
 asarUnpack:
   - node_modules/selection-hook/**
 mac:

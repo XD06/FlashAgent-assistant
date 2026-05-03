@@ -18,9 +18,21 @@
   --focus: rgba(16, 163, 127, 0.28);
   --shadow: 0 12px 32px rgba(17, 17, 15, 0.08);
   --page-wash: #ececea;
+  --floating-border: rgba(24, 24, 22, 0.16);
+  --floating-edge: rgba(255, 255, 255, 0.88);
+  --floating-shadow:
+    0 10px 22px rgba(17, 17, 15, 0.14),
+    0 2px 7px rgba(17, 17, 15, 0.08);
+  --toolbar-floating-shadow:
+    0 7px 14px rgba(17, 17, 15, 0.12),
+    0 1px 4px rgba(17, 17, 15, 0.08);
+  --toolbar-shadow-padding: 16px;
+  --toolbar-shadow-padding-total: 32px;
+  --action-shadow-padding: 18px;
+  --action-shadow-padding-total: 36px;
   --toolbar-bg: #f7f7f6;
   --toolbar-text: #1e1e1c;
-  --toolbar-border: rgba(24, 24, 22, 0.06);
+  --toolbar-border: rgba(24, 24, 22, 0.18);
   --toolbar-hover: rgba(24, 24, 22, 0.05);
   font-family:
     ui-sans-serif,
@@ -53,9 +65,17 @@ html[data-theme='dark'] {
   --focus: rgba(16, 163, 127, 0.36);
   --shadow: 0 14px 34px rgba(0, 0, 0, 0.34);
   --page-wash: #151515;
+  --floating-border: rgba(255, 255, 255, 0.16);
+  --floating-edge: rgba(255, 255, 255, 0.08);
+  --floating-shadow:
+    0 7px 14px rgba(0, 0, 0, 0.36),
+    0 2px 5px rgba(0, 0, 0, 0.24);
+  --toolbar-floating-shadow:
+    0 6px 12px rgba(0, 0, 0, 0.34),
+    0 1px 4px rgba(0, 0, 0, 0.24);
   --toolbar-bg: #181818;
   --toolbar-text: #ededeb;
-  --toolbar-border: rgba(255, 255, 255, 0.045);
+  --toolbar-border: rgba(255, 255, 255, 0.15);
   --toolbar-hover: rgba(255, 255, 255, 0.06);
 }
 
@@ -825,17 +845,18 @@ html[data-theme='dark'] .inline-icon-button:hover {
 
 .toolbar-root {
   height: 36px;
-  max-width: 100vw;
+  max-width: calc(100vw - var(--toolbar-shadow-padding-total));
   display: inline-flex;
   align-items: center;
   gap: 2px;
   padding: 3px;
-  margin: 0;
-  border: 0;
+  margin: var(--toolbar-shadow-padding);
+  border: 1px solid var(--floating-border);
   border-radius: 12px;
   background: var(--toolbar-bg);
   box-shadow:
-    0 10px 24px rgba(0, 0, 0, 0.12),
+    var(--toolbar-floating-shadow),
+    inset 0 1px 0 var(--floating-edge),
     inset 0 0 0 1px var(--toolbar-border);
   overflow-x: auto;
   overflow-y: hidden;
@@ -896,7 +917,8 @@ html[data-theme='dark'] .inline-icon-button:hover {
 
 html[data-theme='dark'] .toolbar-root {
   box-shadow:
-    0 10px 24px rgba(0, 0, 0, 0.2),
+    var(--toolbar-floating-shadow),
+    inset 0 1px 0 var(--floating-edge),
     inset 0 0 0 1px var(--toolbar-border);
 }
 
@@ -905,11 +927,16 @@ html[data-theme='dark'] .toolbar-button:hover {
 }
 
 .action-window {
-  height: 100vh;
-  border: 0;
+  height: calc(100vh - var(--action-shadow-padding-total));
+  display: grid;
+  grid-template-rows: 42px minmax(0, 1fr) 44px;
+  margin: var(--action-shadow-padding);
+  border: 1px solid var(--floating-border);
   border-radius: 14px;
   background: var(--panel-solid);
-  box-shadow: var(--shadow);
+  box-shadow:
+    var(--floating-shadow),
+    inset 0 1px 0 var(--floating-edge);
   overflow: hidden;
   opacity: 1;
 }
@@ -961,7 +988,7 @@ html[data-theme='dark'] .titlebar button:hover {
 }
 
 .content {
-  height: calc(100vh - 86px);
+  min-height: 0;
   overflow: auto;
   padding: 14px;
   display: grid;
