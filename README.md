@@ -16,11 +16,31 @@
   </p>
 
   <p><a href="./README.en.md">English</a> | <strong>中文</strong></p>
+
+  <p>
+    <a href="https://github.com/zcx960/AIA-selection-assistan/releases/latest"><img src="https://img.shields.io/github/v/release/zcx960/AIA-selection-assistan?style=for-the-badge&label=Latest%20Release&color=2f6fed" alt="Latest release" /></a>
+    <a href="https://github.com/zcx960/AIA-selection-assistan/releases"><img src="https://img.shields.io/github/downloads/zcx960/AIA-selection-assistan/total?style=for-the-badge&label=Downloads&color=c9a227" alt="Total downloads" /></a>
+  </p>
 </div>
 
 `AIA划词助手` 是一个轻量级桌面工具，适合在阅读、写作、翻译、查资料时随手调用 AI。你在任意应用里选中文本后，它会弹出一个小工具栏，让你直接翻译、解释、总结、搜索或复制，不用来回切应用。
 
 项目目前支持 macOS 和 Windows，也支持接入 OpenAI-compatible 与 Anthropic API。整体目标很简单：常驻够轻，唤起够快，配置别太折腾。
+
+## 下载
+
+最新版本 **v0.3.0**，可点击直接下载对应平台的安装包：
+
+| 平台 | 包类型 | 下载 |
+| --- | --- | --- |
+| macOS (Apple Silicon) | `.dmg` | [AIA-Selection-Assistant-0.3.0-arm64.dmg](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.3.0/AIA-Selection-Assistant-0.3.0-arm64.dmg) |
+| macOS (Apple Silicon) | `.zip` | [AIA-Selection-Assistant-0.3.0-arm64-mac.zip](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.3.0/AIA-Selection-Assistant-0.3.0-arm64-mac.zip) |
+| Windows x64 | 安装版 | [AIA-Selection-Assistant-Setup-0.3.0.exe](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.3.0/AIA-Selection-Assistant-Setup-0.3.0.exe) |
+| Windows x64 | 便携版 | [AIA-Selection-Assistant-Portable-0.3.0.exe](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.3.0/AIA-Selection-Assistant-Portable-0.3.0.exe) |
+
+历史版本与全部产物：[GitHub Releases](https://github.com/zcx960/AIA-selection-assistan/releases)。
+
+> macOS 包未做代码签名，首次打开请到「系统设置 → 隐私与安全性」放行；Windows 包未做代码签名，SmartScreen 提示时选「仍要运行」即可。
 
 ## 项目概览
 

@@ -16,11 +16,31 @@
   </p>
 
   <p><strong>English</strong> | <a href="./README.md">中文</a></p>
+
+  <p>
+    <a href="https://github.com/zcx960/AIA-selection-assistan/releases/latest"><img src="https://img.shields.io/github/v/release/zcx960/AIA-selection-assistan?style=for-the-badge&label=Latest%20Release&color=2f6fed" alt="Latest release" /></a>
+    <a href="https://github.com/zcx960/AIA-selection-assistan/releases"><img src="https://img.shields.io/github/downloads/zcx960/AIA-selection-assistan/total?style=for-the-badge&label=Downloads&color=c9a227" alt="Total downloads" /></a>
+  </p>
 </div>
 
 `AIA Selection Assistant` is a lightweight desktop app for people who often read, write, translate, or look things up with AI. When you select text in almost any app, it pops up a small toolbar so you can translate, explain, summarize, search, or copy right away without breaking your flow.
 
 It currently supports macOS and Windows, with both OpenAI-compatible and Anthropic APIs. The goal is simple: stay lightweight, open fast, and keep setup easy.
+
+## Download
+
+Latest release **v0.3.0** — grab the installer for your platform:
+
+| Platform | Package | Link |
+| --- | --- | --- |
+| macOS (Apple Silicon) | `.dmg` | [AIA-Selection-Assistant-0.3.0-arm64.dmg](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.3.0/AIA-Selection-Assistant-0.3.0-arm64.dmg) |
+| macOS (Apple Silicon) | `.zip` | [AIA-Selection-Assistant-0.3.0-arm64-mac.zip](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.3.0/AIA-Selection-Assistant-0.3.0-arm64-mac.zip) |
+| Windows x64 | Installer | [AIA-Selection-Assistant-Setup-0.3.0.exe](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.3.0/AIA-Selection-Assistant-Setup-0.3.0.exe) |
+| Windows x64 | Portable | [AIA-Selection-Assistant-Portable-0.3.0.exe](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.3.0/AIA-Selection-Assistant-Portable-0.3.0.exe) |
+
+For older versions and full asset lists, see [GitHub Releases](https://github.com/zcx960/AIA-selection-assistan/releases).
+
+> The macOS builds are not code-signed — on first launch allow them via *System Settings → Privacy & Security*. Windows builds are not signed either; if SmartScreen complains, choose “Run anyway”.
 
 ## Overview
 
