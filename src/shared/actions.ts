@@ -17,7 +17,8 @@ export function getResponseLanguageName(language: AppLanguage): string {
 
 export function buildAssistantSystemPrompt(settings: Pick<AppSettings, 'language'>): string {
   const language = getResponseLanguageName(settings.language)
-  return `Always answer in ${language}. Match this response language even if the selected text or action prompt uses another language.`
+  const today = new Date().toISOString().slice(0, 10)
+  return `Always answer in ${language}. Match this response language even if the selected text or action prompt uses another language.\n\nCurrent date: ${today}. When the user asks about anything time-sensitive, treat this as the present and avoid baking outdated year markers into your reasoning.`
 }
 
 export function interpolatePrompt(
@@ -88,6 +89,8 @@ export function mergeSettings(current: AppSettings, patch: SettingsPatch): AppSe
     ...rest,
     theme: normalizeThemeMode(rest.theme ?? current.theme),
     triggerMode: normalizeTriggerMode(rest.triggerMode ?? current.triggerMode),
+    webSearchEnabled:
+      typeof rest.webSearchEnabled === 'boolean' ? rest.webSearchEnabled : current.webSearchEnabled,
     provider: nextProvider,
     providerTemplates: nextProviderTemplates,
     activeProviderTemplateId: selectedProviderTemplate?.id ?? defaultProviderTemplate.id,

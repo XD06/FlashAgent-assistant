@@ -65,6 +65,46 @@ const api = {
   },
   app: {
     openExternal: (url: string): Promise<void> => ipcRenderer.invoke(IPC.OpenExternal, url)
+  },
+  screenshot: {
+    start: (): Promise<void> => ipcRenderer.invoke(IPC.ScreenshotStart),
+    overlayReady: (): Promise<void> => ipcRenderer.invoke(IPC.ScreenshotOverlayReady),
+    overlayConfirm: (payload: {
+      displayId: number
+      x: number
+      y: number
+      width: number
+      height: number
+      action: 'explain' | 'save' | 'copy' | 'pin'
+    }): Promise<void> => ipcRenderer.invoke(IPC.ScreenshotOverlayConfirm, payload),
+    overlayCancel: (): Promise<void> => ipcRenderer.invoke(IPC.ScreenshotOverlayCancel),
+    save: (dataUrl: string): Promise<boolean> => ipcRenderer.invoke(IPC.ScreenshotSave, dataUrl),
+    copy: (dataUrl: string): Promise<boolean> => ipcRenderer.invoke(IPC.ScreenshotCopy, dataUrl),
+    pin: (dataUrl: string): Promise<void> => ipcRenderer.invoke(IPC.ScreenshotPin, dataUrl),
+    pinZoom: (deltaY: number): Promise<void> => ipcRenderer.invoke(IPC.ScreenshotPinZoom, deltaY),
+    pinMove: (dx: number, dy: number): Promise<void> => ipcRenderer.invoke(IPC.ScreenshotPinMove, dx, dy),
+    pinMenu: (): Promise<void> => ipcRenderer.invoke(IPC.ScreenshotPinMenu),
+    onOverlayInit: (callback: (payload: { imageDataUrl: string; displayId: number; width: number; height: number }) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, payload: { imageDataUrl: string; displayId: number; width: number; height: number }) => callback(payload)
+      ipcRenderer.on(IPC.ScreenshotOverlayInit, listener)
+      return () => {
+        ipcRenderer.off(IPC.ScreenshotOverlayInit, listener)
+      }
+    },
+    onPreviewInit: (callback: (payload: { imageDataUrl: string; width: number; height: number }) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, payload: { imageDataUrl: string; width: number; height: number }) => callback(payload)
+      ipcRenderer.on(IPC.ScreenshotPreviewInit, listener)
+      return () => {
+        ipcRenderer.off(IPC.ScreenshotPreviewInit, listener)
+      }
+    },
+    onPinInit: (callback: (payload: { imageDataUrl: string; width: number; height: number }) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, payload: { imageDataUrl: string; width: number; height: number }) => callback(payload)
+      ipcRenderer.on(IPC.ScreenshotPinInit, listener)
+      return () => {
+        ipcRenderer.off(IPC.ScreenshotPinInit, listener)
+      }
+    }
   }
 }
 

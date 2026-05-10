@@ -22,6 +22,8 @@ export interface ProviderTemplate {
 export interface ShortcutSettings {
   toggleAssistant: string
   processSelection: string
+  captureScreen: string
+  chat: string
 }
 
 export interface ActionItem {
@@ -50,6 +52,7 @@ export interface AppSettings {
   provider: ProviderSettings
   providerTemplates: ProviderTemplate[]
   activeProviderTemplateId: string
+  webSearchEnabled: boolean
   shortcuts: ShortcutSettings
   actions: ActionItem[]
 }
@@ -66,14 +69,22 @@ export interface ActionPayload {
   isFullscreen?: boolean
 }
 
+export interface AiMessageInput {
+  role: 'user' | 'assistant'
+  text: string
+  images?: string[]
+}
+
 export interface AiStreamRequest {
   requestId: string
-  prompt: string
+  prompt?: string
+  messages?: AiMessageInput[]
+  systemPrompt?: string
 }
 
 export interface AiChunkPayload {
   requestId: string
-  type: 'delta' | 'done' | 'error'
+  type: 'delta' | 'done' | 'error' | 'status'
   text?: string
   error?: string
 }

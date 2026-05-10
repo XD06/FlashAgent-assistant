@@ -1,4 +1,4 @@
-import type { ProviderApiType, ProviderSettings } from '@shared/types'
+import type { AiMessageInput, ProviderApiType, ProviderSettings } from '@shared/types'
 
 export class AiConfigurationError extends Error {}
 const ANTHROPIC_VERSION = '2023-06-01'
@@ -94,9 +94,50 @@ function parseProviderStreamEvent(apiType: ProviderApiType, raw: string): string
   return apiType === 'anthropic' ? parseAnthropicStreamEvent(raw) : parseOpenAIStreamEvent(raw)
 }
 
+function parseDataUrl(dataUrl: string): { mediaType: string; data: string } | null {
+  const match = /^data:([^;]+);base64,(.+)$/i.exec(dataUrl.trim())
+  if (!match) return null
+  return { mediaType: match[1], data: match[2] }
+}
+
+function buildOpenAIContent(message: AiMessageInput): unknown {
+  if (!message.images?.length) return message.text
+  const parts: unknown[] = []
+  if (message.text) parts.push({ type: 'text', text: message.text })
+  for (const image of message.images) {
+    parts.push({ type: 'image_url', image_url: { url: image } })
+  }
+  return parts
+}
+
+function buildAnthropicContent(message: AiMessageInput): unknown {
+  if (!message.images?.length) return message.text
+  const parts: unknown[] = []
+  for (const image of message.images) {
+    const parsed = parseDataUrl(image)
+    if (!parsed) continue
+    parts.push({
+      type: 'image',
+      source: { type: 'base64', media_type: parsed.mediaType, data: parsed.data }
+    })
+  }
+  if (message.text) parts.push({ type: 'text', text: message.text })
+  return parts
+}
+
 export async function streamChatCompletion(
   provider: ProviderSettings,
   prompt: string,
+  systemPrompt: string,
+  signal: AbortSignal,
+  onDelta: (delta: string) => void
+): Promise<void> {
+  return streamChatMessages(provider, [{ role: 'user', text: prompt }], systemPrompt, signal, onDelta)
+}
+
+export async function streamChatMessages(
+  provider: ProviderSettings,
+  messages: AiMessageInput[],
   systemPrompt: string,
   signal: AbortSignal,
   onDelta: (delta: string) => void
@@ -111,7 +152,10 @@ export async function streamChatCompletion(
           max_tokens: 1024,
           stream: true,
           system: systemPrompt,
-          messages: [{ role: 'user', content: prompt }]
+          messages: messages.map((message) => ({
+            role: message.role,
+            content: buildAnthropicContent(message)
+          }))
         }
       : {
           model: provider.model,
@@ -119,7 +163,10 @@ export async function streamChatCompletion(
           stream: true,
           messages: [
             { role: 'system', content: systemPrompt },
-            { role: 'user', content: prompt }
+            ...messages.map((message) => ({
+              role: message.role,
+              content: buildOpenAIContent(message)
+            }))
           ]
         }
 

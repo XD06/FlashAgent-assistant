@@ -26,6 +26,8 @@ It currently supports macOS and Windows, with both OpenAI-compatible and Anthrop
 
 - Electron desktop app for macOS and Windows
 - Floating toolbar appears after text selection
+- Built-in region screenshot: pin to desktop, copy, save, or hand it to AI for image understanding
+- Standalone AI chat window with multi-turn context and streaming follow-ups
 - API templates make it easy to switch models, keys, and providers
 - Light, dark, and follow-system theme modes
 - Result window supports Markdown rendering
@@ -60,6 +62,20 @@ It currently supports macOS and Windows, with both OpenAI-compatible and Anthrop
 - Supports multiple API templates for quick provider/model switching
 - Toolbar can run in compact mode and can hide the app icon
 - Closing the app minimizes it to the menu bar or system tray instead of quitting
+
+### Screenshot
+
+- Trigger region capture via a global shortcut and drag to select an area
+- After capture: send to AI, copy to clipboard, save as PNG, or pin to the desktop
+- Pinned images support wheel zoom, drag-to-move, and a right-click menu for opacity / reset / close
+- The pin's right-click menu can also send the image straight into the AI image-understanding chat
+
+### AI Chat and Follow-up
+
+- Dedicated chat window, decoupled from the toolbar's one-shot result popup
+- Multi-turn context: keep asking follow-ups and the model sees the previous turns
+- Streaming output, rendered as it arrives, with interrupt support at any time
+- The window can be pinned on top; closing it destroys the session so context never leaks
 
 ## Platform Notes
 

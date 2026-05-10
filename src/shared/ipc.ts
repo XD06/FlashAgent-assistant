@@ -23,7 +23,22 @@ export const IPC = {
   WindowClose: 'window:close',
   WindowMinimize: 'window:minimize',
   WindowPin: 'window:pin',
-  OpenExternal: 'app:open-external'
+  OpenExternal: 'app:open-external',
+
+  ScreenshotStart: 'screenshot:start',
+  ScreenshotOverlayReady: 'screenshot:overlay-ready',
+  ScreenshotOverlayInit: 'screenshot:overlay-init',
+  ScreenshotOverlayConfirm: 'screenshot:overlay-confirm',
+  ScreenshotOverlayCancel: 'screenshot:overlay-cancel',
+  ScreenshotPreviewInit: 'screenshot:preview-init',
+  ScreenshotSave: 'screenshot:save',
+  ScreenshotCopy: 'screenshot:copy',
+  ScreenshotPin: 'screenshot:pin',
+  ScreenshotPinInit: 'screenshot:pin-init',
+  ScreenshotPinZoom: 'screenshot:pin-zoom',
+  ScreenshotPinMove: 'screenshot:pin-move',
+  ScreenshotPinMenu: 'screenshot:pin-menu',
+  ScreenshotExplain: 'screenshot:explain'
 } as const
 
 export type IpcName = (typeof IPC)[keyof typeof IPC]

@@ -3,12 +3,17 @@ import React from 'react'
 import { createRoot } from 'react-dom/client'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { interpolatePrompt } from '@shared/actions'
-import type { ActionPayload, AiChunkPayload, AiMessageInput } from '@shared/types'
+import type { AiChunkPayload, AiMessageInput } from '@shared/types'
 import { Icon } from '../icons'
 import { useSettings } from '../useSettings'
 import { useThemeMode } from '../useThemeMode'
-import { getActionLabel, getTranslator } from '../i18n'
+import { getTranslator } from '../i18n'
+
+interface PreviewInit {
+  imageDataUrl: string
+  width: number
+  height: number
+}
 
 interface ChatTurn {
   role: 'user' | 'assistant'
@@ -18,19 +23,21 @@ interface ChatTurn {
   searchQuery?: string
 }
 
-function ActionApp() {
+function PreviewApp() {
   const { settings } = useSettings()
-  const [payload, setPayload] = React.useState<ActionPayload | null>(null)
-  const [chat, setChat] = React.useState<ChatTurn[]>([])
-  const [pinned, setPinned] = React.useState(settings.autoPin)
-  const [askOpen, setAskOpen] = React.useState(false)
-  const [askText, setAskText] = React.useState('')
-  const activeRequestId = React.useRef<string | null>(null)
-  const askInputRef = React.useRef<HTMLInputElement>(null)
-  const contentRef = React.useRef<HTMLDivElement>(null)
   const t = getTranslator(settings.language)
   useThemeMode(settings.theme)
   const isZh = settings.language === 'zh-CN'
+
+  const [payload, setPayload] = React.useState<PreviewInit | null>(null)
+  const [chat, setChat] = React.useState<ChatTurn[]>([])
+  const [showImage, setShowImage] = React.useState(false)
+  const [askOpen, setAskOpen] = React.useState(false)
+  const [askText, setAskText] = React.useState('')
+  const [pinned, setPinned] = React.useState(settings.autoPin)
+  const activeRequestId = React.useRef<string | null>(null)
+  const askInputRef = React.useRef<HTMLInputElement>(null)
+  const contentRef = React.useRef<HTMLDivElement>(null)
 
   React.useEffect(() => {
     document.documentElement.classList.add('action-page-root')
@@ -41,7 +48,15 @@ function ActionApp() {
     }
   }, [])
 
-  React.useEffect(() => window.assistantLite.selection.onAction(setPayload), [])
+  React.useEffect(() => {
+    return window.assistantLite.screenshot.onPreviewInit((data) => {
+      setPayload(data)
+      setChat([])
+      setShowImage(false)
+      setAskOpen(false)
+      setAskText('')
+    })
+  }, [])
 
   React.useEffect(() => {
     return window.assistantLite.ai.onChunk((chunk: AiChunkPayload) => {
@@ -70,12 +85,13 @@ function ActionApp() {
     })
   }, [t])
 
+  // Auto-scroll to bottom on chat updates
   React.useEffect(() => {
     contentRef.current?.scrollTo({ top: contentRef.current.scrollHeight })
   }, [chat])
 
-  // Send a turn against the current chat history (uses functional updater to avoid stale state)
-  const sendTurn = React.useCallback((userText: string) => {
+  const sendTurn = React.useCallback((userText: string, includeImage: boolean) => {
+    if (!payload) return
     setChat((current) => {
       const next: ChatTurn[] = [
         ...current,
@@ -84,55 +100,62 @@ function ActionApp() {
       ]
       const messages: AiMessageInput[] = next
         .slice(0, -1)
-        .map((turn) => ({ role: turn.role, text: turn.text }))
+        .map((turn, index) => {
+          const isFirstUser = index === 0 && turn.role === 'user'
+          return {
+            role: turn.role,
+            text: turn.text,
+            ...(isFirstUser && includeImage ? { images: [payload.imageDataUrl] } : {})
+          }
+        })
       const requestId = crypto.randomUUID()
       activeRequestId.current = requestId
       void window.assistantLite.ai.stream({ requestId, messages })
       return next
     })
-  }, [])
+  }, [payload])
 
-  const runInitialAction = React.useCallback(() => {
-    if (!payload) return
-    const prompt = interpolatePrompt(payload.action.promptTemplate, payload.selectedText, {
-      language: t('targetLanguageName')
-    })
-    setChat([])
-    setAskOpen(false)
-    setAskText('')
-    setTimeout(() => sendTurn(prompt), 0)
-  }, [payload, t, sendTurn])
+  const explain = React.useCallback(() => {
+    const prompt = isZh
+      ? '直接用简洁易懂的话解释这张图片。抓住重点，不要废话，不要逐一描述画面元素，也不要堆砌冗长段落；只有在真正有帮助时再补一句简短总结。'
+      : 'Explain this image directly in plain, easy-to-understand language. Be concise, stay focused on the key point, avoid listing every visual element, and skip filler. Add a brief summary only when it is genuinely helpful.'
+    sendTurn(prompt, true)
+  }, [isZh, sendTurn])
 
+  // Auto-trigger initial explain
   React.useEffect(() => {
-    if (payload) runInitialAction()
+    if (payload && chat.length === 0) explain()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [payload])
 
-  React.useEffect(() => {
-    const onBlur = () => {
-      if (settings.autoClose && !pinned) void window.assistantLite.windowControls.close()
-    }
-    window.addEventListener('blur', onBlur)
-    return () => window.removeEventListener('blur', onBlur)
-  }, [settings.autoClose, pinned])
-
-  if (!payload) return null
-
-  const lastTurn = chat[chat.length - 1]
-  const loading = !!lastTurn?.pending
-  const hasResult = chat.some((turn) => turn.role === 'assistant' && turn.text)
-
   const stop = () => {
-    if (activeRequestId.current) void window.assistantLite.ai.abort(activeRequestId.current)
-    activeRequestId.current = null
-    setChat((current) => {
-      if (!current.length) return current
-      const next = [...current]
-      const last = { ...next[next.length - 1] }
-      last.pending = false
-      next[next.length - 1] = last
-      return next
-    })
+    if (activeRequestId.current) {
+      void window.assistantLite.ai.abort(activeRequestId.current)
+      activeRequestId.current = null
+      setChat((current) => {
+        if (!current.length) return current
+        const next = [...current]
+        const last = { ...next[next.length - 1] }
+        last.pending = false
+        next[next.length - 1] = last
+        return next
+      })
+    }
+  }
+
+  const regenerate = () => {
+    if (activeRequestId.current) return
+    setChat([])
+    // delay so chat reset takes effect before sendTurn reads it
+    setTimeout(() => explain(), 0)
+  }
+
+  const submitAsk = () => {
+    const text = askText.trim()
+    if (!text || activeRequestId.current) return
+    setAskText('')
+    setAskOpen(false)
+    sendTurn(text, chat.length === 0)
   }
 
   const togglePin = () => {
@@ -141,24 +164,28 @@ function ActionApp() {
     void window.assistantLite.windowControls.pin(next)
   }
 
-  const submitAsk = () => {
-    const text = askText.trim()
-    if (!text || activeRequestId.current) return
-    setAskText('')
-    setAskOpen(false)
-    sendTurn(text)
-  }
-
   const copyLast = () => {
     const last = [...chat].reverse().find((turn) => turn.role === 'assistant' && turn.text)
     if (last) void navigator.clipboard.writeText(last.text)
   }
 
+  const lastTurn = chat[chat.length - 1]
+  const loading = !!lastTurn?.pending
+  const hasResult = chat.some((turn) => turn.role === 'assistant' && turn.text)
+
+  if (!payload) return null
+
   return (
     <div className="action-window action-window--flex">
       <div className="titlebar">
-        <Icon name={payload.action.icon} />
-        <strong>{getActionLabel(payload.action, settings.language)}</strong>
+        <Icon name="sparkles" />
+        <strong>{isZh ? 'AI 识图' : 'AI Vision'}</strong>
+        <button
+          className="icon"
+          title={showImage ? (isZh ? '隐藏原图' : 'Hide image') : (isZh ? '显示原图' : 'Show image')}
+          onClick={() => setShowImage((v) => !v)}>
+          <Icon name="square" />
+        </button>
         <button className="icon" title={pinned ? t('unpin') : t('pin')} onClick={togglePin}>
           <Icon name={pinned ? 'pin-off' : 'pin'} />
         </button>
@@ -170,8 +197,14 @@ function ActionApp() {
         </button>
       </div>
 
+      {showImage && (
+        <div className="screenshot-preview__thumb">
+          <img src={payload.imageDataUrl} alt="" />
+        </div>
+      )}
+
       <div className="content" ref={contentRef}>
-        {chat.length === 0 && <div className="thinking-indicator">{t('preparing')}</div>}
+        {chat.length === 0 && loading && <div className="thinking-indicator">{t('preparing')}</div>}
         {chat.map((turn, index) => {
           if (turn.role === 'assistant') {
             return (
@@ -190,8 +223,9 @@ function ActionApp() {
               </div>
             )
           }
-          // skip the initial prompt (built from the action template)
-          if (index === 0) return null
+          // user follow-up turn (skip the auto first prompt)
+          const isAutoFirst = index === 0
+          if (isAutoFirst) return null
           return (
             <div key={index} className="screenshot-preview__user-msg">
               {turn.text}
@@ -232,7 +266,7 @@ function ActionApp() {
         <button onClick={loading ? stop : () => window.assistantLite.windowControls.close()}>
           {loading ? t('stop') : t('close')}
         </button>
-        <button onClick={runInitialAction} disabled={loading}>
+        <button onClick={regenerate} disabled={loading}>
           {t('regenerate')}
         </button>
         <button
@@ -253,6 +287,6 @@ function ActionApp() {
 
 createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <ActionApp />
+    <PreviewApp />
   </React.StrictMode>
 )

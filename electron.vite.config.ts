@@ -33,7 +33,11 @@ export default defineConfig({
         input: {
           settings: resolve(__dirname, 'src/renderer/settings.html'),
           selectionToolbar: resolve(__dirname, 'src/renderer/selectionToolbar.html'),
-          selectionAction: resolve(__dirname, 'src/renderer/selectionAction.html')
+          selectionAction: resolve(__dirname, 'src/renderer/selectionAction.html'),
+          screenshotOverlay: resolve(__dirname, 'src/renderer/screenshotOverlay.html'),
+          screenshotPreview: resolve(__dirname, 'src/renderer/screenshotPreview.html'),
+          screenshotPin: resolve(__dirname, 'src/renderer/screenshotPin.html'),
+          chat: resolve(__dirname, 'src/renderer/chat.html')
         }
       }
     }

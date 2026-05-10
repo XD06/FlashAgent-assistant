@@ -193,7 +193,7 @@ describe('selection actions', () => {
       buildAssistantSystemPrompt({
         language: 'en'
       })
-    ).toBe('Always answer in English. Match this response language even if the selected text or action prompt uses another language.')
+    ).toContain('Always answer in English. Match this response language even if the selected text or action prompt uses another language.')
   })
 
   it('merges an action prompt update without changing other actions', () => {

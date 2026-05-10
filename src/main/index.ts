@@ -7,7 +7,9 @@ import { buildAssistantSystemPrompt } from '@shared/actions'
 import { IPC } from '@shared/ipc'
 import { APP_ICON_DATA_URL, APP_TRAY_DATA_URL } from '@shared/brand'
 import type { AiStreamRequest, SettingsPatch } from '@shared/types'
-import { listModels, streamChatCompletion, testModel } from './ai/OpenAICompatibleClient'
+import { listModels, streamChatMessages, testModel } from './ai/OpenAICompatibleClient'
+import { decideSearch, formatSearchContext, searchExa } from './ai/WebSearch'
+import { ScreenshotService } from './ScreenshotService'
 import { SelectionService } from './SelectionService'
 import { getSettings, onSettingsChanged, updateSettings } from './settingsStore'
 import { isSupportedPlatform, isWin } from './platform'
@@ -19,8 +21,12 @@ const rendererDir = join(__dirname, '../renderer')
 if (isWin) app.commandLine.appendSwitch('wm-window-animations-disabled')
 
 let settingsWindow: BrowserWindow | null = null
+let chatWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let isQuitting = false
+const CHAT_SHADOW_PADDING = 18
+const CHAT_DEFAULT_WIDTH = 440
+const CHAT_DEFAULT_HEIGHT = 580
 const abortControllers = new Map<string, AbortController>()
 
 function createNativeImageFromFile(paths: string[], fallbackDataUrl: string): Electron.NativeImage {
@@ -45,6 +51,7 @@ const trayIcon = createNativeImageFromFile(
   APP_TRAY_DATA_URL
 )
 const selectionService = new SelectionService(getSettings, preloadPath, rendererDir, appIcon)
+const screenshotService = new ScreenshotService(getSettings, preloadPath, rendererDir, appIcon)
 
 function getTrayIcon(): Electron.NativeImage {
   return trayIcon.resize({ width: 18, height: 18 })
@@ -111,6 +118,45 @@ function createSettingsWindow(): BrowserWindow {
   return settingsWindow
 }
 
+function openChatWindow(): void {
+  if (chatWindow && !chatWindow.isDestroyed()) {
+    if (chatWindow.isMinimized()) chatWindow.restore()
+    chatWindow.show()
+    chatWindow.focus()
+    return
+  }
+  chatWindow = new BrowserWindow({
+    width: CHAT_DEFAULT_WIDTH + CHAT_SHADOW_PADDING * 2,
+    height: CHAT_DEFAULT_HEIGHT + CHAT_SHADOW_PADDING * 2,
+    minWidth: 360 + CHAT_SHADOW_PADDING * 2,
+    minHeight: 360 + CHAT_SHADOW_PADDING * 2,
+    icon: appIcon,
+    title: 'AIA划词助手',
+    autoHideMenuBar: true,
+    show: false,
+    frame: false,
+    transparent: true,
+    hasShadow: false,
+    titleBarStyle: 'hidden',
+    trafficLightPosition: { x: CHAT_SHADOW_PADDING + 12, y: CHAT_SHADOW_PADDING + 10 },
+    webPreferences: {
+      preload: preloadPath,
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false
+    }
+  })
+  const win = chatWindow
+  win.on('closed', () => {
+    if (chatWindow === win) chatWindow = null
+  })
+  win.once('ready-to-show', () => {
+    win.show()
+    win.focus()
+  })
+  loadRenderer(win, 'chat.html')
+}
+
 function createTray(): void {
   tray = new Tray(getTrayIcon())
   tray.setToolTip('AIA划词助手')
@@ -160,14 +206,30 @@ function registerShortcuts(): void {
       action: () => {
         selectionService.processShortcutSelection()
       }
+    },
+    {
+      accelerator: settings.shortcuts.captureScreen,
+      action: () => {
+        void screenshotService.startCapture()
+      }
+    },
+    {
+      accelerator: settings.shortcuts.chat,
+      action: () => {
+        openChatWindow()
+      }
     }
   ]
 
   for (const shortcut of shortcuts) {
-    const accelerator = shortcut.accelerator.trim()
+    const accelerator = shortcut.accelerator?.trim()
     if (!accelerator) continue
     const registered = globalShortcut.register(accelerator, shortcut.action)
-    if (!registered) console.warn(`Failed to register global shortcut: ${accelerator}`)
+    if (registered) {
+      console.log(`[shortcut] registered: ${accelerator}`)
+    } else {
+      console.warn(`[shortcut] FAILED to register: ${accelerator} (likely taken by another app)`)
+    }
   }
 }
 
@@ -185,6 +247,7 @@ function applySelectionState(settings = getSettings()): void {
 
 function registerIpc(): void {
   selectionService.registerIpc()
+  screenshotService.registerIpc()
 
   ipcMain.handle(IPC.SettingsGet, () => getSettings())
   ipcMain.handle(IPC.SettingsUpdate, (_event, patch: SettingsPatch) => {
@@ -200,7 +263,43 @@ function registerIpc(): void {
     const settings = getSettings()
     abortControllers.set(request.requestId, controller)
     try {
-      await streamChatCompletion(settings.provider, request.prompt, buildAssistantSystemPrompt(settings), controller.signal, (delta) => {
+      const messages = request.messages?.length
+        ? request.messages
+        : [{ role: 'user' as const, text: request.prompt ?? '' }]
+      let systemPrompt = request.systemPrompt ?? buildAssistantSystemPrompt(settings)
+
+      // Optional: web search pre-flight. Let the model decide; if yes, query Exa
+      // (via its public hosted MCP — no key required) and inject the results
+      // into the system prompt before the main stream.
+      if (settings.webSearchEnabled) {
+        const lastUser = [...messages].reverse().find((m) => m.role === 'user')
+        const userText = lastUser?.text?.trim() ?? ''
+        if (userText) {
+          try {
+            const decision = await decideSearch(
+              settings.provider,
+              userText,
+              settings.language,
+              controller.signal
+            )
+            if (decision.needsSearch && decision.query) {
+              event.sender.send(IPC.AiChunk, {
+                requestId: request.requestId,
+                type: 'status',
+                text: decision.query
+              })
+              const results = await searchExa(decision.query, controller.signal)
+              const context = formatSearchContext(decision.query, results, settings.language)
+              if (context) systemPrompt = `${systemPrompt}\n\n${context}`
+            }
+          } catch (error) {
+            if (controller.signal.aborted) throw error
+            console.warn('[web-search] skipped:', error instanceof Error ? error.message : error)
+          }
+        }
+      }
+
+      await streamChatMessages(settings.provider, messages, systemPrompt, controller.signal, (delta) => {
         event.sender.send(IPC.AiChunk, { requestId: request.requestId, type: 'delta', text: delta })
       })
       event.sender.send(IPC.AiChunk, { requestId: request.requestId, type: 'done' })
@@ -259,5 +358,6 @@ if (!app.requestSingleInstanceLock()) {
     isQuitting = true
     globalShortcut.unregisterAll()
     selectionService.dispose()
+    screenshotService.dispose()
   })
 }

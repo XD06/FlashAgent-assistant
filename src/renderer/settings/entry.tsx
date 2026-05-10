@@ -470,6 +470,16 @@ function SettingsApp() {
               {modelStatus && <div className="model-status">{modelStatus}</div>}
             </div>
           </SettingSection>
+
+          <SettingSection title={t('webSearchGroup')}>
+            <SettingRow title={t('webSearchEnabled')} description={t('webSearchEnabledDesc')}>
+              <Toggle
+                checked={settings.webSearchEnabled}
+                label={t('webSearchEnabled')}
+                onChange={(webSearchEnabled) => update({ webSearchEnabled })}
+              />
+            </SettingRow>
+          </SettingSection>
         </div>
       )
     }
@@ -503,6 +513,28 @@ function SettingsApp() {
                 value={settings.shortcuts.processSelection}
                 label={t('shortcutProcessSelection')}
                 onChange={(value) => updateShortcut('processSelection', value)}
+                t={t}
+              />
+            </SettingRow>
+            <SettingRow
+              title={t('shortcutCaptureScreen')}
+              description={t('shortcutCaptureScreenDesc')}
+              className="shortcut-row">
+              <ShortcutRecorder
+                value={settings.shortcuts.captureScreen}
+                label={t('shortcutCaptureScreen')}
+                onChange={(value) => updateShortcut('captureScreen', value)}
+                t={t}
+              />
+            </SettingRow>
+            <SettingRow
+              title={t('shortcutChat')}
+              description={t('shortcutChatDesc')}
+              className="shortcut-row">
+              <ShortcutRecorder
+                value={settings.shortcuts.chat}
+                label={t('shortcutChat')}
+                onChange={(value) => updateShortcut('chat', value)}
                 t={t}
               />
             </SettingRow>

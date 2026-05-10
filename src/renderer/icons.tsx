@@ -172,9 +172,30 @@ function XIcon({ size = 16, strokeWidth = 2 }: IconProps) {
   )
 }
 
+function Download({ size = 16, strokeWidth = 2 }: IconProps) {
+  return (
+    <svg {...baseProps(size)} strokeWidth={strokeWidth}>
+      <path d="M12 4v11" />
+      <path d="m7 10 5 5 5-5" />
+      <path d="M5 19h14" />
+    </svg>
+  )
+}
+
+function ArrowUp({ size = 16, strokeWidth = 2 }: IconProps) {
+  return (
+    <svg {...baseProps(size)} strokeWidth={strokeWidth}>
+      <path d="M12 5v14" />
+      <path d="m6 11 6-6 6 6" />
+    </svg>
+  )
+}
+
 const icons: Record<string, (props: IconProps) => React.JSX.Element> = {
   'circle-help': CircleHelp,
+  'arrow-up': ArrowUp,
   copy: CopyIcon,
+  download: Download,
   'flask-conical': FlaskConical,
   languages: Languages,
   laptop: Laptop,
