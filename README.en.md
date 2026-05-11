@@ -4,7 +4,7 @@
 
   <h1>AIA Selection Assistant</h1>
 
-  <p>A lightweight desktop helper that brings translation, explanation, summaries, and search right next to your text selection.</p>
+  <p>Highlight text, snap a screenshot, ask AI — skip a few window switches, skip a lot of copy-pasting.</p>
 
   <p>
     <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-2f6fed?style=flat-square" alt="Platform" />
@@ -23,20 +23,31 @@
   </p>
 </div>
 
-`AIA Selection Assistant` is a lightweight desktop app for people who often read, write, translate, or look things up with AI. When you select text in almost any app, it pops up a small toolbar so you can translate, explain, summarize, search, or copy right away without breaking your flow.
+AIA Selection Assistant lives in your menu bar / system tray. Highlight some text in any app and a small toolbar slides in next to it — one click to translate, explain, summarize, rewrite, search, or copy. Prefer the keyboard? A global shortcut works too.
 
-It currently supports macOS and Windows, with both OpenAI-compatible and Anthropic APIs. The goal is simple: stay lightweight, open fast, and keep setup easy.
+It also ships a built-in region screenshot tool: drag to select an area, annotate with pen or arrows (brush size is a quick slider away), then save as PNG, copy to clipboard, pin to the desktop, or hand the image straight to AI for vision-based analysis. Pinned screenshots support wheel zoom, drag-to-move, opacity tweaking, and a right-click menu to re-send them to AI.
+
+The result window is its own conversation — keep asking follow-ups, AI sees the earlier turns, and output streams in so you can interrupt any time. Flip on web search when you need fresh information; AI will fetch pages itself and cite the sources at the bottom of the answer.
+
+For models you can point it at either **OpenAI-compatible** endpoints (your own endpoint, OpenAI, DeepSeek, Moonshot, Zhipu, any third-party proxy) or the **Anthropic** API. Multiple templates let you swap endpoint / key / model in one click, and your API keys stay on disk. Light / dark / system theme modes, plus English and Chinese UI.
+
+Currently runs on macOS and Windows.
 
 ## Download
 
-Latest release **v0.3.0** — grab the installer for your platform:
+Latest release **v0.4.0** — grab the installer for your platform:
 
 | Platform | Package | Link |
 | --- | --- | --- |
-| macOS (Apple Silicon) | `.dmg` | [AIA-Selection-Assistant-0.3.0-arm64.dmg](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.3.0/AIA-Selection-Assistant-0.3.0-arm64.dmg) |
-| macOS (Apple Silicon) | `.zip` | [AIA-Selection-Assistant-0.3.0-arm64-mac.zip](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.3.0/AIA-Selection-Assistant-0.3.0-arm64-mac.zip) |
-| Windows x64 | Installer | [AIA-Selection-Assistant-Setup-0.3.0.exe](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.3.0/AIA-Selection-Assistant-Setup-0.3.0.exe) |
-| Windows x64 | Portable | [AIA-Selection-Assistant-Portable-0.3.0.exe](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.3.0/AIA-Selection-Assistant-Portable-0.3.0.exe) |
+| macOS (Apple Silicon) | `.dmg` | [AIA-Selection-Assistant-0.4.0-arm64.dmg](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.4.0/AIA-Selection-Assistant-0.4.0-arm64.dmg) |
+| macOS (Apple Silicon) | `.zip` | [AIA-Selection-Assistant-0.4.0-arm64-mac.zip](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.4.0/AIA-Selection-Assistant-0.4.0-arm64-mac.zip) |
+| Windows x64 | Installer | [AIA-Selection-Assistant-Setup-0.4.0.exe](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.4.0/AIA-Selection-Assistant-Setup-0.4.0.exe) |
+| Windows x64 | Portable | [AIA-Selection-Assistant-Portable-0.4.0.exe](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.4.0/AIA-Selection-Assistant-Portable-0.4.0.exe) |
+
+### v0.4.0 highlights
+
+- Reworked screenshot flow (selection masking, unified annotation toolbar, adjustable brush size, fixed macOS title-bar control conflict)
+- Web search improvements
 
 For older versions and full asset lists, see [GitHub Releases](https://github.com/zcx960/AIA-selection-assistan/releases).
 
