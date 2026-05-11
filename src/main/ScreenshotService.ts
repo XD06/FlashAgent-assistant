@@ -18,19 +18,32 @@ import { isMac } from './platform'
 export interface OverlayInitPayload {
   imageDataUrl: string
   displayId: number
+  // Display size in logical CSS pixels (rotation-aware)
   width: number
   height: number
+  // Actual pixel dimensions of the captured image (may differ from
+  // display.size * scaleFactor on Windows / rotated displays).
+  imageWidth: number
+  imageHeight: number
 }
 
 export type OverlayAction = 'explain' | 'save' | 'copy' | 'pin'
 
 export interface OverlayConfirmPayload {
   displayId: number
+  // Selection rect in CSS pixels of the overlay window viewport
   x: number
   y: number
   width: number
   height: number
+  // Overlay viewport size (window.innerWidth/innerHeight) so main can
+  // compute the correct crop ratio against the actual image pixels.
+  viewportWidth: number
+  viewportHeight: number
   action: OverlayAction
+  // Optional pre-rasterized image (already cropped + annotated by the
+  // renderer). When present we use this directly and skip cropping.
+  imageDataUrl?: string
 }
 
 export interface PreviewInitPayload {
@@ -78,11 +91,14 @@ export class ScreenshotService {
     ipcMain.handle(IPC.ScreenshotOverlayReady, (event) => {
       const win = BrowserWindow.fromWebContents(event.sender)
       if (win && win === this.overlayWindow && this.currentCapture) {
+        const imageSize = this.currentCapture.image.getSize()
         const payload: OverlayInitPayload = {
           imageDataUrl: this.currentCapture.dataUrl,
           displayId: this.currentCapture.display.id,
           width: this.currentCapture.display.size.width,
-          height: this.currentCapture.display.size.height
+          height: this.currentCapture.display.size.height,
+          imageWidth: imageSize.width,
+          imageHeight: imageSize.height
         }
         event.sender.send(IPC.ScreenshotOverlayInit, payload)
       }
@@ -196,6 +212,17 @@ export class ScreenshotService {
     this.loadRenderer(overlay, 'screenshotOverlay.html')
     overlay.once('ready-to-show', () => {
       overlay.show()
+      // On Windows the taskbar will otherwise float above a normal
+      // top-most window. Re-asserting bounds + simple fullscreen
+      // forces the overlay to truly cover the whole display.
+      if (!isMac) {
+        overlay.setBounds(display.bounds)
+        try {
+          overlay.setSimpleFullScreen(true)
+        } catch {
+          // ignore — older Electron may not support it
+        }
+      }
       overlay.focus()
     })
   }
@@ -211,16 +238,37 @@ export class ScreenshotService {
     const capture = this.currentCapture
     this.closeOverlay()
     if (!capture) return
-    const scale = capture.display.scaleFactor || 1
-    const cropX = Math.max(0, Math.round(payload.x * scale))
-    const cropY = Math.max(0, Math.round(payload.y * scale))
-    const cropW = Math.max(1, Math.round(payload.width * scale))
-    const cropH = Math.max(1, Math.round(payload.height * scale))
-    const cropped = capture.image.crop({ x: cropX, y: cropY, width: cropW, height: cropH })
-    this.currentCapture = null
-    if (cropped.isEmpty()) return
-    const dataUrl = cropped.toDataURL()
-    const size = cropped.getSize()
+
+    let dataUrl: string
+    let size: { width: number; height: number }
+
+    if (payload.imageDataUrl) {
+      // Renderer has already rasterized the crop (with annotations).
+      const image = nativeImage.createFromDataURL(payload.imageDataUrl)
+      this.currentCapture = null
+      if (image.isEmpty()) return
+      dataUrl = payload.imageDataUrl
+      size = image.getSize()
+    } else {
+      // Map selection from overlay-viewport CSS pixels to the actual captured
+      // image pixels using the real viewport/image ratio. This is robust to
+      // DPI scaling, display rotation, and any minor window-size mismatch
+      // (e.g. Windows truncating the taskbar region).
+      const imageSize = capture.image.getSize()
+      const vpW = Math.max(1, payload.viewportWidth || capture.display.size.width)
+      const vpH = Math.max(1, payload.viewportHeight || capture.display.size.height)
+      const scaleX = imageSize.width / vpW
+      const scaleY = imageSize.height / vpH
+      const cropX = Math.max(0, Math.min(imageSize.width - 1, Math.round(payload.x * scaleX)))
+      const cropY = Math.max(0, Math.min(imageSize.height - 1, Math.round(payload.y * scaleY)))
+      const cropW = Math.max(1, Math.min(imageSize.width - cropX, Math.round(payload.width * scaleX)))
+      const cropH = Math.max(1, Math.min(imageSize.height - cropY, Math.round(payload.height * scaleY)))
+      const cropped = capture.image.crop({ x: cropX, y: cropY, width: cropW, height: cropH })
+      this.currentCapture = null
+      if (cropped.isEmpty()) return
+      dataUrl = cropped.toDataURL()
+      size = cropped.getSize()
+    }
 
     switch (payload.action) {
       case 'save':

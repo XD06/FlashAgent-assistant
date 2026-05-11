@@ -61,7 +61,7 @@ function parseExaToolText(text: string): ExaResult[] {
   }
 }
 
-export async function searchExa(query: string, signal: AbortSignal, numResults = 5): Promise<ExaResult[]> {
+export async function searchExa(query: string, signal: AbortSignal, numResults = 10): Promise<ExaResult[]> {
   const transport = new StreamableHTTPClientTransport(new URL(EXA_MCP_URL))
   const client = new Client(
     { name: 'aia-selection-assistant', version: '0.2.0' },
@@ -123,7 +123,7 @@ export function formatSearchContext(query: string, results: ExaResult[], languag
       const title = (result.title ?? `Result ${index + 1}`).trim()
       const url = (result.url ?? '').trim()
       const date = result.publishedDate ? ` · ${result.publishedDate.slice(0, 10)}` : ''
-      const snippet = (result.text ?? '').replace(/\s+/g, ' ').slice(0, 600)
+      const snippet = (result.text ?? '').replace(/\s+/g, ' ').slice(0, 1500)
       const urlLine = url ? `${url}\n` : ''
       return `[${index + 1}] ${title}${date}\n${urlLine}${snippet}`
     })

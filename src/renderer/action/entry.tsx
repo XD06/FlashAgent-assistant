@@ -18,6 +18,8 @@ interface ChatTurn {
   searchQuery?: string
 }
 
+const isMac = navigator.userAgent.includes('Mac OS X')
+
 function ActionApp() {
   const { settings } = useSettings()
   const [payload, setPayload] = React.useState<ActionPayload | null>(null)
@@ -28,6 +30,8 @@ function ActionApp() {
   const activeRequestId = React.useRef<string | null>(null)
   const askInputRef = React.useRef<HTMLInputElement>(null)
   const contentRef = React.useRef<HTMLDivElement>(null)
+  const chatRef = React.useRef<ChatTurn[]>([])
+  const stickToBottomRef = React.useRef(true)
   const t = getTranslator(settings.language)
   useThemeMode(settings.theme)
   const isZh = settings.language === 'zh-CN'
@@ -71,25 +75,44 @@ function ActionApp() {
   }, [t])
 
   React.useEffect(() => {
-    contentRef.current?.scrollTo({ top: contentRef.current.scrollHeight })
+    chatRef.current = chat
   }, [chat])
 
-  // Send a turn against the current chat history (uses functional updater to avoid stale state)
+  React.useEffect(() => {
+    const el = contentRef.current
+    if (!el) return
+    const onScroll = () => {
+      const distance = el.scrollHeight - el.scrollTop - el.clientHeight
+      stickToBottomRef.current = distance < 32
+    }
+    el.addEventListener('scroll', onScroll, { passive: true })
+    return () => el.removeEventListener('scroll', onScroll)
+  }, [])
+
+  React.useEffect(() => {
+    if (!stickToBottomRef.current) return
+    const el = contentRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [chat])
+
+  // Send a turn against the current chat history. We read history from a
+  // ref to avoid running side-effects inside a setState updater (which
+  // would double-fire under StrictMode and could issue duplicate streams).
   const sendTurn = React.useCallback((userText: string) => {
-    setChat((current) => {
-      const next: ChatTurn[] = [
-        ...current,
-        { role: 'user', text: userText },
-        { role: 'assistant', text: '', pending: true }
-      ]
-      const messages: AiMessageInput[] = next
-        .slice(0, -1)
-        .map((turn) => ({ role: turn.role, text: turn.text }))
-      const requestId = crypto.randomUUID()
-      activeRequestId.current = requestId
-      void window.assistantLite.ai.stream({ requestId, messages })
-      return next
-    })
+    const history = chatRef.current
+    const messages: AiMessageInput[] = [
+      ...history.map((turn) => ({ role: turn.role, text: turn.text })),
+      { role: 'user', text: userText }
+    ]
+    const requestId = crypto.randomUUID()
+    activeRequestId.current = requestId
+    void window.assistantLite.ai.stream({ requestId, messages })
+    stickToBottomRef.current = true
+    setChat([
+      ...history,
+      { role: 'user', text: userText },
+      { role: 'assistant', text: '', pending: true }
+    ])
   }, [])
 
   const runInitialAction = React.useCallback(() => {
@@ -97,6 +120,7 @@ function ActionApp() {
     const prompt = interpolatePrompt(payload.action.promptTemplate, payload.selectedText, {
       language: t('targetLanguageName')
     })
+    chatRef.current = []
     setChat([])
     setAskOpen(false)
     setAskText('')
@@ -162,12 +186,16 @@ function ActionApp() {
         <button className="icon" title={pinned ? t('unpin') : t('pin')} onClick={togglePin}>
           <Icon name={pinned ? 'pin-off' : 'pin'} />
         </button>
-        <button className="icon" title={t('minimize')} onClick={() => window.assistantLite.windowControls.minimize()}>
-          <span>-</span>
-        </button>
-        <button className="icon" title={t('close')} onClick={() => window.assistantLite.windowControls.close()}>
-          <Icon name="x" />
-        </button>
+        {!isMac && (
+          <>
+            <button className="icon" title={t('minimize')} onClick={() => window.assistantLite.windowControls.minimize()}>
+              <span>-</span>
+            </button>
+            <button className="icon" title={t('close')} onClick={() => window.assistantLite.windowControls.close()}>
+              <Icon name="x" />
+            </button>
+          </>
+        )}
       </div>
 
       <div className="content" ref={contentRef}>

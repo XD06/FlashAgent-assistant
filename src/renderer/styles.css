@@ -1217,13 +1217,25 @@ html[data-theme='dark'] .footer button:last-child {
   position: absolute;
   inset: 0;
   width: 100%;
+  /* Use fill so the screenshot maps exactly to the overlay viewport.
+     `cover` would slightly zoom whenever the image aspect ratio differs
+     from the window (e.g. DPI rounding on Windows), making the framed
+     screen appear to "pop" larger than the underlying desktop. */
   height: 100%;
-  object-fit: cover;
+  object-fit: fill;
   pointer-events: none;
 }
 .screenshot-overlay__mask {
   position: absolute;
   inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+}
+/* Individual mask piece — positioned explicitly via inline left/top/width/height.
+   Must NOT inherit `inset: 0`, otherwise the cascaded right:0 / bottom:0 would
+   stretch each piece to the screen edge and produce a full-height dark bar. */
+.screenshot-overlay__mask-piece {
+  position: absolute;
   background: rgba(0, 0, 0, 0.45);
   pointer-events: none;
 }
@@ -1233,6 +1245,64 @@ html[data-theme='dark'] .footer button:last-child {
   background: transparent;
   pointer-events: none;
   box-sizing: border-box;
+}
+.screenshot-overlay__handle {
+  position: absolute;
+  background: #fff;
+  border: 1.5px solid #2f6fed;
+  border-radius: 2px;
+  box-sizing: border-box;
+  z-index: 11;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+}
+.screenshot-overlay__annotations {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9;
+}
+.screenshot-overlay__palette-sep {
+  width: 1px;
+  height: 18px;
+  background: var(--divider, rgba(255, 255, 255, 0.2));
+  margin: 0 2px;
+}
+.screenshot-overlay__size-slider {
+  position: absolute;
+  z-index: 10;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  height: 26px;
+  background: var(--toolbar-bg, #181818);
+  color: var(--toolbar-text, #ededeb);
+  border: 1px solid var(--floating-border, rgba(255, 255, 255, 0.16));
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  user-select: none;
+}
+.screenshot-overlay__size-slider input[type='range'] {
+  width: 96px;
+  height: 18px;
+  margin: 0;
+  accent-color: #ededeb;
+  cursor: pointer;
+}
+.screenshot-overlay__size-value {
+  min-width: 14px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  opacity: 0.75;
+}
+.toolbar-button.toolbar-button--active {
+  background: rgba(47, 111, 237, 0.18);
+  color: #2f6fed;
+}
+.screenshot-overlay--tool-pen,
+.screenshot-overlay--tool-arrow {
+  cursor: crosshair;
 }
 .screenshot-overlay__rect-size {
   position: absolute;
@@ -1374,8 +1444,11 @@ html[data-theme='dark'] .footer button:last-child {
   background: var(--text);
   color: var(--panel-solid);
 }
-.toolbar-button.toolbar-button--primary:hover {
-  background: var(--text-soft);
+.toolbar-button.toolbar-button--primary,
+.toolbar-button.toolbar-button--primary:hover,
+html[data-theme='dark'] .toolbar-button.toolbar-button--primary:hover {
+  background: var(--text);
+  color: var(--panel-solid);
 }
 
 /* ===== Chat window ===== */

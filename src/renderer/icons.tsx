@@ -191,15 +191,53 @@ function ArrowUp({ size = 16, strokeWidth = 2 }: IconProps) {
   )
 }
 
+function Pencil({ size = 16, strokeWidth = 2 }: IconProps) {
+  return (
+    <svg {...baseProps(size)} strokeWidth={strokeWidth}>
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5Z" />
+    </svg>
+  )
+}
+
+function ArrowUpRight({ size = 16, strokeWidth = 2 }: IconProps) {
+  return (
+    <svg {...baseProps(size)} strokeWidth={strokeWidth}>
+      <path d="M7 17 17 7" />
+      <path d="M8 7h9v9" />
+    </svg>
+  )
+}
+
+function Undo2({ size = 16, strokeWidth = 2 }: IconProps) {
+  return (
+    <svg {...baseProps(size)} strokeWidth={strokeWidth}>
+      <path d="M9 14 4 9l5-5" />
+      <path d="M4 9h10a6 6 0 0 1 0 12h-3" />
+    </svg>
+  )
+}
+
+function MousePointer({ size = 16, strokeWidth = 2 }: IconProps) {
+  return (
+    <svg {...baseProps(size)} strokeWidth={strokeWidth}>
+      <path d="m4 4 7 16 2.2-7.2L20 10.5 4 4Z" />
+    </svg>
+  )
+}
+
 const icons: Record<string, (props: IconProps) => React.JSX.Element> = {
   'circle-help': CircleHelp,
   'arrow-up': ArrowUp,
+  'arrow-up-right': ArrowUpRight,
   copy: CopyIcon,
   download: Download,
   'flask-conical': FlaskConical,
   languages: Languages,
   laptop: Laptop,
   moon: Moon,
+  'mouse-pointer': MousePointer,
+  pencil: Pencil,
   pin: Pin,
   'pin-off': PinOff,
   'scan-text': ScanText,
@@ -208,6 +246,7 @@ const icons: Record<string, (props: IconProps) => React.JSX.Element> = {
   square: Square,
   sun: Sun,
   'trash-2': Trash2,
+  'undo-2': Undo2,
   x: XIcon
 }
 

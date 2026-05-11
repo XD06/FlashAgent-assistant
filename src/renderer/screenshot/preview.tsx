@@ -23,6 +23,8 @@ interface ChatTurn {
   searchQuery?: string
 }
 
+const isMac = navigator.userAgent.includes('Mac OS X')
+
 function PreviewApp() {
   const { settings } = useSettings()
   const t = getTranslator(settings.language)
@@ -38,6 +40,8 @@ function PreviewApp() {
   const activeRequestId = React.useRef<string | null>(null)
   const askInputRef = React.useRef<HTMLInputElement>(null)
   const contentRef = React.useRef<HTMLDivElement>(null)
+  const chatRef = React.useRef<ChatTurn[]>([])
+  const stickToBottomRef = React.useRef(true)
 
   React.useEffect(() => {
     document.documentElement.classList.add('action-page-root')
@@ -51,6 +55,7 @@ function PreviewApp() {
   React.useEffect(() => {
     return window.assistantLite.screenshot.onPreviewInit((data) => {
       setPayload(data)
+      chatRef.current = []
       setChat([])
       setShowImage(false)
       setAskOpen(false)
@@ -85,34 +90,49 @@ function PreviewApp() {
     })
   }, [t])
 
-  // Auto-scroll to bottom on chat updates
   React.useEffect(() => {
-    contentRef.current?.scrollTo({ top: contentRef.current.scrollHeight })
+    chatRef.current = chat
+  }, [chat])
+
+  React.useEffect(() => {
+    const el = contentRef.current
+    if (!el) return
+    const onScroll = () => {
+      const distance = el.scrollHeight - el.scrollTop - el.clientHeight
+      stickToBottomRef.current = distance < 32
+    }
+    el.addEventListener('scroll', onScroll, { passive: true })
+    return () => el.removeEventListener('scroll', onScroll)
+  }, [])
+
+  // Only auto-follow new content while the user is near the bottom.
+  React.useEffect(() => {
+    if (!stickToBottomRef.current) return
+    const el = contentRef.current
+    if (el) el.scrollTop = el.scrollHeight
   }, [chat])
 
   const sendTurn = React.useCallback((userText: string, includeImage: boolean) => {
     if (!payload) return
-    setChat((current) => {
-      const next: ChatTurn[] = [
-        ...current,
-        { role: 'user', text: userText },
-        { role: 'assistant', text: '', pending: true }
-      ]
-      const messages: AiMessageInput[] = next
-        .slice(0, -1)
-        .map((turn, index) => {
-          const isFirstUser = index === 0 && turn.role === 'user'
-          return {
-            role: turn.role,
-            text: turn.text,
-            ...(isFirstUser && includeImage ? { images: [payload.imageDataUrl] } : {})
-          }
-        })
-      const requestId = crypto.randomUUID()
-      activeRequestId.current = requestId
-      void window.assistantLite.ai.stream({ requestId, messages })
-      return next
+    const history = chatRef.current
+    const allUser: ChatTurn[] = [...history, { role: 'user', text: userText }]
+    const messages: AiMessageInput[] = allUser.map((turn, index) => {
+      const isFirstUser = index === 0 && turn.role === 'user'
+      return {
+        role: turn.role,
+        text: turn.text,
+        ...(isFirstUser && includeImage ? { images: [payload.imageDataUrl] } : {})
+      }
     })
+    const requestId = crypto.randomUUID()
+    activeRequestId.current = requestId
+    void window.assistantLite.ai.stream({ requestId, messages })
+    stickToBottomRef.current = true
+    setChat([
+      ...history,
+      { role: 'user', text: userText },
+      { role: 'assistant', text: '', pending: true }
+    ])
   }, [payload])
 
   const explain = React.useCallback(() => {
@@ -145,6 +165,7 @@ function PreviewApp() {
 
   const regenerate = () => {
     if (activeRequestId.current) return
+    chatRef.current = []
     setChat([])
     // delay so chat reset takes effect before sendTurn reads it
     setTimeout(() => explain(), 0)
@@ -189,12 +210,16 @@ function PreviewApp() {
         <button className="icon" title={pinned ? t('unpin') : t('pin')} onClick={togglePin}>
           <Icon name={pinned ? 'pin-off' : 'pin'} />
         </button>
-        <button className="icon" title={t('minimize')} onClick={() => window.assistantLite.windowControls.minimize()}>
-          <span>-</span>
-        </button>
-        <button className="icon" title={t('close')} onClick={() => window.assistantLite.windowControls.close()}>
-          <Icon name="x" />
-        </button>
+        {!isMac && (
+          <>
+            <button className="icon" title={t('minimize')} onClick={() => window.assistantLite.windowControls.minimize()}>
+              <span>-</span>
+            </button>
+            <button className="icon" title={t('close')} onClick={() => window.assistantLite.windowControls.close()}>
+              <Icon name="x" />
+            </button>
+          </>
+        )}
       </div>
 
       {showImage && (

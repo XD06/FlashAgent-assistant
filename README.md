@@ -29,14 +29,19 @@
 
 ## 下载
 
-最新版本 **v0.3.0**，可点击直接下载对应平台的安装包：
+最新版本 **v0.4.0**，可点击直接下载对应平台的安装包：
 
 | 平台 | 包类型 | 下载 |
 | --- | --- | --- |
-| macOS (Apple Silicon) | `.dmg` | [AIA-Selection-Assistant-0.3.0-arm64.dmg](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.3.0/AIA-Selection-Assistant-0.3.0-arm64.dmg) |
-| macOS (Apple Silicon) | `.zip` | [AIA-Selection-Assistant-0.3.0-arm64-mac.zip](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.3.0/AIA-Selection-Assistant-0.3.0-arm64-mac.zip) |
-| Windows x64 | 安装版 | [AIA-Selection-Assistant-Setup-0.3.0.exe](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.3.0/AIA-Selection-Assistant-Setup-0.3.0.exe) |
-| Windows x64 | 便携版 | [AIA-Selection-Assistant-Portable-0.3.0.exe](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.3.0/AIA-Selection-Assistant-Portable-0.3.0.exe) |
+| macOS (Apple Silicon) | `.dmg` | [AIA-Selection-Assistant-0.4.0-arm64.dmg](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.4.0/AIA-Selection-Assistant-0.4.0-arm64.dmg) |
+| macOS (Apple Silicon) | `.zip` | [AIA-Selection-Assistant-0.4.0-arm64-mac.zip](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.4.0/AIA-Selection-Assistant-0.4.0-arm64-mac.zip) |
+| Windows x64 | 安装版 | [AIA-Selection-Assistant-Setup-0.4.0.exe](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.4.0/AIA-Selection-Assistant-Setup-0.4.0.exe) |
+| Windows x64 | 便携版 | [AIA-Selection-Assistant-Portable-0.4.0.exe](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.4.0/AIA-Selection-Assistant-Portable-0.4.0.exe) |
+
+### v0.4.0 更新
+
+- 优化了截图功能（选区遮罩 / 标注工具栏 / 笔刷大小可调 / macOS 窗口控件冲突修复）
+- 优化了联网搜索功能
 
 历史版本与全部产物：[GitHub Releases](https://github.com/zcx960/AIA-selection-assistan/releases)。
 

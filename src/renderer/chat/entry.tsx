@@ -17,6 +17,8 @@ interface ChatTurn {
   searchQuery?: string
 }
 
+const isMac = navigator.userAgent.includes('Mac OS X')
+
 function ChatApp() {
   const { settings } = useSettings()
   const t = getTranslator(settings.language)
@@ -29,6 +31,13 @@ function ChatApp() {
   const activeRequestId = React.useRef<string | null>(null)
   const contentRef = React.useRef<HTMLDivElement>(null)
   const inputRef = React.useRef<HTMLTextAreaElement>(null)
+  // Mirror of chat state so sendMessage can derive history without
+  // performing side-effects from inside a setState updater (which would
+  // double-fire under React.StrictMode and could send the request twice).
+  const chatRef = React.useRef<ChatTurn[]>([])
+  // Track whether the user has scrolled away from the bottom; if so, we
+  // stop force-following the latest tokens so they can read freely.
+  const stickToBottomRef = React.useRef(true)
 
   React.useEffect(() => {
     document.documentElement.classList.add('action-page-root')
@@ -92,9 +101,28 @@ function ChatApp() {
     })
   }, [t])
 
-  // Auto-scroll on new content
   React.useEffect(() => {
-    contentRef.current?.scrollTo({ top: contentRef.current.scrollHeight })
+    chatRef.current = chat
+  }, [chat])
+
+  // Track scroll position: only auto-follow new content while the user
+  // is already near the bottom. Once they scroll up, leave them alone.
+  React.useEffect(() => {
+    const el = contentRef.current
+    if (!el) return
+    const onScroll = () => {
+      const distance = el.scrollHeight - el.scrollTop - el.clientHeight
+      stickToBottomRef.current = distance < 32
+    }
+    el.addEventListener('scroll', onScroll, { passive: true })
+    return () => el.removeEventListener('scroll', onScroll)
+  }, [])
+
+  // Auto-scroll on new content, but only when sticking to the bottom.
+  React.useEffect(() => {
+    if (!stickToBottomRef.current) return
+    const el = contentRef.current
+    if (el) el.scrollTop = el.scrollHeight
   }, [chat])
 
   // Auto-grow textarea
@@ -107,20 +135,23 @@ function ChatApp() {
 
   const sendMessage = (text: string) => {
     if (!text.trim() || activeRequestId.current) return
-    setChat((current) => {
-      const next: ChatTurn[] = [
-        ...current,
-        { role: 'user', text },
-        { role: 'assistant', text: '', pending: true }
-      ]
-      const messages: AiMessageInput[] = next
-        .slice(0, -1)
-        .map((turn) => ({ role: turn.role, text: turn.text }))
-      const requestId = crypto.randomUUID()
-      activeRequestId.current = requestId
-      void window.assistantLite.ai.stream({ requestId, messages })
-      return next
-    })
+    const history = chatRef.current
+    const messages: AiMessageInput[] = [
+      ...history.map((turn) => ({ role: turn.role, text: turn.text })),
+      { role: 'user', text }
+    ]
+    const requestId = crypto.randomUUID()
+    activeRequestId.current = requestId
+    // Send first so the assistant placeholder always corresponds to an
+    // in-flight request, even if React re-runs the state updater.
+    void window.assistantLite.ai.stream({ requestId, messages })
+    // Snap to bottom when the user sends a new message.
+    stickToBottomRef.current = true
+    setChat([
+      ...history,
+      { role: 'user', text },
+      { role: 'assistant', text: '', pending: true }
+    ])
   }
 
   const submit = () => {
@@ -150,6 +181,8 @@ function ChatApp() {
       void window.assistantLite.ai.abort(activeRequestId.current)
       activeRequestId.current = null
     }
+    chatRef.current = []
+    stickToBottomRef.current = true
     setChat([])
     setInput('')
     setTimeout(() => inputRef.current?.focus(), 0)
@@ -175,12 +208,16 @@ function ChatApp() {
         <button className="icon" title={pinned ? t('unpin') : t('pin')} onClick={togglePin}>
           <Icon name={pinned ? 'pin-off' : 'pin'} />
         </button>
-        <button className="icon" title={t('minimize')} onClick={() => window.assistantLite.windowControls.minimize()}>
-          <span>-</span>
-        </button>
-        <button className="icon" title={t('close')} onClick={() => window.assistantLite.windowControls.close()}>
-          <Icon name="x" />
-        </button>
+        {!isMac && (
+          <>
+            <button className="icon" title={t('minimize')} onClick={() => window.assistantLite.windowControls.minimize()}>
+              <span>-</span>
+            </button>
+            <button className="icon" title={t('close')} onClick={() => window.assistantLite.windowControls.close()}>
+              <Icon name="x" />
+            </button>
+          </>
+        )}
       </div>
 
       <div className="content chat-content" ref={contentRef}>

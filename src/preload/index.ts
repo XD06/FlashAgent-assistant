@@ -75,7 +75,10 @@ const api = {
       y: number
       width: number
       height: number
+      viewportWidth: number
+      viewportHeight: number
       action: 'explain' | 'save' | 'copy' | 'pin'
+      imageDataUrl?: string
     }): Promise<void> => ipcRenderer.invoke(IPC.ScreenshotOverlayConfirm, payload),
     overlayCancel: (): Promise<void> => ipcRenderer.invoke(IPC.ScreenshotOverlayCancel),
     save: (dataUrl: string): Promise<boolean> => ipcRenderer.invoke(IPC.ScreenshotSave, dataUrl),
@@ -84,8 +87,8 @@ const api = {
     pinZoom: (deltaY: number): Promise<void> => ipcRenderer.invoke(IPC.ScreenshotPinZoom, deltaY),
     pinMove: (dx: number, dy: number): Promise<void> => ipcRenderer.invoke(IPC.ScreenshotPinMove, dx, dy),
     pinMenu: (): Promise<void> => ipcRenderer.invoke(IPC.ScreenshotPinMenu),
-    onOverlayInit: (callback: (payload: { imageDataUrl: string; displayId: number; width: number; height: number }) => void) => {
-      const listener = (_event: Electron.IpcRendererEvent, payload: { imageDataUrl: string; displayId: number; width: number; height: number }) => callback(payload)
+    onOverlayInit: (callback: (payload: { imageDataUrl: string; displayId: number; width: number; height: number; imageWidth: number; imageHeight: number }) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, payload: { imageDataUrl: string; displayId: number; width: number; height: number; imageWidth: number; imageHeight: number }) => callback(payload)
       ipcRenderer.on(IPC.ScreenshotOverlayInit, listener)
       return () => {
         ipcRenderer.off(IPC.ScreenshotOverlayInit, listener)
