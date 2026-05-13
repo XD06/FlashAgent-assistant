@@ -423,7 +423,7 @@ export class ScreenshotService {
         sandbox: false
       }
     })
-    pin.setAlwaysOnTop(true, 'floating')
+    pin.setAlwaysOnTop(true, isMac ? 'floating' : 'pop-up-menu')
 
     const minScale = Math.max(0.1, 40 / Math.min(baseW, baseH))
     const maxScale = Math.min(8, Math.max(display.workArea.width, display.workArea.height) / Math.max(baseW, baseH))
@@ -439,6 +439,10 @@ export class ScreenshotService {
     pin.on('closed', () => this.pinWindows.delete(pin))
     this.loadRenderer(pin, 'screenshotPin.html')
     pin.webContents.once('did-finish-load', () => {
+      // Re-assert alwaysOnTop after content loads — on Windows the initial
+      // call can be lost for transparent windows, causing the pin to fall
+      // behind all other windows.
+      if (!isMac) pin.setAlwaysOnTop(true, 'pop-up-menu')
       pin.webContents.send(IPC.ScreenshotPinInit, { imageDataUrl: dataUrl, width: baseW, height: baseH })
     })
   }
