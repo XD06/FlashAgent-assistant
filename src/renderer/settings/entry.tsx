@@ -11,6 +11,7 @@ import type {
   AppLanguage,
   FilterMode,
   ProviderTemplate,
+  ReasoningMode,
   ShortcutSettings,
   ThemeMode,
   TriggerMode
@@ -186,49 +187,164 @@ function ShortcutRecorder({
   )
 }
 
-function ActionConfigRow({
+const ACTION_ICON_CHOICES = [
+  'sparkles',
+  'languages',
+  'circle-help',
+  'scan-text',
+  'search',
+  'copy',
+  'book-open',
+  'pencil',
+  'flask-conical',
+  'mouse-pointer',
+  'download',
+  'arrow-up-right'
+]
+
+function IconPicker({ value, onChange }: { value: string; onChange: (icon: string) => void }) {
+  return (
+    <div className="icon-picker">
+      {ACTION_ICON_CHOICES.map((name) => (
+        <button
+          key={name}
+          type="button"
+          className={name === value ? 'icon-choice active' : 'icon-choice'}
+          onClick={() => onChange(name)}
+          aria-label={name}>
+          <Icon name={name} size={19} />
+        </button>
+      ))}
+    </div>
+  )
+}
+
+function ActionEditor({
   action,
   defaultAction,
   language,
+  providerTemplates,
+  index,
+  count,
   onChange,
+  onDelete,
+  onMove,
   t
 }: {
   action: ActionItem
   defaultAction?: ActionItem
   language: AppLanguage
+  providerTemplates: ProviderTemplate[]
+  index: number
+  count: number
   onChange: (patch: Partial<ActionItem>) => void
+  onDelete: () => void
+  onMove: (dir: -1 | 1) => void
   t: (key: string) => string
 }) {
   const [expanded, setExpanded] = React.useState(false)
-  const isPromptAction = action.type === 'prompt'
+  const isPrompt = action.type === 'prompt'
+  const isSearch = action.type === 'search'
   const defaultPrompt = defaultAction?.promptTemplate ?? ''
 
   return (
     <div className="action-config-item">
       <div className="action-config-row">
         <span className="action-name">
-          <Icon name={action.icon} />
+          <Icon name={action.icon} size={18} />
           <span>{getActionLabel(action, language)}</span>
         </span>
-        {isPromptAction ? (
+        <div className="action-row-tools">
+          <button className="inline-icon-button" type="button" title={t('moveUp')} onClick={() => onMove(-1)} disabled={index === 0}>
+            <span>↑</span>
+          </button>
+          <button
+            className="inline-icon-button"
+            type="button"
+            title={t('moveDown')}
+            onClick={() => onMove(1)}
+            disabled={index === count - 1}>
+            <span>↓</span>
+          </button>
           <button className="prompt-edit-button" type="button" onClick={() => setExpanded((value) => !value)}>
             {expanded ? t('hidePrompt') : t('editPrompt')}
           </button>
-        ) : (
-          <span className="action-row-spacer" />
-        )}
+        </div>
         <Toggle checked={action.enabled} label={getActionLabel(action, language)} onChange={(enabled) => onChange({ enabled })} />
       </div>
-      {isPromptAction && expanded && (
+      {expanded && (
         <div className="prompt-template-editor">
-          <textarea
-            value={action.promptTemplate ?? ''}
-            placeholder={t('promptTemplatePlaceholder')}
-            onChange={(event) => onChange({ promptTemplate: event.target.value })}
-          />
-          <button type="button" onClick={() => onChange({ promptTemplate: defaultPrompt })} disabled={!defaultPrompt}>
-            {t('restoreDefaultPrompt')}
-          </button>
+          <div className="action-meta">
+            <label className="field">
+              <span>{t('actionName')}</span>
+              <input
+                value={action.name}
+                placeholder={getActionLabel(action, language)}
+                onChange={(event) => onChange({ name: event.target.value })}
+              />
+            </label>
+            <label className="field">
+              <span>{t('actionIcon')}</span>
+              <IconPicker value={action.icon} onChange={(icon) => onChange({ icon })} />
+            </label>
+          </div>
+
+          {isPrompt && (
+            <textarea
+              value={action.promptTemplate ?? ''}
+              placeholder={t('promptTemplatePlaceholder')}
+              onChange={(event) => onChange({ promptTemplate: event.target.value })}
+            />
+          )}
+
+          {isSearch && (
+            <label className="field">
+              <span>{t('searchUrlLabel')}</span>
+              <input
+                value={action.searchUrlTemplate ?? ''}
+                placeholder="https://www.google.com/search?q={{query}}"
+                onChange={(event) => onChange({ searchUrlTemplate: event.target.value })}
+              />
+            </label>
+          )}
+
+          {isPrompt && (
+            <div className="action-ai-options">
+              <label className="field">
+                <span>{t('actionProvider')}</span>
+                <select
+                  value={action.providerTemplateId ?? ''}
+                  onChange={(event) => onChange({ providerTemplateId: event.target.value || undefined })}>
+                  <option value="">{t('actionProviderDefault')}</option>
+                  {providerTemplates.map((template) => (
+                    <option key={template.id} value={template.id}>
+                      {template.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="field">
+                <span>{t('actionReasoning')}</span>
+                <select
+                  value={action.reasoning ?? 'on'}
+                  onChange={(event) => onChange({ reasoning: event.target.value as ReasoningMode })}>
+                  <option value="on">{t('reasoningOn')}</option>
+                  <option value="off">{t('reasoningOff')}</option>
+                </select>
+              </label>
+            </div>
+          )}
+
+          <div className="action-editor-footer">
+            {isPrompt && (
+              <button type="button" onClick={() => onChange({ promptTemplate: defaultPrompt })} disabled={!defaultPrompt}>
+                {t('restoreDefaultPrompt')}
+              </button>
+            )}
+            <button type="button" className="danger-text" onClick={onDelete}>
+              {t('deleteAction')}
+            </button>
+          </div>
         </div>
       )}
     </div>
@@ -239,11 +355,10 @@ function SettingsApp() {
   const { settings, loaded, update } = useSettings()
   const [accessibilityTrusted, setAccessibilityTrusted] = React.useState(true)
   const [activeSection, setActiveSection] = React.useState<SettingsSectionId>('api')
-  const [models, setModels] = React.useState<string[]>([])
-  const [modelStatus, setModelStatus] = React.useState('')
-  const [modelBusy, setModelBusy] = React.useState<'list' | 'test' | null>(null)
+  const [modelsByTemplate, setModelsByTemplate] = React.useState<Record<string, string[]>>({})
+  const [statusByTemplate, setStatusByTemplate] = React.useState<Record<string, string>>({})
+  const [busyTemplate, setBusyTemplate] = React.useState<{ id: string; kind: 'list' | 'test' } | null>(null)
   const t = getTranslator(settings.language)
-  const selectableModels = models.filter((model) => model !== settings.provider.model)
   useThemeMode(settings.theme)
 
   React.useEffect(() => {
@@ -266,34 +381,65 @@ function SettingsApp() {
 
   if (!loaded) return <main className="page">{t('loading')}</main>
 
-  const updateProvider = (field: string, value: string | number) => {
-    void update({ provider: { [field]: value } })
+  const updateTemplate = (id: string, patch: Partial<ProviderTemplate>) => {
+    void update({
+      providerTemplates: settings.providerTemplates.map((template) =>
+        template.id === id ? { ...template, ...patch } : template
+      )
+    })
   }
 
-  const listProviderModels = async () => {
-    setModelBusy('list')
-    setModelStatus(t('modelListLoading'))
+  const updateTemplateProvider = (id: string, field: string, value: string) => {
+    void update({
+      providerTemplates: settings.providerTemplates.map((template) =>
+        template.id === id ? { ...template, provider: { ...template.provider, [field]: value } } : template
+      )
+    })
+  }
+
+  const addProviderTemplate = () => {
+    const nextTemplate: ProviderTemplate = {
+      id: crypto.randomUUID(),
+      name: `${t('providerTemplateDefaultName')} ${settings.providerTemplates.length + 1}`,
+      provider: { ...settings.provider }
+    }
+    void update({ providerTemplates: [...settings.providerTemplates, nextTemplate] })
+  }
+
+  const deleteProviderTemplate = (id: string) => {
+    if (settings.providerTemplates.length <= 1) return
+    const remaining = settings.providerTemplates.filter((template) => template.id !== id)
+    const nextActive = settings.activeProviderTemplateId === id ? remaining[0]?.id : settings.activeProviderTemplateId
+    void update({ providerTemplates: remaining, activeProviderTemplateId: nextActive })
+  }
+
+  const fetchModelsFor = async (id: string) => {
+    setBusyTemplate({ id, kind: 'list' })
+    setStatusByTemplate((current) => ({ ...current, [id]: t('modelListLoading') }))
     try {
-      const nextModels = await window.assistantLite.ai.listModels()
-      setModels(nextModels)
-      setModelStatus(nextModels.length ? t('modelListSuccess').replace('{{count}}', String(nextModels.length)) : t('modelListEmpty'))
+      const models = await window.assistantLite.ai.listModels(id)
+      setModelsByTemplate((current) => ({ ...current, [id]: models }))
+      setStatusByTemplate((current) => ({
+        ...current,
+        [id]: models.length ? t('modelListSuccess').replace('{{count}}', String(models.length)) : t('modelListEmpty')
+      }))
     } catch (error) {
-      setModelStatus(error instanceof Error ? error.message : String(error))
+      setStatusByTemplate((current) => ({ ...current, [id]: error instanceof Error ? error.message : String(error) }))
     } finally {
-      setModelBusy(null)
+      setBusyTemplate(null)
     }
   }
 
-  const testProviderModel = async () => {
-    setModelBusy('test')
-    setModelStatus(t('modelTestLoading'))
+  const testModelFor = async (id: string) => {
+    setBusyTemplate({ id, kind: 'test' })
+    setStatusByTemplate((current) => ({ ...current, [id]: t('modelTestLoading') }))
     try {
-      await window.assistantLite.ai.testModel()
-      setModelStatus(t('modelTestSuccess'))
+      await window.assistantLite.ai.testModel(id)
+      setStatusByTemplate((current) => ({ ...current, [id]: t('modelTestSuccess') }))
     } catch (error) {
-      setModelStatus(error instanceof Error ? error.message : String(error))
+      setStatusByTemplate((current) => ({ ...current, [id]: error instanceof Error ? error.message : String(error) }))
     } finally {
-      setModelBusy(null)
+      setBusyTemplate(null)
     }
   }
 
@@ -301,6 +447,32 @@ function SettingsApp() {
     void update({
       actions: settings.actions.map((action) => (action.id === id ? { ...action, ...patch } : action))
     })
+  }
+
+  const addAction = () => {
+    const next: ActionItem = {
+      id: crypto.randomUUID(),
+      name: t('newActionName'),
+      enabled: true,
+      icon: 'sparkles',
+      type: 'prompt',
+      promptTemplate: '',
+      reasoning: 'on'
+    }
+    void update({ actions: [...settings.actions, next] })
+  }
+
+  const deleteAction = (id: string) => {
+    void update({ actions: settings.actions.filter((action) => action.id !== id) })
+  }
+
+  const moveAction = (id: string, dir: -1 | 1) => {
+    const actions = [...settings.actions]
+    const i = actions.findIndex((action) => action.id === id)
+    const j = i + dir
+    if (i < 0 || j < 0 || j >= actions.length) return
+    ;[actions[i], actions[j]] = [actions[j], actions[i]]
+    void update({ actions })
   }
 
   const updateShortcut = (field: keyof ShortcutSettings, value: string) => {
@@ -315,8 +487,6 @@ function SettingsApp() {
   ]
   const defaultActionById = new Map(defaultActions.map((action) => [action.id, action]))
   const filterText = settings.filterList.join('\n')
-  const activeProviderTemplate =
-    settings.providerTemplates.find((template) => template.id === settings.activeProviderTemplateId) ?? settings.providerTemplates[0]
   const toggleAssistantEnabled = async () => {
     if (!settings.enabled) {
       const trusted = await window.assistantLite.selection.getAccessibility()
@@ -346,128 +516,124 @@ function SettingsApp() {
 
   const renderSection = () => {
     if (activeSection === 'api') {
-      const createProviderTemplate = () => {
-        const nextTemplate: ProviderTemplate = {
-          id: crypto.randomUUID(),
-          name: `${t('providerTemplateDefaultName')} ${settings.providerTemplates.length + 1}`,
-          provider: settings.provider
-        }
-        void update({
-          providerTemplates: [...settings.providerTemplates, nextTemplate],
-          activeProviderTemplateId: nextTemplate.id
-        })
-      }
-
-      const handleProviderTemplateSelect = (value: string) => {
-        if (value === '__new__') {
-          createProviderTemplate()
-          return
-        }
-        void update({ activeProviderTemplateId: value })
-      }
-
-      const deleteActiveProviderTemplate = () => {
-        if (!activeProviderTemplate || settings.providerTemplates.length <= 1) return
-        const remainingTemplates = settings.providerTemplates.filter((template) => template.id !== activeProviderTemplate.id)
-        void update({
-          providerTemplates: remainingTemplates,
-          activeProviderTemplateId: remainingTemplates[0]?.id
-        })
-      }
-
       return (
         <div className="settings-stack">
           <SettingSection title={t('providerTitle')}>
-            <div className="form-grid">
-              <label className="field">
-                <span>{t('providerTemplate')}</span>
-                <select
-                  value={settings.activeProviderTemplateId}
-                  onChange={(event) => handleProviderTemplateSelect(event.target.value)}>
-                  {settings.providerTemplates.map((template) => (
-                    <option key={template.id} value={template.id}>
-                      {template.name}
-                    </option>
-                  ))}
-                  <option value="__new__">{t('providerTemplateNew')}</option>
-                </select>
-              </label>
-              <label className="field">
-                <span>{t('providerTemplateName')}</span>
-                <input
-                  value={activeProviderTemplate?.name ?? ''}
-                  onChange={(event) =>
-                    update({
-                      providerTemplates: settings.providerTemplates.map((template) =>
-                        template.id === settings.activeProviderTemplateId ? { ...template, name: event.target.value } : template
-                      )
-                    })
-                  }
-                />
-              </label>
-              <label className="field">
-                <span>{t('apiType')}</span>
-                <select value={settings.provider.apiType} onChange={(event) => updateProvider('apiType', event.target.value)}>
-                  <option value="openai">{t('apiTypeOpenAI')}</option>
-                  <option value="anthropic">{t('apiTypeAnthropic')}</option>
-                </select>
-              </label>
-              <label className="field">
-                <span>{t('baseUrl')}</span>
-                <input value={settings.provider.baseUrl} onChange={(event) => updateProvider('baseUrl', event.target.value)} />
-              </label>
-              {settings.provider.apiType === 'anthropic' && <div className="model-status">{t('baseUrlAnthropicHint')}</div>}
-              <label className="field">
-                <div className="field-header">
-                  <span>{t('model')}</span>
-                  <div className="inline-actions">
-                    <button className="inline-action-button" type="button" onClick={listProviderModels} disabled={modelBusy !== null}>
-                      {modelBusy === 'list' ? t('modelListLoading') : t('fetchModels')}
-                    </button>
-                    <button
-                      className="inline-icon-button"
-                      type="button"
-                      title={modelBusy === 'test' ? t('modelTestLoading') : t('testModel')}
-                      aria-label={modelBusy === 'test' ? t('modelTestLoading') : t('testModel')}
-                      onClick={testProviderModel}
-                      disabled={modelBusy !== null}>
-                      <Icon name="flask-conical" size={14} />
-                    </button>
-                    <button
-                      className="inline-icon-button danger"
-                      type="button"
-                      title={t('providerTemplateDelete')}
-                      aria-label={t('providerTemplateDelete')}
-                      onClick={deleteActiveProviderTemplate}
-                      disabled={settings.providerTemplates.length <= 1 || !activeProviderTemplate}>
-                      <Icon name="trash-2" size={14} />
-                    </button>
+            <div className="provider-list">
+              {settings.providerTemplates.map((template) => {
+                const isDefault = template.id === settings.activeProviderTemplateId
+                const models = modelsByTemplate[template.id] ?? []
+                const status = statusByTemplate[template.id]
+                const listing = busyTemplate?.id === template.id && busyTemplate.kind === 'list'
+                return (
+                  <div className="provider-card" key={template.id}>
+                    <div className="provider-card__head">
+                      <input
+                        className="provider-name"
+                        value={template.name}
+                        placeholder={t('providerTemplateName')}
+                        onChange={(event) => updateTemplate(template.id, { name: event.target.value })}
+                      />
+                      <button
+                        type="button"
+                        className={isDefault ? 'pill active' : 'pill'}
+                        onClick={() => update({ activeProviderTemplateId: template.id })}
+                        disabled={isDefault}
+                        title={t('setDefault')}>
+                        {isDefault ? t('providerDefault') : t('setDefault')}
+                      </button>
+                      <button
+                        type="button"
+                        className="inline-icon-button danger"
+                        title={t('providerTemplateDelete')}
+                        aria-label={t('providerTemplateDelete')}
+                        onClick={() => deleteProviderTemplate(template.id)}
+                        disabled={settings.providerTemplates.length <= 1}>
+                        <Icon name="trash-2" size={14} />
+                      </button>
+                    </div>
+                    <div className="form-grid">
+                      <label className="field">
+                        <span>{t('apiType')}</span>
+                        <select
+                          value={template.provider.apiType}
+                          onChange={(event) => updateTemplateProvider(template.id, 'apiType', event.target.value)}>
+                          <option value="openai">{t('apiTypeOpenAI')}</option>
+                          <option value="anthropic">{t('apiTypeAnthropic')}</option>
+                        </select>
+                      </label>
+                      <label className="field">
+                        <span>{t('baseUrl')}</span>
+                        <input
+                          value={template.provider.baseUrl}
+                          onChange={(event) => updateTemplateProvider(template.id, 'baseUrl', event.target.value)}
+                        />
+                      </label>
+                      {template.provider.apiType === 'anthropic' && (
+                        <div className="model-status">{t('baseUrlAnthropicHint')}</div>
+                      )}
+                      <label className="field">
+                        <div className="field-header">
+                          <span>{t('model')}</span>
+                          <div className="inline-actions">
+                            <button
+                              className="inline-action-button"
+                              type="button"
+                              onClick={() => fetchModelsFor(template.id)}
+                              disabled={busyTemplate !== null}>
+                              {listing ? t('modelListLoading') : t('fetchModels')}
+                            </button>
+                            <button
+                              className="inline-icon-button"
+                              type="button"
+                              title={t('testModel')}
+                              aria-label={t('testModel')}
+                              onClick={() => testModelFor(template.id)}
+                              disabled={busyTemplate !== null}>
+                              <Icon name="flask-conical" size={14} />
+                            </button>
+                          </div>
+                        </div>
+                        <input
+                          value={template.provider.model}
+                          onChange={(event) => updateTemplateProvider(template.id, 'model', event.target.value)}
+                        />
+                      </label>
+                      {models.length > 0 && (
+                        <label className="field">
+                          <span>{t('modelList')}</span>
+                          <select
+                            value={template.provider.model}
+                            onChange={(event) => updateTemplateProvider(template.id, 'model', event.target.value)}>
+                            <option value={template.provider.model}>
+                              {template.provider.model || t('modelSelectPlaceholder')}
+                            </option>
+                            {models
+                              .filter((model) => model !== template.provider.model)
+                              .map((model) => (
+                                <option key={model} value={model}>
+                                  {model}
+                                </option>
+                              ))}
+                          </select>
+                        </label>
+                      )}
+                      <label className="field">
+                        <span>{t('apiKey')}</span>
+                        <input
+                          type="password"
+                          value={template.provider.apiKey}
+                          onChange={(event) => updateTemplateProvider(template.id, 'apiKey', event.target.value)}
+                        />
+                      </label>
+                      {status && <div className="model-status">{status}</div>}
+                    </div>
                   </div>
-                </div>
-                <input value={settings.provider.model} onChange={(event) => updateProvider('model', event.target.value)} />
-              </label>
-              {models.length > 0 && (
-                <label className="field">
-                  <span>{t('modelList')}</span>
-                  <select value={settings.provider.model} onChange={(event) => updateProvider('model', event.target.value)}>
-                    <option value={settings.provider.model}>{settings.provider.model || t('modelSelectPlaceholder')}</option>
-                    {selectableModels.map((model) => (
-                      <option key={model} value={model}>
-                        {model}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
-              <label className="field">
-                <span>{t('apiKey')}</span>
-                <input
-                  type="password"
-                  value={settings.provider.apiKey}
-                  onChange={(event) => updateProvider('apiKey', event.target.value)}
-                />
-              </label>
-              {modelStatus && <div className="model-status">{modelStatus}</div>}
+                )
+              })}
+              <button type="button" className="add-row-button" onClick={addProviderTemplate}>
+                + {t('addProvider')}
+              </button>
             </div>
           </SettingSection>
 
@@ -538,6 +704,23 @@ function SettingsApp() {
                 t={t}
               />
             </SettingRow>
+          </SettingSection>
+
+          <SettingSection title={t('actionShortcutsGroup')}>
+            <div className="group-hint">{t('actionShortcutsHint')}</div>
+            {settings.actions.map((action) => (
+              <SettingRow
+                key={action.id}
+                title={getActionLabel(action, settings.language)}
+                className="shortcut-row action-shortcut-setting-row">
+                <ShortcutRecorder
+                  value={action.shortcut ?? ''}
+                  label={getActionLabel(action, settings.language)}
+                  onChange={(value) => updateAction(action.id, { shortcut: value || undefined })}
+                  t={t}
+                />
+              </SettingRow>
+            ))}
           </SettingSection>
 
           <SettingSection title={t('selectionToolbarGroup')}>
@@ -613,17 +796,25 @@ function SettingsApp() {
       <div className="settings-stack">
         <SettingSection title={t('actions')}>
           <div className="action-list">
-            {settings.actions.map((action) => (
-              <ActionConfigRow
+            {settings.actions.map((action, index) => (
+              <ActionEditor
                 key={action.id}
                 action={action}
                 defaultAction={defaultActionById.get(action.id)}
                 language={settings.language}
+                providerTemplates={settings.providerTemplates}
+                index={index}
+                count={settings.actions.length}
                 onChange={(patch) => updateAction(action.id, patch)}
+                onDelete={() => deleteAction(action.id)}
+                onMove={(dir) => moveAction(action.id, dir)}
                 t={t}
               />
             ))}
           </div>
+          <button type="button" className="add-row-button" onClick={addAction}>
+            + {t('addAction')}
+          </button>
         </SettingSection>
       </div>
     )

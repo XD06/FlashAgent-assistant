@@ -1,6 +1,13 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { IPC } from '@shared/ipc'
-import type { ActionPayload, AiChunkPayload, AiStreamRequest, AppSettings, SelectedTextPayload, SettingsPatch } from '@shared/types'
+import type {
+  ActionPayload,
+  AiChunkPayload,
+  AiStreamRequest,
+  AppSettings,
+  SelectedTextPayload,
+  SettingsPatch
+} from '@shared/types'
 
 const api = {
   settings: {
@@ -48,8 +55,9 @@ const api = {
   ai: {
     stream: (request: AiStreamRequest): Promise<void> => ipcRenderer.invoke(IPC.AiStream, request),
     abort: (requestId: string): Promise<void> => ipcRenderer.invoke(IPC.AiAbort, requestId),
-    listModels: (): Promise<string[]> => ipcRenderer.invoke(IPC.AiListModels),
-    testModel: (): Promise<{ ok: true }> => ipcRenderer.invoke(IPC.AiTestModel),
+    listModels: (providerTemplateId?: string): Promise<string[]> => ipcRenderer.invoke(IPC.AiListModels, providerTemplateId),
+    testModel: (providerTemplateId?: string): Promise<{ ok: true }> =>
+      ipcRenderer.invoke(IPC.AiTestModel, providerTemplateId),
     onChunk: (callback: (payload: AiChunkPayload) => void) => {
       const listener = (_event: Electron.IpcRendererEvent, payload: AiChunkPayload) => callback(payload)
       ipcRenderer.on(IPC.AiChunk, listener)

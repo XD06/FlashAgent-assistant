@@ -1,4 +1,4 @@
-import type { AiMessageInput, ProviderApiType, ProviderSettings } from '@shared/types'
+import type { AiMessageInput, ProviderApiType, ProviderSettings, ReasoningMode } from '@shared/types'
 
 export class AiConfigurationError extends Error {}
 const ANTHROPIC_VERSION = '2023-06-01'
@@ -135,16 +135,27 @@ export async function streamChatCompletion(
   return streamChatMessages(provider, [{ role: 'user', text: prompt }], systemPrompt, signal, onDelta)
 }
 
+// Reasoning control. 'on' means "model default" — we send nothing extra, so it
+// works with every provider. 'off' explicitly suppresses thinking: Anthropic has
+// no thinking unless enabled (so nothing to do), while OpenAI-compatible thinking
+// models (Qwen/DeepSeek/GLM, vLLM, …) disable it via enable_thinking:false.
+function applyReasoning(body: Record<string, unknown>, apiType: ProviderApiType, reasoning: ReasoningMode): void {
+  if (reasoning !== 'off' || apiType === 'anthropic') return
+  body.enable_thinking = false
+  body.chat_template_kwargs = { enable_thinking: false }
+}
+
 export async function streamChatMessages(
   provider: ProviderSettings,
   messages: AiMessageInput[],
   systemPrompt: string,
   signal: AbortSignal,
-  onDelta: (delta: string) => void
+  onDelta: (delta: string) => void,
+  reasoning: ReasoningMode = 'on'
 ): Promise<void> {
   assertProviderReady(provider)
 
-  const body =
+  const body: Record<string, unknown> =
     provider.apiType === 'anthropic'
       ? {
           model: provider.model,
@@ -169,6 +180,7 @@ export async function streamChatMessages(
             }))
           ]
         }
+  applyReasoning(body, provider.apiType, reasoning)
 
   const response = await fetch(buildProviderUrl(provider, provider.apiType === 'anthropic' ? 'messages' : 'chat/completions'), {
     method: 'POST',

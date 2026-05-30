@@ -3,7 +3,7 @@ import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import { IPC } from '@shared/ipc'
 import { shouldProcessProgram } from '@shared/selectionFilter'
-import type { ActionPayload, AppSettings, SelectedTextPayload } from '@shared/types'
+import type { ActionItem, ActionPayload, AppSettings, SelectedTextPayload } from '@shared/types'
 import { isMac, isWin } from './platform'
 import type {
   KeyboardEventData,
@@ -154,6 +154,27 @@ export class SelectionService {
     const show = () => {
       win.webContents.send(IPC.SelectionProcessAction, payload)
       this.positionAndShowActionWindow(win, settings)
+    }
+
+    if (win.webContents.isLoading()) {
+      win.webContents.once('did-finish-load', show)
+    } else {
+      show()
+    }
+  }
+
+  // Open a type-in window for an action (triggered by its global shortcut),
+  // independent of the selection toolbar.
+  openActionInput(action: ActionItem): void {
+    const settings = this.getSettings()
+    const existing = Array.from(this.actionWindows).find((win) => !win.isDestroyed() && win.isVisible())
+    const win = existing ?? this.createActionWindow()
+    const payload: ActionPayload = { action, selectedText: '', mode: 'input' }
+    const show = () => {
+      win.webContents.send(IPC.SelectionProcessAction, payload)
+      this.positionActionWindowCenter(win, settings)
+      win.show()
+      win.focus()
     }
 
     if (win.webContents.isLoading()) {
@@ -440,6 +461,22 @@ export class SelectionService {
     if (settings.autoPin) win.setAlwaysOnTop(true)
     if (isMac && settings.autoPin) win.showInactive()
     else win.show()
+  }
+
+  private positionActionWindowCenter(win: BrowserWindow, settings: AppSettings): void {
+    const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
+    const area = display.workArea
+    const width = settings.rememberWindowSize ? this.lastActionSize.width : ACTION_WIDTH
+    const height = settings.rememberWindowSize ? this.lastActionSize.height : ACTION_HEIGHT
+    const x = Math.round(area.x + (area.width - width) / 2)
+    const y = Math.round(area.y + (area.height - height) / 2)
+    win.setBounds({
+      x: x - ACTION_SHADOW_PADDING,
+      y: y - ACTION_SHADOW_PADDING,
+      width: this.getActionWindowWidth(width),
+      height: this.getActionWindowHeight(height)
+    })
+    if (settings.autoPin) win.setAlwaysOnTop(true)
   }
 
   private startHideListeners(): void {

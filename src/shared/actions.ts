@@ -1,15 +1,29 @@
 import { defaultProviderTemplate, defaultSettings } from './defaults'
 import type {
   ActionItem,
+  ActionType,
   AppLanguage,
   AppSettings,
   ProviderApiType,
   ProviderSettings,
   ProviderTemplate,
+  ReasoningMode,
   SettingsPatch,
   ThemeMode,
   TriggerMode
 } from './types'
+
+/** Resolve the provider an action (or request) should use, falling back to the active provider. */
+export function resolveProvider(
+  settings: Pick<AppSettings, 'provider' | 'providerTemplates'>,
+  providerTemplateId?: string
+): ProviderSettings {
+  if (providerTemplateId) {
+    const template = settings.providerTemplates.find((item) => item.id === providerTemplateId)
+    if (template) return template.provider
+  }
+  return settings.provider
+}
 
 export function getResponseLanguageName(language: AppLanguage): string {
   return language === 'zh-CN' ? 'Simplified Chinese' : 'English'
@@ -160,29 +174,45 @@ function normalizeActiveProviderTemplateId(activeId: unknown, templates: Provide
   return templates[0]?.id ?? defaultProviderTemplate.id
 }
 
-function getFixedActionType(action: Pick<ActionItem, 'id'>): ActionItem['type'] {
-  if (action.id === 'copy') return 'copy'
-  if (action.id === 'search') return 'search'
-  return 'prompt'
+function normalizeReasoning(value: unknown): ReasoningMode {
+  return value === 'off' ? 'off' : 'on'
 }
 
-function normalizeActionItems(actions: ActionItem[]): ActionItem[] {
-  const defaultById = new Map(defaultSettings.actions.map((action) => [action.id, action]))
-  const actionsById = new Map(actions.map((action) => [action.id, action]))
-  const normalizedDefaults = defaultSettings.actions.map((defaultAction) => {
-    const action = actionsById.get(defaultAction.id)
-    if (!action) return defaultAction
-    return {
-      ...defaultAction,
-      ...action,
-      type: getFixedActionType(defaultAction),
-      promptTemplate: action.promptTemplate ?? defaultAction.promptTemplate,
-      searchUrlTemplate: action.searchUrlTemplate ?? defaultAction.searchUrlTemplate
-    }
-  })
-  const customActions = actions.filter((action) => !defaultById.has(action.id)).map((action) => ({
-    ...action,
-    type: getFixedActionType(action)
-  }))
-  return [...normalizedDefaults, ...customActions]
+function normalizeOptionalString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value : undefined
+}
+
+function normalizeActionType(value: unknown): ActionType | null {
+  return value === 'copy' || value === 'search' || value === 'prompt' ? value : null
+}
+
+// Actions are a freely managed list (add / edit / rename / delete / reorder).
+// We only validate each entry — dropping unsupported types (e.g. the removed
+// dictionary action) — and guarantee unique ids while preserving order.
+function normalizeActionItems(actions: unknown): ActionItem[] {
+  if (!Array.isArray(actions)) return defaultSettings.actions.map((action) => ({ ...action }))
+  const seen = new Set<string>()
+  const result: ActionItem[] = []
+  for (const raw of actions) {
+    if (!raw || typeof raw !== 'object') continue
+    const candidate = raw as Partial<ActionItem>
+    const type = normalizeActionType(candidate.type)
+    if (!type) continue
+    let id = typeof candidate.id === 'string' && candidate.id.trim() ? candidate.id : `action-${result.length + 1}`
+    while (seen.has(id)) id = `${id}-${result.length + 1}`
+    seen.add(id)
+    result.push({
+      id,
+      name: typeof candidate.name === 'string' ? candidate.name : '',
+      enabled: candidate.enabled !== false,
+      icon: typeof candidate.icon === 'string' && candidate.icon.trim() ? candidate.icon : 'sparkles',
+      type,
+      promptTemplate: normalizeOptionalString(candidate.promptTemplate),
+      searchUrlTemplate: normalizeOptionalString(candidate.searchUrlTemplate),
+      providerTemplateId: normalizeOptionalString(candidate.providerTemplateId),
+      reasoning: normalizeReasoning(candidate.reasoning),
+      shortcut: normalizeOptionalString(candidate.shortcut)
+    })
+  }
+  return result
 }

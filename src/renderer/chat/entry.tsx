@@ -1,9 +1,8 @@
 import '../styles.css'
 import React from 'react'
 import { createRoot } from 'react-dom/client'
-import Markdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
 import type { AiChunkPayload, AiMessageInput } from '@shared/types'
+import { MarkdownView } from '../Markdown'
 import { Icon } from '../icons'
 import { useSettings } from '../useSettings'
 import { useThemeMode } from '../useThemeMode'
@@ -246,7 +245,7 @@ function ChatApp() {
                   </div>
                 )}
                 {turn.text ? (
-                  <Markdown remarkPlugins={[remarkGfm]}>{turn.text}</Markdown>
+                  <MarkdownView>{turn.text}</MarkdownView>
                 ) : turn.pending ? (
                   <span className="thinking-indicator">{t('preparing')}</span>
                 ) : null}

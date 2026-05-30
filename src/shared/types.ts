@@ -4,6 +4,8 @@ export type ActionType = 'copy' | 'search' | 'prompt'
 export type AppLanguage = 'zh-CN' | 'en'
 export type ThemeMode = 'system' | 'light' | 'dark'
 export type ProviderApiType = 'openai' | 'anthropic'
+/** 'on' lets the model reason at its own default; 'off' suppresses thinking. */
+export type ReasoningMode = 'on' | 'off'
 
 export interface ProviderSettings {
   apiType: ProviderApiType
@@ -34,6 +36,12 @@ export interface ActionItem {
   type: ActionType
   promptTemplate?: string
   searchUrlTemplate?: string
+  /** Provider template to use for this action. Empty/undefined = follow the active provider. */
+  providerTemplateId?: string
+  /** Reasoning behavior for this action. Defaults to 'on' (model default). */
+  reasoning?: ReasoningMode
+  /** Optional global shortcut that opens a type-in window for this action. */
+  shortcut?: string
 }
 
 export interface AppSettings {
@@ -67,6 +75,8 @@ export interface ActionPayload {
   action: ActionItem
   selectedText: string
   isFullscreen?: boolean
+  /** 'selection' runs immediately on selectedText; 'input' opens a type-in box first. */
+  mode?: 'selection' | 'input'
 }
 
 export interface AiMessageInput {
@@ -80,6 +90,10 @@ export interface AiStreamRequest {
   prompt?: string
   messages?: AiMessageInput[]
   systemPrompt?: string
+  /** Resolve the provider from this template instead of the active one. */
+  providerTemplateId?: string
+  /** Reasoning behavior for this request. Defaults to 'on' (model default). */
+  reasoning?: ReasoningMode
 }
 
 export interface AiChunkPayload {
