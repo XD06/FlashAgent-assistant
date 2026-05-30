@@ -226,6 +226,15 @@ function MousePointer({ size = 16, strokeWidth = 2 }: IconProps) {
   )
 }
 
+function Power({ size = 16, strokeWidth = 2 }: IconProps) {
+  return (
+    <svg {...baseProps(size)} strokeWidth={strokeWidth}>
+      <path d="M12 3v9" />
+      <path d="M6.4 7.4a8 8 0 1 0 11.2 0" />
+    </svg>
+  )
+}
+
 function BookOpen({ size = 16, strokeWidth = 2 }: IconProps) {
   return (
     <svg {...baseProps(size)} strokeWidth={strokeWidth}>
@@ -240,6 +249,7 @@ const icons: Record<string, (props: IconProps) => React.JSX.Element> = {
   'arrow-up': ArrowUp,
   'arrow-up-right': ArrowUpRight,
   'book-open': BookOpen,
+  power: Power,
   copy: CopyIcon,
   download: Download,
   'flask-conical': FlaskConical,

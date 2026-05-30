@@ -130,6 +130,44 @@ describe('selection actions', () => {
     expect(merged.provider.model).toBe('claude-3-5-sonnet-latest')
   })
 
+  it('clamps appearance window size and font size, and validates autoLaunch', () => {
+    const normalized = normalizeSettings({
+      ...defaultSettings,
+      actionWindowWidth: 50,
+      actionWindowHeight: 99999,
+      fontSize: 2,
+      fontFamily: 'Consolas',
+      autoLaunch: 'yes'
+    })
+    expect(normalized.actionWindowWidth).toBe(320)
+    expect(normalized.actionWindowHeight).toBe(1200)
+    expect(normalized.fontSize).toBe(10)
+    expect(normalized.fontFamily).toBe('Consolas')
+    expect(normalized.autoLaunch).toBe(false)
+  })
+
+  it('keeps valid appearance settings and autoLaunch=true', () => {
+    const normalized = normalizeSettings({
+      ...defaultSettings,
+      actionWindowWidth: 700,
+      actionWindowHeight: 500,
+      fontSize: 16,
+      autoLaunch: true
+    })
+    expect(normalized.actionWindowWidth).toBe(700)
+    expect(normalized.actionWindowHeight).toBe(500)
+    expect(normalized.fontSize).toBe(16)
+    expect(normalized.autoLaunch).toBe(true)
+  })
+
+  it('defaults appearance settings during normalization of old settings', () => {
+    const { actionWindowWidth: _w, fontSize: _f, autoLaunch: _a, ...oldSettings } = defaultSettings
+    const normalized = normalizeSettings(oldSettings)
+    expect(normalized.actionWindowWidth).toBe(defaultSettings.actionWindowWidth)
+    expect(normalized.fontSize).toBe(defaultSettings.fontSize)
+    expect(normalized.autoLaunch).toBe(false)
+  })
+
   it('forces provider temperature to 1 during normalization', () => {
     const normalized = normalizeSettings({
       ...defaultSettings,

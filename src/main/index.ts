@@ -239,6 +239,23 @@ function registerShortcuts(): void {
   }
 }
 
+// Register (or clear) the OS login item. We only touch it in a packaged build —
+// registering the dev electron.exe path into the user's startup would be wrong.
+// '--hidden' is what tells a login-triggered launch to stay in the tray.
+function applyAutoLaunch(enabled: boolean): void {
+  if (!app.isPackaged) return
+  app.setLoginItemSettings({ openAtLogin: enabled, openAsHidden: enabled, args: ['--hidden'] })
+}
+
+function wasStartedHidden(): boolean {
+  if (process.argv.includes('--hidden')) return true
+  try {
+    return app.getLoginItemSettings().wasOpenedAtLogin
+  } catch {
+    return false
+  }
+}
+
 function applySelectionState(settings = getSettings()): void {
   if (!isSupportedPlatform || !selectionService.isAvailable) return
   if (settings.enabled && !selectionService.isRunning) {
@@ -260,6 +277,7 @@ function registerIpc(): void {
     const settings = updateSettings(patch)
     registerShortcuts()
     applySelectionState(settings)
+    applyAutoLaunch(settings.autoLaunch)
     return settings
   })
   ipcMain.handle(IPC.OpenExternal, (_event, url: string) => shell.openExternal(url))
@@ -357,6 +375,7 @@ if (!app.requestSingleInstanceLock()) {
     createTray()
     registerShortcuts()
     applySelectionState()
+    applyAutoLaunch(getSettings().autoLaunch)
 
     onSettingsChanged((settings) => {
       for (const win of BrowserWindow.getAllWindows()) {
@@ -365,7 +384,8 @@ if (!app.requestSingleInstanceLock()) {
       refreshTrayMenu()
     })
 
-    createSettingsWindow()
+    // A login-triggered launch (or any '--hidden' start) stays in the tray.
+    if (!wasStartedHidden()) createSettingsWindow()
   })
 
   app.on('second-instance', () => createSettingsWindow())

@@ -7,6 +7,7 @@ import { MarkdownView } from '../Markdown'
 import { Icon } from '../icons'
 import { useSettings } from '../useSettings'
 import { useThemeMode } from '../useThemeMode'
+import { useAppearance } from '../useAppearance'
 import { getActionLabel, getTranslator } from '../i18n'
 
 interface ChatTurn {
@@ -419,6 +420,7 @@ function ActionApp() {
   const [pinned, setPinned] = React.useState(settings.autoPin)
   const t = getTranslator(settings.language)
   useThemeMode(settings.theme)
+  useAppearance(settings)
 
   React.useEffect(() => {
     document.documentElement.classList.add('action-page-root')

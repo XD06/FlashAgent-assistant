@@ -55,6 +55,11 @@ export interface AppSettings {
   rememberWindowSize: boolean
   autoClose: boolean
   autoPin: boolean
+  actionWindowWidth: number
+  actionWindowHeight: number
+  fontFamily: string
+  fontSize: number
+  autoLaunch: boolean
   filterMode: FilterMode
   filterList: string[]
   provider: ProviderSettings

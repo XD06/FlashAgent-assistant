@@ -256,8 +256,8 @@ export class SelectionService {
 
   private createActionWindow(): BrowserWindow {
     const settings = this.getSettings()
-    const width = settings.rememberWindowSize ? this.lastActionSize.width : ACTION_WIDTH
-    const height = settings.rememberWindowSize ? this.lastActionSize.height : ACTION_HEIGHT
+    const width = settings.rememberWindowSize ? this.lastActionSize.width : settings.actionWindowWidth
+    const height = settings.rememberWindowSize ? this.lastActionSize.height : settings.actionWindowHeight
     const win = new BrowserWindow({
       width: this.getActionWindowWidth(width),
       height: this.getActionWindowHeight(height),
@@ -439,8 +439,8 @@ export class SelectionService {
   private positionAndShowActionWindow(win: BrowserWindow, settings: AppSettings): void {
     const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
     const area = display.workArea
-    const width = settings.rememberWindowSize ? this.lastActionSize.width : ACTION_WIDTH
-    const height = settings.rememberWindowSize ? this.lastActionSize.height : ACTION_HEIGHT
+    const width = settings.rememberWindowSize ? this.lastActionSize.width : settings.actionWindowWidth
+    const height = settings.rememberWindowSize ? this.lastActionSize.height : settings.actionWindowHeight
     let x = Math.round(area.x + (area.width - width) / 2)
     let y = Math.round(area.y + (area.height - height) / 2)
 
@@ -466,8 +466,8 @@ export class SelectionService {
   private positionActionWindowCenter(win: BrowserWindow, settings: AppSettings): void {
     const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
     const area = display.workArea
-    const width = settings.rememberWindowSize ? this.lastActionSize.width : ACTION_WIDTH
-    const height = settings.rememberWindowSize ? this.lastActionSize.height : ACTION_HEIGHT
+    const width = settings.rememberWindowSize ? this.lastActionSize.width : settings.actionWindowWidth
+    const height = settings.rememberWindowSize ? this.lastActionSize.height : settings.actionWindowHeight
     const x = Math.round(area.x + (area.width - width) / 2)
     const y = Math.round(area.y + (area.height - height) / 2)
     win.setBounds({

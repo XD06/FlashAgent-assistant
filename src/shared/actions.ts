@@ -105,6 +105,11 @@ export function mergeSettings(current: AppSettings, patch: SettingsPatch): AppSe
     triggerMode: normalizeTriggerMode(rest.triggerMode ?? current.triggerMode),
     webSearchEnabled:
       typeof rest.webSearchEnabled === 'boolean' ? rest.webSearchEnabled : current.webSearchEnabled,
+    actionWindowWidth: clampInt(rest.actionWindowWidth ?? current.actionWindowWidth, 320, 1600, defaultSettings.actionWindowWidth),
+    actionWindowHeight: clampInt(rest.actionWindowHeight ?? current.actionWindowHeight, 240, 1200, defaultSettings.actionWindowHeight),
+    fontFamily: typeof (rest.fontFamily ?? current.fontFamily) === 'string' ? (rest.fontFamily ?? current.fontFamily) : '',
+    fontSize: clampInt(rest.fontSize ?? current.fontSize, 10, 28, defaultSettings.fontSize),
+    autoLaunch: typeof (rest.autoLaunch ?? current.autoLaunch) === 'boolean' ? (rest.autoLaunch ?? current.autoLaunch) : false,
     provider: nextProvider,
     providerTemplates: nextProviderTemplates,
     activeProviderTemplateId: selectedProviderTemplate?.id ?? defaultProviderTemplate.id,
@@ -172,6 +177,11 @@ function normalizeProviderTemplates(
 function normalizeActiveProviderTemplateId(activeId: unknown, templates: ProviderTemplate[]): string {
   if (typeof activeId === 'string' && templates.some((template) => template.id === activeId)) return activeId
   return templates[0]?.id ?? defaultProviderTemplate.id
+}
+
+function clampInt(value: unknown, min: number, max: number, fallback: number): number {
+  const n = typeof value === 'number' && Number.isFinite(value) ? Math.round(value) : fallback
+  return Math.min(max, Math.max(min, n))
 }
 
 function normalizeReasoning(value: unknown): ReasoningMode {

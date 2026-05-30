@@ -5,6 +5,7 @@ import { useSettings } from '../useSettings'
 import { Icon } from '../icons'
 import { defaultActions } from '@shared/defaults'
 import { useThemeMode } from '../useThemeMode'
+import { useAppearance } from '../useAppearance'
 import { getActionLabel, getTranslator } from '../i18n'
 import type {
   ActionItem,
@@ -17,7 +18,7 @@ import type {
   TriggerMode
 } from '@shared/types'
 
-type SettingsSectionId = 'api' | 'selection' | 'window' | 'actions'
+type SettingsSectionId = 'api' | 'actions' | 'selection' | 'window'
 
 type SettingsSectionMeta = {
   id: SettingsSectionId
@@ -87,6 +88,39 @@ function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (che
       type="button">
       <span />
     </button>
+  )
+}
+
+function NumberField({
+  value,
+  min,
+  max,
+  onCommit
+}: {
+  value: number
+  min: number
+  max: number
+  onCommit: (value: number) => void
+}) {
+  const [text, setText] = React.useState(String(value))
+  React.useEffect(() => setText(String(value)), [value])
+  const commit = () => {
+    const parsed = parseInt(text, 10)
+    if (Number.isFinite(parsed)) onCommit(Math.min(max, Math.max(min, parsed)))
+    else setText(String(value))
+  }
+  return (
+    <input
+      type="number"
+      min={min}
+      max={max}
+      value={text}
+      onChange={(event) => setText(event.target.value)}
+      onBlur={commit}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') (event.target as HTMLInputElement).blur()
+      }}
+    />
   )
 }
 
@@ -245,6 +279,7 @@ function ActionEditor({
   const [expanded, setExpanded] = React.useState(false)
   const isPrompt = action.type === 'prompt'
   const isSearch = action.type === 'search'
+  const isCustom = !defaultAction
   const defaultPrompt = defaultAction?.promptTemplate ?? ''
 
   return (
@@ -335,16 +370,20 @@ function ActionEditor({
             </div>
           )}
 
-          <div className="action-editor-footer">
-            {isPrompt && (
-              <button type="button" onClick={() => onChange({ promptTemplate: defaultPrompt })} disabled={!defaultPrompt}>
-                {t('restoreDefaultPrompt')}
-              </button>
-            )}
-            <button type="button" className="danger-text" onClick={onDelete}>
-              {t('deleteAction')}
-            </button>
-          </div>
+          {((isPrompt && defaultPrompt) || isCustom) && (
+            <div className="action-editor-footer">
+              {isPrompt && defaultPrompt && (
+                <button type="button" onClick={() => onChange({ promptTemplate: defaultPrompt })}>
+                  {t('restoreDefaultPrompt')}
+                </button>
+              )}
+              {isCustom && (
+                <button type="button" className="danger-text" onClick={onDelete}>
+                  {t('deleteAction')}
+                </button>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -360,6 +399,7 @@ function SettingsApp() {
   const [busyTemplate, setBusyTemplate] = React.useState<{ id: string; kind: 'list' | 'test' } | null>(null)
   const t = getTranslator(settings.language)
   useThemeMode(settings.theme)
+  useAppearance(settings)
 
   React.useEffect(() => {
     document.documentElement.classList.add('settings-page-root')
@@ -463,6 +503,8 @@ function SettingsApp() {
   }
 
   const deleteAction = (id: string) => {
+    // Built-in default actions can be disabled or edited, but not removed.
+    if (defaultActions.some((action) => action.id === id)) return
     void update({ actions: settings.actions.filter((action) => action.id !== id) })
   }
 
@@ -481,9 +523,9 @@ function SettingsApp() {
 
   const sections: SettingsSectionMeta[] = [
     { id: 'api', label: t('sectionApi') },
+    { id: 'actions', label: t('sectionActions') },
     { id: 'selection', label: t('sectionSelection') },
-    { id: 'window', label: t('sectionWindow') },
-    { id: 'actions', label: t('sectionActions') }
+    { id: 'window', label: t('sectionWindow') }
   ]
   const defaultActionById = new Map(defaultActions.map((action) => [action.id, action]))
   const filterText = settings.filterList.join('\n')
@@ -788,6 +830,38 @@ function SettingsApp() {
               <Toggle checked={settings.autoPin} label={t('autoPin')} onChange={(autoPin) => update({ autoPin })} />
             </SettingRow>
           </SettingSection>
+
+          <SettingSection title={t('appearanceSizeGroup')}>
+            <SettingRow title={t('defaultWindowWidth')}>
+              <NumberField
+                value={settings.actionWindowWidth}
+                min={320}
+                max={1600}
+                onCommit={(actionWindowWidth) => update({ actionWindowWidth })}
+              />
+            </SettingRow>
+            <SettingRow title={t('defaultWindowHeight')}>
+              <NumberField
+                value={settings.actionWindowHeight}
+                min={240}
+                max={1200}
+                onCommit={(actionWindowHeight) => update({ actionWindowHeight })}
+              />
+            </SettingRow>
+          </SettingSection>
+
+          <SettingSection title={t('appearanceFontGroup')}>
+            <SettingRow title={t('fontFamily')} description={t('fontFamilyDesc')} className="tall">
+              <input
+                value={settings.fontFamily}
+                placeholder={t('fontFamilyPlaceholder')}
+                onChange={(event) => update({ fontFamily: event.target.value })}
+              />
+            </SettingRow>
+            <SettingRow title={t('fontSize')}>
+              <NumberField value={settings.fontSize} min={10} max={28} onCommit={(fontSize) => update({ fontSize })} />
+            </SettingRow>
+          </SettingSection>
         </div>
       )
     }
@@ -842,6 +916,15 @@ function SettingsApp() {
               </button>
             </div>
             <div className="status-control">
+              <button
+                type="button"
+                className={settings.autoLaunch ? 'theme-toggle active' : 'theme-toggle'}
+                title={t('autoLaunch')}
+                aria-label={t('autoLaunch')}
+                aria-pressed={settings.autoLaunch}
+                onClick={() => update({ autoLaunch: !settings.autoLaunch })}>
+                <Icon name="power" size={14} />
+              </button>
               <button
                 type="button"
                 className="theme-toggle"
