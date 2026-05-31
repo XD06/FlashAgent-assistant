@@ -1,4 +1,7 @@
+import { defaultActions } from '@shared/defaults'
 import type { ActionItem, AppLanguage } from '@shared/types'
+
+const defaultActionNameById = new Map(defaultActions.map((action) => [action.id, action.name]))
 
 type Dict = Record<string, string>
 
@@ -100,6 +103,15 @@ const dictionaries: Record<AppLanguage, Dict> = {
     autoCloseDesc: 'Close unpinned result windows after focus leaves them.',
     autoPin: 'Auto pin',
     autoPinDesc: 'Keep result windows above other windows by default.',
+    appearanceFontGroup: 'Font',
+    fontFamily: 'Font family',
+    fontFamilyDesc: 'Leave empty to use the system default.',
+    fontFamilyPlaceholder: 'e.g. Microsoft YaHei, Consolas',
+    fontSize: 'Font size (px)',
+    appearanceSizeGroup: 'Default window size',
+    defaultWindowWidth: 'Width (px)',
+    defaultWindowHeight: 'Height (px)',
+    autoLaunch: 'Launch at login',
     theme_system: 'Follow system theme',
     theme_light: 'Light theme',
     theme_dark: 'Dark theme',
@@ -108,6 +120,24 @@ const dictionaries: Record<AppLanguage, Dict> = {
     hidePrompt: 'Hide',
     restoreDefaultPrompt: 'Restore default',
     promptTemplatePlaceholder: 'Use {{text}} for selected text and {{language}} for the target language.',
+    actionProvider: 'Provider',
+    actionProviderDefault: 'Follow default',
+    actionReasoning: 'Reasoning',
+    reasoningOn: 'On (default)',
+    reasoningOff: 'Off',
+    actionName: 'Name',
+    actionIcon: 'Icon',
+    actionShortcutsGroup: 'Action type-in shortcuts',
+    actionShortcutsHint: 'A shortcut opens a type-in window for that action — type text and run it.',
+    addAction: 'Add action',
+    deleteAction: 'Delete action',
+    moveUp: 'Move up',
+    moveDown: 'Move down',
+    newActionName: 'New action',
+    searchUrlLabel: 'Search URL',
+    addProvider: 'Add provider',
+    providerDefault: 'Default',
+    setDefault: 'Set default',
     copyType: 'Copy',
     searchType: 'Search',
     promptType: 'Prompt',
@@ -224,6 +254,15 @@ const dictionaries: Record<AppLanguage, Dict> = {
     autoCloseDesc: '未置顶的结果窗口失去焦点后自动关闭。',
     autoPin: '自动置顶',
     autoPinDesc: '默认让结果窗口保持在其他窗口上方。',
+    appearanceFontGroup: '字体',
+    fontFamily: '字体名称',
+    fontFamilyDesc: '留空则使用系统默认字体。',
+    fontFamilyPlaceholder: '例如：微软雅黑、Consolas',
+    fontSize: '字号 (px)',
+    appearanceSizeGroup: '默认窗口大小',
+    defaultWindowWidth: '宽度 (px)',
+    defaultWindowHeight: '高度 (px)',
+    autoLaunch: '开机自启',
     theme_system: '跟随系统主题',
     theme_light: '亮色主题',
     theme_dark: '暗色主题',
@@ -232,6 +271,24 @@ const dictionaries: Record<AppLanguage, Dict> = {
     hidePrompt: '收起',
     restoreDefaultPrompt: '恢复默认',
     promptTemplatePlaceholder: '使用 {{text}} 表示选中文本，{{language}} 表示目标语言。',
+    actionProvider: '服务商',
+    actionProviderDefault: '跟随默认',
+    actionReasoning: '推理',
+    reasoningOn: '开启（默认）',
+    reasoningOff: '关闭',
+    actionName: '名称',
+    actionIcon: '图标',
+    actionShortcutsGroup: '动作输入快捷键',
+    actionShortcutsHint: '快捷键会为该动作打开一个输入窗口，输入文本后运行。',
+    addAction: '添加动作',
+    deleteAction: '删除动作',
+    moveUp: '上移',
+    moveDown: '下移',
+    newActionName: '新动作',
+    searchUrlLabel: '搜索网址',
+    addProvider: '添加服务商',
+    providerDefault: '默认',
+    setDefault: '设为默认',
     copyType: '复制',
     searchType: '搜索',
     promptType: 'AI 提示词',
@@ -261,5 +318,11 @@ export function getTranslator(language: AppLanguage) {
 
 export function getActionLabel(action: ActionItem, language: AppLanguage): string {
   const t = getTranslator(language)
-  return t(`action_${action.id}`) === `action_${action.id}` ? action.name : t(`action_${action.id}`)
+  const key = `action_${action.id}`
+  const localized = t(key)
+  const defaultName = defaultActionNameById.get(action.id)
+  // Built-in action that the user hasn't renamed → show its localized label.
+  if (localized !== key && (!action.name || action.name === defaultName)) return localized
+  // Renamed built-in or a custom action → show the user's chosen name.
+  return action.name || (localized !== key ? localized : action.id)
 }

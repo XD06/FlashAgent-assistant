@@ -1,15 +1,29 @@
 import { defaultProviderTemplate, defaultSettings } from './defaults'
 import type {
   ActionItem,
+  ActionType,
   AppLanguage,
   AppSettings,
   ProviderApiType,
   ProviderSettings,
   ProviderTemplate,
+  ReasoningMode,
   SettingsPatch,
   ThemeMode,
   TriggerMode
 } from './types'
+
+/** Resolve the provider an action (or request) should use, falling back to the active provider. */
+export function resolveProvider(
+  settings: Pick<AppSettings, 'provider' | 'providerTemplates'>,
+  providerTemplateId?: string
+): ProviderSettings {
+  if (providerTemplateId) {
+    const template = settings.providerTemplates.find((item) => item.id === providerTemplateId)
+    if (template) return template.provider
+  }
+  return settings.provider
+}
 
 export function getResponseLanguageName(language: AppLanguage): string {
   return language === 'zh-CN' ? 'Simplified Chinese' : 'English'
@@ -91,6 +105,11 @@ export function mergeSettings(current: AppSettings, patch: SettingsPatch): AppSe
     triggerMode: normalizeTriggerMode(rest.triggerMode ?? current.triggerMode),
     webSearchEnabled:
       typeof rest.webSearchEnabled === 'boolean' ? rest.webSearchEnabled : current.webSearchEnabled,
+    actionWindowWidth: clampInt(rest.actionWindowWidth ?? current.actionWindowWidth, 320, 1600, defaultSettings.actionWindowWidth),
+    actionWindowHeight: clampInt(rest.actionWindowHeight ?? current.actionWindowHeight, 240, 1200, defaultSettings.actionWindowHeight),
+    fontFamily: typeof (rest.fontFamily ?? current.fontFamily) === 'string' ? (rest.fontFamily ?? current.fontFamily) : '',
+    fontSize: clampInt(rest.fontSize ?? current.fontSize, 10, 28, defaultSettings.fontSize),
+    autoLaunch: typeof (rest.autoLaunch ?? current.autoLaunch) === 'boolean' ? (rest.autoLaunch ?? current.autoLaunch) : false,
     provider: nextProvider,
     providerTemplates: nextProviderTemplates,
     activeProviderTemplateId: selectedProviderTemplate?.id ?? defaultProviderTemplate.id,
@@ -160,29 +179,50 @@ function normalizeActiveProviderTemplateId(activeId: unknown, templates: Provide
   return templates[0]?.id ?? defaultProviderTemplate.id
 }
 
-function getFixedActionType(action: Pick<ActionItem, 'id'>): ActionItem['type'] {
-  if (action.id === 'copy') return 'copy'
-  if (action.id === 'search') return 'search'
-  return 'prompt'
+function clampInt(value: unknown, min: number, max: number, fallback: number): number {
+  const n = typeof value === 'number' && Number.isFinite(value) ? Math.round(value) : fallback
+  return Math.min(max, Math.max(min, n))
 }
 
-function normalizeActionItems(actions: ActionItem[]): ActionItem[] {
-  const defaultById = new Map(defaultSettings.actions.map((action) => [action.id, action]))
-  const actionsById = new Map(actions.map((action) => [action.id, action]))
-  const normalizedDefaults = defaultSettings.actions.map((defaultAction) => {
-    const action = actionsById.get(defaultAction.id)
-    if (!action) return defaultAction
-    return {
-      ...defaultAction,
-      ...action,
-      type: getFixedActionType(defaultAction),
-      promptTemplate: action.promptTemplate ?? defaultAction.promptTemplate,
-      searchUrlTemplate: action.searchUrlTemplate ?? defaultAction.searchUrlTemplate
-    }
-  })
-  const customActions = actions.filter((action) => !defaultById.has(action.id)).map((action) => ({
-    ...action,
-    type: getFixedActionType(action)
-  }))
-  return [...normalizedDefaults, ...customActions]
+function normalizeReasoning(value: unknown): ReasoningMode {
+  return value === 'off' ? 'off' : 'on'
+}
+
+function normalizeOptionalString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value : undefined
+}
+
+function normalizeActionType(value: unknown): ActionType | null {
+  return value === 'copy' || value === 'search' || value === 'prompt' ? value : null
+}
+
+// Actions are a freely managed list (add / edit / rename / delete / reorder).
+// We only validate each entry — dropping unsupported types (e.g. the removed
+// dictionary action) — and guarantee unique ids while preserving order.
+function normalizeActionItems(actions: unknown): ActionItem[] {
+  if (!Array.isArray(actions)) return defaultSettings.actions.map((action) => ({ ...action }))
+  const seen = new Set<string>()
+  const result: ActionItem[] = []
+  for (const raw of actions) {
+    if (!raw || typeof raw !== 'object') continue
+    const candidate = raw as Partial<ActionItem>
+    const type = normalizeActionType(candidate.type)
+    if (!type) continue
+    let id = typeof candidate.id === 'string' && candidate.id.trim() ? candidate.id : `action-${result.length + 1}`
+    while (seen.has(id)) id = `${id}-${result.length + 1}`
+    seen.add(id)
+    result.push({
+      id,
+      name: typeof candidate.name === 'string' ? candidate.name : '',
+      enabled: candidate.enabled !== false,
+      icon: typeof candidate.icon === 'string' && candidate.icon.trim() ? candidate.icon : 'sparkles',
+      type,
+      promptTemplate: normalizeOptionalString(candidate.promptTemplate),
+      searchUrlTemplate: normalizeOptionalString(candidate.searchUrlTemplate),
+      providerTemplateId: normalizeOptionalString(candidate.providerTemplateId),
+      reasoning: normalizeReasoning(candidate.reasoning),
+      shortcut: normalizeOptionalString(candidate.shortcut)
+    })
+  }
+  return result
 }

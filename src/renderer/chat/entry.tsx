@@ -1,12 +1,12 @@
 import '../styles.css'
 import React from 'react'
 import { createRoot } from 'react-dom/client'
-import Markdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
 import type { AiChunkPayload, AiMessageInput } from '@shared/types'
+import { MarkdownView } from '../Markdown'
 import { Icon } from '../icons'
 import { useSettings } from '../useSettings'
 import { useThemeMode } from '../useThemeMode'
+import { useAppearance } from '../useAppearance'
 import { getTranslator } from '../i18n'
 
 interface ChatTurn {
@@ -23,6 +23,7 @@ function ChatApp() {
   const { settings } = useSettings()
   const t = getTranslator(settings.language)
   useThemeMode(settings.theme)
+  useAppearance(settings)
   const isZh = settings.language === 'zh-CN'
 
   const [chat, setChat] = React.useState<ChatTurn[]>([])
@@ -246,7 +247,7 @@ function ChatApp() {
                   </div>
                 )}
                 {turn.text ? (
-                  <Markdown remarkPlugins={[remarkGfm]}>{turn.text}</Markdown>
+                  <MarkdownView>{turn.text}</MarkdownView>
                 ) : turn.pending ? (
                   <span className="thinking-indicator">{t('preparing')}</span>
                 ) : null}

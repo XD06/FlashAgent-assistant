@@ -130,6 +130,44 @@ describe('selection actions', () => {
     expect(merged.provider.model).toBe('claude-3-5-sonnet-latest')
   })
 
+  it('clamps appearance window size and font size, and validates autoLaunch', () => {
+    const normalized = normalizeSettings({
+      ...defaultSettings,
+      actionWindowWidth: 50,
+      actionWindowHeight: 99999,
+      fontSize: 2,
+      fontFamily: 'Consolas',
+      autoLaunch: 'yes'
+    })
+    expect(normalized.actionWindowWidth).toBe(320)
+    expect(normalized.actionWindowHeight).toBe(1200)
+    expect(normalized.fontSize).toBe(10)
+    expect(normalized.fontFamily).toBe('Consolas')
+    expect(normalized.autoLaunch).toBe(false)
+  })
+
+  it('keeps valid appearance settings and autoLaunch=true', () => {
+    const normalized = normalizeSettings({
+      ...defaultSettings,
+      actionWindowWidth: 700,
+      actionWindowHeight: 500,
+      fontSize: 16,
+      autoLaunch: true
+    })
+    expect(normalized.actionWindowWidth).toBe(700)
+    expect(normalized.actionWindowHeight).toBe(500)
+    expect(normalized.fontSize).toBe(16)
+    expect(normalized.autoLaunch).toBe(true)
+  })
+
+  it('defaults appearance settings during normalization of old settings', () => {
+    const { actionWindowWidth: _w, fontSize: _f, autoLaunch: _a, ...oldSettings } = defaultSettings
+    const normalized = normalizeSettings(oldSettings)
+    expect(normalized.actionWindowWidth).toBe(defaultSettings.actionWindowWidth)
+    expect(normalized.fontSize).toBe(defaultSettings.fontSize)
+    expect(normalized.autoLaunch).toBe(false)
+  })
+
   it('forces provider temperature to 1 during normalization', () => {
     const normalized = normalizeSettings({
       ...defaultSettings,
@@ -157,30 +195,52 @@ describe('selection actions', () => {
     expect('actionWindowOpacity' in (normalized as object)).toBe(false)
   })
 
-  it('normalizes old actions by adding default prompt templates', () => {
+  it('keeps a cleared prompt template instead of restoring defaults (actions are user-owned)', () => {
     const oldSettings = {
       ...defaultSettings,
       actions: defaultSettings.actions.map((action) => (action.id === 'translate' ? { ...action, promptTemplate: undefined } : action))
     }
     const normalized = normalizeSettings(oldSettings)
-    expect(normalized.actions.find((action) => action.id === 'translate')?.promptTemplate).toBe(
-      defaultSettings.actions.find((action) => action.id === 'translate')?.promptTemplate
-    )
+    expect(normalized.actions.find((action) => action.id === 'translate')?.promptTemplate).toBeUndefined()
   })
 
-  it('forces fixed action types during normalization', () => {
-    const oldSettings = {
+  it('preserves valid action types and drops unsupported ones', () => {
+    const normalized = normalizeSettings({
       ...defaultSettings,
-      actions: defaultSettings.actions.map((action) => {
-        if (action.id === 'copy') return { ...action, type: 'prompt' as const }
-        if (action.id === 'search') return { ...action, type: 'copy' as const }
-        return { ...action, type: 'search' as const }
-      })
+      actions: [
+        { id: 'a', name: 'A', enabled: true, icon: 'sparkles', type: 'prompt' },
+        { id: 'b', name: 'B', enabled: true, icon: 'copy', type: 'copy' },
+        { id: 'c', name: 'C', enabled: true, icon: 'book-open', type: 'dictionary' }
+      ]
+    })
+    const ids = normalized.actions.map((action) => action.id)
+    expect(ids).toContain('a')
+    expect(ids).toContain('b')
+    expect(ids).not.toContain('c')
+    expect(normalized.actions.find((action) => action.id === 'a')?.type).toBe('prompt')
+    expect(normalized.actions.find((action) => action.id === 'b')?.type).toBe('copy')
+  })
+
+  it('keeps user-added actions with shortcut and reasoning', () => {
+    const custom = {
+      id: 'my-action',
+      name: 'My Action',
+      enabled: true,
+      icon: 'sparkles',
+      type: 'prompt' as const,
+      promptTemplate: 'Do: {{text}}',
+      providerTemplateId: 'tpl-2',
+      reasoning: 'off' as const,
+      shortcut: 'CommandOrControl+Alt+M'
     }
-    const normalized = normalizeSettings(oldSettings)
-    expect(normalized.actions.find((action) => action.id === 'copy')?.type).toBe('copy')
-    expect(normalized.actions.find((action) => action.id === 'search')?.type).toBe('search')
-    expect(normalized.actions.find((action) => action.id === 'translate')?.type).toBe('prompt')
+    const normalized = normalizeSettings({ ...defaultSettings, actions: [custom] })
+    expect(normalized.actions).toHaveLength(1)
+    expect(normalized.actions[0]).toMatchObject({
+      id: 'my-action',
+      providerTemplateId: 'tpl-2',
+      reasoning: 'off',
+      shortcut: 'CommandOrControl+Alt+M'
+    })
   })
 
   it('builds a fixed language system prompt without custom prompt content', () => {

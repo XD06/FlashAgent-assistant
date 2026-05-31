@@ -3,7 +3,7 @@ import { electronApp, optimizer } from '@electron-toolkit/utils'
 import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
-import { buildAssistantSystemPrompt } from '@shared/actions'
+import { buildAssistantSystemPrompt, resolveProvider } from '@shared/actions'
 import { IPC } from '@shared/ipc'
 import { APP_ICON_DATA_URL, APP_TRAY_DATA_URL } from '@shared/brand'
 import type { AiStreamRequest, SettingsPatch } from '@shared/types'
@@ -221,6 +221,12 @@ function registerShortcuts(): void {
     }
   ]
 
+  // Per-action type-in shortcuts: open a typed-input window for that action.
+  for (const action of settings.actions) {
+    const accelerator = action.shortcut?.trim()
+    if (accelerator) shortcuts.push({ accelerator, action: () => selectionService.openActionInput(action) })
+  }
+
   for (const shortcut of shortcuts) {
     const accelerator = shortcut.accelerator?.trim()
     if (!accelerator) continue
@@ -230,6 +236,23 @@ function registerShortcuts(): void {
     } else {
       console.warn(`[shortcut] FAILED to register: ${accelerator} (likely taken by another app)`)
     }
+  }
+}
+
+// Register (or clear) the OS login item. We only touch it in a packaged build —
+// registering the dev electron.exe path into the user's startup would be wrong.
+// '--hidden' is what tells a login-triggered launch to stay in the tray.
+function applyAutoLaunch(enabled: boolean): void {
+  if (!app.isPackaged) return
+  app.setLoginItemSettings({ openAtLogin: enabled, openAsHidden: enabled, args: ['--hidden'] })
+}
+
+function wasStartedHidden(): boolean {
+  if (process.argv.includes('--hidden')) return true
+  try {
+    return app.getLoginItemSettings().wasOpenedAtLogin
+  } catch {
+    return false
   }
 }
 
@@ -254,6 +277,7 @@ function registerIpc(): void {
     const settings = updateSettings(patch)
     registerShortcuts()
     applySelectionState(settings)
+    applyAutoLaunch(settings.autoLaunch)
     return settings
   })
   ipcMain.handle(IPC.OpenExternal, (_event, url: string) => shell.openExternal(url))
@@ -267,6 +291,7 @@ function registerIpc(): void {
         ? request.messages
         : [{ role: 'user' as const, text: request.prompt ?? '' }]
       let systemPrompt = request.systemPrompt ?? buildAssistantSystemPrompt(settings)
+      const provider = resolveProvider(settings, request.providerTemplateId)
 
       // Optional: web search pre-flight. Let the model decide; if yes, query Exa
       // (via its public hosted MCP — no key required) and inject the results
@@ -277,7 +302,7 @@ function registerIpc(): void {
         if (userText) {
           try {
             const decision = await decideSearch(
-              settings.provider,
+              provider,
               userText,
               settings.language,
               controller.signal
@@ -299,9 +324,16 @@ function registerIpc(): void {
         }
       }
 
-      await streamChatMessages(settings.provider, messages, systemPrompt, controller.signal, (delta) => {
-        event.sender.send(IPC.AiChunk, { requestId: request.requestId, type: 'delta', text: delta })
-      })
+      await streamChatMessages(
+        provider,
+        messages,
+        systemPrompt,
+        controller.signal,
+        (delta) => {
+          event.sender.send(IPC.AiChunk, { requestId: request.requestId, type: 'delta', text: delta })
+        },
+        request.reasoning ?? 'on'
+      )
       event.sender.send(IPC.AiChunk, { requestId: request.requestId, type: 'done' })
     } catch (error) {
       if (controller.signal.aborted) {
@@ -322,9 +354,11 @@ function registerIpc(): void {
     abortControllers.get(requestId)?.abort()
     abortControllers.delete(requestId)
   })
-  ipcMain.handle(IPC.AiListModels, () => listModels(getSettings().provider))
-  ipcMain.handle(IPC.AiTestModel, async () => {
-    await testModel(getSettings().provider)
+  ipcMain.handle(IPC.AiListModels, (_event, providerTemplateId?: string) =>
+    listModels(resolveProvider(getSettings(), providerTemplateId))
+  )
+  ipcMain.handle(IPC.AiTestModel, async (_event, providerTemplateId?: string) => {
+    await testModel(resolveProvider(getSettings(), providerTemplateId))
     return { ok: true }
   })
 }
@@ -341,6 +375,7 @@ if (!app.requestSingleInstanceLock()) {
     createTray()
     registerShortcuts()
     applySelectionState()
+    applyAutoLaunch(getSettings().autoLaunch)
 
     onSettingsChanged((settings) => {
       for (const win of BrowserWindow.getAllWindows()) {
@@ -349,7 +384,8 @@ if (!app.requestSingleInstanceLock()) {
       refreshTrayMenu()
     })
 
-    createSettingsWindow()
+    // A login-triggered launch (or any '--hidden' start) stays in the tray.
+    if (!wasStartedHidden()) createSettingsWindow()
   })
 
   app.on('second-instance', () => createSettingsWindow())
