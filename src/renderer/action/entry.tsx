@@ -167,7 +167,17 @@ function useAutoScroll(ref: React.RefObject<HTMLDivElement>, dep: unknown) {
   return stick
 }
 
-function ChatTurns({ chat, t, isZh }: { chat: ChatTurn[]; t: Translator; isZh: boolean }) {
+function ChatTurns({
+  chat,
+  t,
+  isZh,
+  showThinking
+}: {
+  chat: ChatTurn[]
+  t: Translator
+  isZh: boolean
+  showThinking: boolean
+}) {
   return (
     <>
       {chat.map((turn, index) => {
@@ -181,7 +191,7 @@ function ChatTurns({ chat, t, isZh }: { chat: ChatTurn[]; t: Translator; isZh: b
               )}
               {turn.text ? (
                 <MarkdownView>{turn.text}</MarkdownView>
-              ) : turn.pending ? (
+              ) : turn.pending && showThinking ? (
                 <span className="thinking-indicator">{t('preparing')}</span>
               ) : null}
               {turn.error && <div className="error">{turn.error}</div>}
@@ -208,6 +218,9 @@ function copyLastResult(chat: ChatTurn[]): void {
 // follow-up questions in the same window.
 function SelectionResult({ payload, settings, t, pinned, togglePin }: ResultProps) {
   const isZh = settings.language === 'zh-CN'
+  // With reasoning off the answer streams back almost immediately, so the
+  // "Thinking…" placeholder is just a flash of noise — only show it when on.
+  const showThinking = (payload.action.reasoning ?? 'on') !== 'off'
   const { chat, send, stop, loading, hasResult } = useActionStream(payload.action, t)
   const [askOpen, setAskOpen] = React.useState(false)
   const [askText, setAskText] = React.useState('')
@@ -250,8 +263,8 @@ function SelectionResult({ payload, settings, t, pinned, togglePin }: ResultProp
       />
 
       <div className="content" ref={contentRef}>
-        {chat.length === 0 && <div className="thinking-indicator">{t('preparing')}</div>}
-        <ChatTurns chat={chat} t={t} isZh={isZh} />
+        {chat.length === 0 && showThinking && <div className="thinking-indicator">{t('preparing')}</div>}
+        <ChatTurns chat={chat} t={t} isZh={isZh} showThinking={showThinking} />
       </div>
 
       {askOpen && (
@@ -267,6 +280,9 @@ function SelectionResult({ payload, settings, t, pinned, togglePin }: ResultProp
                 e.preventDefault()
                 submitAsk()
               } else if (e.key === 'Escape') {
+                // Esc here closes the follow-up box only — keep it from bubbling
+                // up to the window-level handler that would close the window.
+                e.stopPropagation()
                 setAskOpen(false)
                 setAskText('')
               }
@@ -305,6 +321,7 @@ function SelectionResult({ payload, settings, t, pinned, togglePin }: ResultProp
 // show a one-shot result. Re-running replaces the result (no follow-up chat).
 function InputResult({ payload, settings, t, pinned, togglePin }: ResultProps) {
   const isZh = settings.language === 'zh-CN'
+  const showThinking = (payload.action.reasoning ?? 'on') !== 'off'
   const { chat, setChat, send, stop, loading, hasResult } = useActionStream(payload.action, t)
   const [input, setInput] = React.useState('')
   const inputRef = React.useRef<HTMLTextAreaElement>(null)
@@ -388,7 +405,7 @@ function InputResult({ payload, settings, t, pinned, togglePin }: ResultProps) {
 
       {chat.length > 0 && (
         <div className="content" ref={contentRef}>
-          <ChatTurns chat={chat} t={t} isZh={isZh} />
+          <ChatTurns chat={chat} t={t} isZh={isZh} showThinking={showThinking} />
         </div>
       )}
 
@@ -426,6 +443,15 @@ function ActionApp() {
   const t = getTranslator(settings.language)
   useThemeMode(settings.theme)
   useAppearance(settings)
+
+  // Esc closes the action window (both selection-result and type-in modes).
+  React.useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') void window.assistantLite.windowControls.close()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   React.useEffect(() => {
     document.documentElement.classList.add('action-page-root')
