@@ -416,7 +416,12 @@ function InputResult({ payload, settings, t, pinned, togglePin }: ResultProps) {
 
 function ActionApp() {
   const { settings } = useSettings()
-  const [payload, setPayload] = React.useState<ActionPayload | null>(null)
+  // Seed from the payload the window was opened with so the very first render
+  // already has content; the main process shows the window on its first paint.
+  // Later opens that reuse this window arrive via onAction below.
+  const [payload, setPayload] = React.useState<ActionPayload | null>(
+    () => window.assistantLite.selection.getInitialAction()
+  )
   const [pinned, setPinned] = React.useState(settings.autoPin)
   const t = getTranslator(settings.language)
   useThemeMode(settings.theme)

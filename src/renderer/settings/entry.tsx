@@ -282,6 +282,15 @@ function ActionEditor({
   const isCustom = !defaultAction
   const defaultPrompt = defaultAction?.promptTemplate ?? ''
 
+  // Local buffers for the free-text fields. Persisting goes through an async IPC
+  // round-trip, so binding the inputs straight to `action.*` made the value prop
+  // lag a keystroke behind — which reset the caret to the end and broke IME
+  // composition. We edit locally and persist in the background. Seeded once per
+  // action; the list keys editors by id, so this remounts when the action changes.
+  const [name, setName] = React.useState(action.name)
+  const [promptTemplate, setPromptTemplate] = React.useState(action.promptTemplate ?? '')
+  const [searchUrlTemplate, setSearchUrlTemplate] = React.useState(action.searchUrlTemplate ?? '')
+
   return (
     <div className="action-config-item">
       <div className="action-config-row">
@@ -313,9 +322,12 @@ function ActionEditor({
             <label className="field">
               <span>{t('actionName')}</span>
               <input
-                value={action.name}
+                value={name}
                 placeholder={getActionLabel(action, language)}
-                onChange={(event) => onChange({ name: event.target.value })}
+                onChange={(event) => {
+                  setName(event.target.value)
+                  onChange({ name: event.target.value })
+                }}
               />
             </label>
             <label className="field">
@@ -326,9 +338,12 @@ function ActionEditor({
 
           {isPrompt && (
             <textarea
-              value={action.promptTemplate ?? ''}
+              value={promptTemplate}
               placeholder={t('promptTemplatePlaceholder')}
-              onChange={(event) => onChange({ promptTemplate: event.target.value })}
+              onChange={(event) => {
+                setPromptTemplate(event.target.value)
+                onChange({ promptTemplate: event.target.value })
+              }}
             />
           )}
 
@@ -336,9 +351,12 @@ function ActionEditor({
             <label className="field">
               <span>{t('searchUrlLabel')}</span>
               <input
-                value={action.searchUrlTemplate ?? ''}
+                value={searchUrlTemplate}
                 placeholder="https://www.google.com/search?q={{query}}"
-                onChange={(event) => onChange({ searchUrlTemplate: event.target.value })}
+                onChange={(event) => {
+                  setSearchUrlTemplate(event.target.value)
+                  onChange({ searchUrlTemplate: event.target.value })
+                }}
               />
             </label>
           )}
@@ -373,7 +391,12 @@ function ActionEditor({
           {((isPrompt && defaultPrompt) || isCustom) && (
             <div className="action-editor-footer">
               {isPrompt && defaultPrompt && (
-                <button type="button" onClick={() => onChange({ promptTemplate: defaultPrompt })}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPromptTemplate(defaultPrompt)
+                    onChange({ promptTemplate: defaultPrompt })
+                  }}>
                   {t('restoreDefaultPrompt')}
                 </button>
               )}

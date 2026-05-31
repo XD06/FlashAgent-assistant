@@ -50,7 +50,11 @@ const api = {
       return () => {
         ipcRenderer.off(IPC.SelectionProcessAction, listener)
       }
-    }
+    },
+    // The payload a freshly-created action window is opened with. Read
+    // synchronously during the first render so content is on screen before the
+    // window is shown — no push/listener race, no empty-frame flash.
+    getInitialAction: (): ActionPayload | null => ipcRenderer.sendSync(IPC.SelectionGetInitialAction) ?? null
   },
   ai: {
     stream: (request: AiStreamRequest): Promise<void> => ipcRenderer.invoke(IPC.AiStream, request),
