@@ -23,33 +23,36 @@
   </p>
 </div>
 
-AIA划词助手是一个常驻菜单栏 / 系统托盘的小工具。在任意应用里选中一段文字，旁边会浮出一条工具栏，点一下就能翻译、解释、总结、润色、搜索或复制；不想用工具栏，也可以走全局快捷键。
+AIA划词助手是一个常驻菜单栏 / 系统托盘的小工具。在任意应用里选中一段文字，旁边会浮出一条工具栏，点一下就能翻译、解释、总结、润色、搜索或复制；不想用工具栏，也可以走全局快捷键。工具栏动作可以新增、重命名、换图标、改提示词、排序或删除，也能给某个动作单独绑定模型、关闭推理，或者配置快捷键后先弹出输入框再执行。
 
 除了划词，它还内置区域截图：拖拽框选一块屏幕，可以画线、画箭头标注，笔刷粗细随手拉滑杆调整。截完可以保存 PNG、复制到剪贴板、钉在桌面，或者直接交给 AI 识图。钉住的截图能滚轮缩放、拖拽搬位置、调整透明度，右键还能再次唤起 AI 识图。
 
 返回窗口本身就是个独立对话——回答完了可以接着追问，AI 看得到之前的上下文；输出是流式的，可以随时打断。需要查实时信息时打开联网搜索，AI 会自己抓网页，并在回答里附上来源链接。
 
-模型这边可接 **OpenAI-compatible**（自建 endpoint、OpenAI、DeepSeek、月之暗面、智谱、各类第三方代理都行）或 **Anthropic** 官方 API。多套模板可一键切换 endpoint / Key / 模型，API Key 只存在本地。界面支持亮 / 暗 / 跟随系统主题，中英双语都有。
+模型这边可接 **OpenAI-compatible**（自建 endpoint、OpenAI、DeepSeek、月之暗面、智谱、各类第三方代理都行）或 **Anthropic** 官方 API。多套模板可一键切换 endpoint / Key / 模型，每个动作也可以指定自己的模板；API Key 只存在本地。界面支持亮 / 暗 / 跟随系统主题，中英双语都有，结果窗口的默认尺寸、字体和字号也可以在设置里调整。
 
 目前支持 macOS 与 Windows。
 
 ## 下载
 
-最新版本 **v0.4.0**，可点击直接下载对应平台的安装包：
+最新发布版本 **v0.5.0**，可点击直接下载对应平台的安装包：
 
 | 平台 | 包类型 | 下载 |
 | --- | --- | --- |
-| macOS (Apple Silicon) | `.dmg` | [AIA-Selection-Assistant-0.4.0-arm64.dmg](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.4.0/AIA-Selection-Assistant-0.4.0-arm64.dmg) |
-| macOS (Apple Silicon) | `.zip` | [AIA-Selection-Assistant-0.4.0-arm64-mac.zip](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.4.0/AIA-Selection-Assistant-0.4.0-arm64-mac.zip) |
-| Windows x64 | 安装版 | [AIA-Selection-Assistant-Setup-0.4.0.exe](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.4.0/AIA-Selection-Assistant-Setup-0.4.0.exe) |
-| Windows x64 | 便携版 | [AIA-Selection-Assistant-Portable-0.4.0.exe](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.4.0/AIA-Selection-Assistant-Portable-0.4.0.exe) |
+| macOS (Apple Silicon) | `.dmg` | [AIA-Selection-Assistant-0.5.0-arm64.dmg](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.5.0/AIA-Selection-Assistant-0.5.0-arm64.dmg) |
+| macOS (Apple Silicon) | `.zip` | [AIA-Selection-Assistant-0.5.0-arm64-mac.zip](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.5.0/AIA-Selection-Assistant-0.5.0-arm64-mac.zip) |
+| Windows x64 | 安装版 | [AIA-Selection-Assistant-Setup-0.5.0.exe](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.5.0/AIA-Selection-Assistant-Setup-0.5.0.exe) |
+| Windows x64 | 便携版 | [AIA-Selection-Assistant-Portable-0.5.0.exe](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.5.0/AIA-Selection-Assistant-Portable-0.5.0.exe) |
 
-### v0.4.0 更新
+### v0.5.0 更新
 
-- 优化了截图功能（选区遮罩 / 标注工具栏 / 笔刷大小可调 / macOS 窗口控件冲突修复）
-- 优化了联网搜索功能
+- 支持自定义动作：新增、重命名、换图标、编辑提示词、排序、删除
+- 支持多套 API 模板，并可按动作指定模型模板与推理开关
+- 支持动作输入快捷键、结果窗口默认尺寸与字体设置、安装版开机自启
 
 历史版本与全部产物：[GitHub Releases](https://github.com/zcx960/AIA-selection-assistan/releases)。
+
+> README 描述的是当前 `main` 分支能力；若直接下载 Release，请以对应版本的产物为准。
 
 > macOS 包未做代码签名，首次打开请到「系统设置 → 隐私与安全性」放行；Windows 包未做代码签名，SmartScreen 提示时选「仍要运行」即可。
 
@@ -59,9 +62,11 @@ AIA划词助手是一个常驻菜单栏 / 系统托盘的小工具。在任意�
 - 选中文本后弹出悬浮工具栏，直接触发常用动作
 - 内置区域截图，可直接钉图、复制、保存或交给 AI 识图
 - 独立 AI 对话窗口，支持多轮上下文与流式追问
-- 支持 API 模板，方便切换模型、Key 和服务商
+- 支持多套 API 模板，并可按动作指定模型与推理开关
+- 支持自定义动作：新增、重命名、换图标、编辑提示词、排序、删除
+- 支持动作输入快捷键：按快捷键弹出输入框，输入文本后直接运行指定动作
 - 支持亮色、暗色、跟随系统三种主题
-- 结果窗口支持 Markdown 渲染
+- 结果窗口支持 Markdown 渲染，代码块可复制，长行自动换行
 
 ## 截图
 
@@ -89,8 +94,10 @@ AIA划词助手是一个常驻菜单栏 / 系统托盘的小工具。在任意�
 ## 功能特性
 
 - 选中文本后直接弹出悬浮工具栏
-- 内置翻译、解释、总结、润色、搜索、复制等动作
+- 内置翻译、解释、总结、润色、搜索、复制等动作，也可添加自己的动作
 - 支持多个 API 模板，切换模型和服务商更方便
+- 每个提示词动作可单独选择 API 模板，并独立开启或关闭推理
+- 每个动作可配置输入快捷键，不需要先选中文本也能快速运行
 - 工具栏可切换紧凑模式，也能隐藏 app 图标
 - 应用关闭后最小化到状态栏或系统托盘，不会直接退出
 
@@ -106,6 +113,7 @@ AIA划词助手是一个常驻菜单栏 / 系统托盘的小工具。在任意�
 - 独立的对话窗口，与悬浮工具栏的单次结果窗解耦
 - 支持多轮上下文：问完一题后可以接着追问，AI 能看到之前的对话
 - 流式输出，回答边生成边显示，可随时中断
+- Markdown 代码块支持一键复制，长代码行会自动换行
 - 窗口支持「钉住」常驻；关闭窗口即销毁会话，避免上下文意外保留
 
 ## 平台与权限说明
@@ -177,14 +185,25 @@ pnpm dist:win
 
 ### API 模板
 
+- 可新增、重命名、删除多个 API 模板
 - 每个模板会保存 API 类型、Base URL、API Key 和模型名
-- 切换模板后，当前 provider 配置会立即一起切换
+- 模板支持获取模型列表、模型测活，并可设为默认模板
+- 动作可以跟随默认模板，也可以指定某个模板单独运行
+
+### 动作配置
+
+- 内置动作可编辑、停用、排序；自定义动作还可以删除
+- 提示词动作支持自定义提示词、图标、模型模板和推理开关
+- 搜索动作支持自定义搜索 URL 模板
+- 动作快捷键会打开输入窗口，输入文本后用对应动作一次性运行
 
 ### 主题与界面
 
 - 支持亮色、暗色、跟随系统
 - 工具栏支持紧凑模式
 - 工具栏可控制是否显示 app 图标
+- 结果窗口支持设置默认宽高、字体名称和字号
+- 安装版支持开机自启；登录启动时会静默驻留到状态栏 / 托盘
 - 设置页分成 API 配置、划词、窗口、动作 四个分区
 
 ## 隐私说明

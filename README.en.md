@@ -23,33 +23,36 @@
   </p>
 </div>
 
-AIA Selection Assistant lives in your menu bar / system tray. Highlight some text in any app and a small toolbar slides in next to it — one click to translate, explain, summarize, rewrite, search, or copy. Prefer the keyboard? A global shortcut works too.
+AIA Selection Assistant lives in your menu bar / system tray. Highlight some text in any app and a small toolbar slides in next to it — one click to translate, explain, summarize, rewrite, search, or copy. Prefer the keyboard? A global shortcut works too. Toolbar actions can be added, renamed, re-iconed, reordered, edited, or deleted; each prompt action can also use its own model template, disable reasoning, or open a type-in window from its own shortcut.
 
 It also ships a built-in region screenshot tool: drag to select an area, annotate with pen or arrows (brush size is a quick slider away), then save as PNG, copy to clipboard, pin to the desktop, or hand the image straight to AI for vision-based analysis. Pinned screenshots support wheel zoom, drag-to-move, opacity tweaking, and a right-click menu to re-send them to AI.
 
 The result window is its own conversation — keep asking follow-ups, AI sees the earlier turns, and output streams in so you can interrupt any time. Flip on web search when you need fresh information; AI will fetch pages itself and cite the sources at the bottom of the answer.
 
-For models you can point it at either **OpenAI-compatible** endpoints (your own endpoint, OpenAI, DeepSeek, Moonshot, Zhipu, any third-party proxy) or the **Anthropic** API. Multiple templates let you swap endpoint / key / model in one click, and your API keys stay on disk. Light / dark / system theme modes, plus English and Chinese UI.
+For models you can point it at either **OpenAI-compatible** endpoints (your own endpoint, OpenAI, DeepSeek, Moonshot, Zhipu, any third-party proxy) or the **Anthropic** API. Multiple templates let you swap endpoint / key / model in one click, and individual actions can bind to a specific template. API keys stay on disk. Light / dark / system theme modes are supported, the UI ships in English and Chinese, and the result window's default size, font family, and font size can be customized.
 
 Currently runs on macOS and Windows.
 
 ## Download
 
-Latest release **v0.4.0** — grab the installer for your platform:
+Latest published release **v0.5.0** — grab the installer for your platform:
 
 | Platform | Package | Link |
 | --- | --- | --- |
-| macOS (Apple Silicon) | `.dmg` | [AIA-Selection-Assistant-0.4.0-arm64.dmg](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.4.0/AIA-Selection-Assistant-0.4.0-arm64.dmg) |
-| macOS (Apple Silicon) | `.zip` | [AIA-Selection-Assistant-0.4.0-arm64-mac.zip](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.4.0/AIA-Selection-Assistant-0.4.0-arm64-mac.zip) |
-| Windows x64 | Installer | [AIA-Selection-Assistant-Setup-0.4.0.exe](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.4.0/AIA-Selection-Assistant-Setup-0.4.0.exe) |
-| Windows x64 | Portable | [AIA-Selection-Assistant-Portable-0.4.0.exe](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.4.0/AIA-Selection-Assistant-Portable-0.4.0.exe) |
+| macOS (Apple Silicon) | `.dmg` | [AIA-Selection-Assistant-0.5.0-arm64.dmg](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.5.0/AIA-Selection-Assistant-0.5.0-arm64.dmg) |
+| macOS (Apple Silicon) | `.zip` | [AIA-Selection-Assistant-0.5.0-arm64-mac.zip](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.5.0/AIA-Selection-Assistant-0.5.0-arm64-mac.zip) |
+| Windows x64 | Installer | [AIA-Selection-Assistant-Setup-0.5.0.exe](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.5.0/AIA-Selection-Assistant-Setup-0.5.0.exe) |
+| Windows x64 | Portable | [AIA-Selection-Assistant-Portable-0.5.0.exe](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.5.0/AIA-Selection-Assistant-Portable-0.5.0.exe) |
 
-### v0.4.0 highlights
+### v0.5.0 highlights
 
-- Reworked screenshot flow (selection masking, unified annotation toolbar, adjustable brush size, fixed macOS title-bar control conflict)
-- Web search improvements
+- Custom actions: add, rename, change icons, edit prompts, reorder, and delete
+- Multiple API templates, with per-action model template and reasoning controls
+- Action input shortcuts, result-window size/font settings, and packaged launch-at-login support
 
 For older versions and full asset lists, see [GitHub Releases](https://github.com/zcx960/AIA-selection-assistan/releases).
+
+> This README describes the current `main` branch. If you download a Release build, use that version's actual binaries as the source of truth.
 
 > The macOS builds are not code-signed — on first launch allow them via *System Settings → Privacy & Security*. Windows builds are not signed either; if SmartScreen complains, choose “Run anyway”.
 
@@ -59,9 +62,11 @@ For older versions and full asset lists, see [GitHub Releases](https://github.co
 - Floating toolbar appears after text selection
 - Built-in region screenshot: pin to desktop, copy, save, or hand it to AI for image understanding
 - Standalone AI chat window with multi-turn context and streaming follow-ups
-- API templates make it easy to switch models, keys, and providers
+- Multiple API templates, with per-action model template and reasoning controls
+- Custom actions: add, rename, change icons, edit prompts, reorder, and delete
+- Per-action input shortcuts: press a shortcut, type text, and run that action directly
 - Light, dark, and follow-system theme modes
-- Result window supports Markdown rendering
+- Result window supports Markdown rendering, copyable code blocks, and wrapped long lines
 
 ## Screenshots
 
@@ -89,8 +94,10 @@ For older versions and full asset lists, see [GitHub Releases](https://github.co
 ## Features
 
 - Shows a floating toolbar right after text selection
-- Built-in actions for translate, explain, summarize, polish, search, and copy
+- Built-in actions for translate, explain, summarize, polish, search, and copy, plus your own custom actions
 - Supports multiple API templates for quick provider/model switching
+- Each prompt action can choose its own API template and independently turn reasoning on or off
+- Each action can have an input shortcut, so it can run without a prior text selection
 - Toolbar can run in compact mode and can hide the app icon
 - Closing the app minimizes it to the menu bar or system tray instead of quitting
 
@@ -106,6 +113,7 @@ For older versions and full asset lists, see [GitHub Releases](https://github.co
 - Dedicated chat window, decoupled from the toolbar's one-shot result popup
 - Multi-turn context: keep asking follow-ups and the model sees the previous turns
 - Streaming output, rendered as it arrives, with interrupt support at any time
+- Markdown code blocks include a copy button and wrap long lines
 - The window can be pinned on top; closing it destroys the session so context never leaks
 
 ## Platform Notes
@@ -177,14 +185,25 @@ Notes:
 
 ### API Templates
 
+- Add, rename, and delete multiple API templates
 - Each template stores API type, base URL, API key, and model
-- Switching a template immediately switches the active provider configuration
+- Templates can fetch available models, test the configured model, and be marked as default
+- Actions can follow the default template or bind to a specific template
+
+### Action Configuration
+
+- Built-in actions can be edited, disabled, and reordered; custom actions can also be deleted
+- Prompt actions support custom prompts, icons, provider templates, and reasoning mode
+- Search actions support custom search URL templates
+- Action shortcuts open a type-in window, then run the selected action once against that input
 
 ### Theme and UI
 
 - Light, dark, and follow-system modes
 - Compact toolbar mode is supported
 - The app icon in the floating toolbar can be hidden
+- The result window supports custom default width, height, font family, and font size
+- Packaged builds support launch-at-login; login launches start hidden in the menu bar / tray
 - The settings window is organized into API, Selection, Window, and Actions sections
 
 ## Privacy
