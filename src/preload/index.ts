@@ -70,6 +70,10 @@ const api = {
       }
     }
   },
+  speech: {
+    speak: (text: string): Promise<boolean> => ipcRenderer.invoke(IPC.SpeechSpeak, text),
+    stop: (): Promise<void> => ipcRenderer.invoke(IPC.SpeechStop)
+  },
   windowControls: {
     close: (): Promise<void> => ipcRenderer.invoke(IPC.WindowClose),
     minimize: (): Promise<void> => ipcRenderer.invoke(IPC.WindowMinimize),

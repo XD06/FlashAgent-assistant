@@ -46,6 +46,13 @@ describe('selection actions', () => {
     expect(isUriOrFilePath('hello world')).toBe(false)
   })
 
+  it('includes a default speak action for reading selected text aloud', () => {
+    expect(defaultSettings.actions.find((action) => action.id === 'speak')).toMatchObject({
+      type: 'speak',
+      icon: 'volume-2'
+    })
+  })
+
   it('merges provider settings without dropping defaults', () => {
     const merged = mergeSettings(defaultSettings, { provider: { model: 'custom-model' } })
     expect(merged.provider.model).toBe('custom-model')
@@ -204,21 +211,34 @@ describe('selection actions', () => {
     expect(normalized.actions.find((action) => action.id === 'translate')?.promptTemplate).toBeUndefined()
   })
 
+  it('adds the built-in speak action when normalizing settings from before speech support', () => {
+    const oldActions = defaultSettings.actions.filter((action) => action.id !== 'speak')
+    const normalized = normalizeSettings({ ...defaultSettings, actions: oldActions })
+
+    expect(normalized.actions.find((action) => action.id === 'speak')).toMatchObject({
+      type: 'speak',
+      icon: 'volume-2'
+    })
+  })
+
   it('preserves valid action types and drops unsupported ones', () => {
     const normalized = normalizeSettings({
       ...defaultSettings,
       actions: [
         { id: 'a', name: 'A', enabled: true, icon: 'sparkles', type: 'prompt' },
         { id: 'b', name: 'B', enabled: true, icon: 'copy', type: 'copy' },
+        { id: 'd', name: 'D', enabled: true, icon: 'volume-2', type: 'speak' },
         { id: 'c', name: 'C', enabled: true, icon: 'book-open', type: 'dictionary' }
       ]
     })
     const ids = normalized.actions.map((action) => action.id)
     expect(ids).toContain('a')
     expect(ids).toContain('b')
+    expect(ids).toContain('d')
     expect(ids).not.toContain('c')
     expect(normalized.actions.find((action) => action.id === 'a')?.type).toBe('prompt')
     expect(normalized.actions.find((action) => action.id === 'b')?.type).toBe('copy')
+    expect(normalized.actions.find((action) => action.id === 'd')?.type).toBe('speak')
   })
 
   it('keeps user-added actions with shortcut and reasoning', () => {
@@ -241,6 +261,21 @@ describe('selection actions', () => {
       reasoning: 'off',
       shortcut: 'CommandOrControl+Alt+M'
     })
+  })
+
+  it('keeps valid action reasoning intensities and falls back for invalid values', () => {
+    const normalized = normalizeSettings({
+      ...defaultSettings,
+      actions: [
+        { id: 'deep', name: 'Deep', enabled: true, icon: 'sparkles', type: 'prompt', reasoning: 'high' },
+        { id: 'legacy', name: 'Legacy', enabled: true, icon: 'sparkles', type: 'prompt', reasoning: 'on' },
+        { id: 'bad', name: 'Bad', enabled: true, icon: 'sparkles', type: 'prompt', reasoning: 'maximum' }
+      ]
+    })
+
+    expect(normalized.actions.find((action) => action.id === 'deep')?.reasoning).toBe('high')
+    expect(normalized.actions.find((action) => action.id === 'legacy')?.reasoning).toBe('on')
+    expect(normalized.actions.find((action) => action.id === 'bad')?.reasoning).toBe('on')
   })
 
   it('builds a fixed language system prompt without custom prompt content', () => {

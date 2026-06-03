@@ -11,6 +11,7 @@ import { listModels, streamChatMessages, testModel } from './ai/OpenAICompatible
 import { decideSearch, formatSearchContext, searchExa } from './ai/WebSearch'
 import { ScreenshotService } from './ScreenshotService'
 import { SelectionService } from './SelectionService'
+import { SpeechService } from './SpeechService'
 import { getSettings, onSettingsChanged, updateSettings } from './settingsStore'
 import { isSupportedPlatform, isWin } from './platform'
 
@@ -52,22 +53,25 @@ const trayIcon = createNativeImageFromFile(
 )
 const selectionService = new SelectionService(getSettings, preloadPath, rendererDir, appIcon)
 const screenshotService = new ScreenshotService(getSettings, preloadPath, rendererDir, appIcon)
+const speechService = new SpeechService()
 
 function getTrayIcon(): Electron.NativeImage {
   return trayIcon.resize({ width: 18, height: 18 })
 }
 
-function mainText(key: 'enable' | 'disable' | 'settings' | 'quit', language: string): string {
+function mainText(key: 'enable' | 'disable' | 'settings' | 'stopSpeech' | 'quit', language: string): string {
   const zh = {
     enable: '启用AIA划词助手',
     disable: '停用AIA划词助手',
     settings: '设置',
+    stopSpeech: '停止朗读',
     quit: '退出'
   }
   const en = {
     enable: 'Enable AIA Selection Assistant',
     disable: 'Disable AIA Selection Assistant',
     settings: 'Settings',
+    stopSpeech: 'Stop speaking',
     quit: 'Quit'
   }
   return (language === 'zh-CN' ? zh : en)[key]
@@ -178,6 +182,7 @@ function refreshTrayMenu(): void {
         }
       },
       { label: mainText('settings', settings.language), click: () => createSettingsWindow() },
+      { label: mainText('stopSpeech', settings.language), click: () => speechService.stop() },
       { type: 'separator' },
       {
         label: mainText('quit', settings.language),
@@ -281,6 +286,8 @@ function registerIpc(): void {
     return settings
   })
   ipcMain.handle(IPC.OpenExternal, (_event, url: string) => shell.openExternal(url))
+  ipcMain.handle(IPC.SpeechSpeak, (_event, text: string) => speechService.speak(text))
+  ipcMain.handle(IPC.SpeechStop, () => speechService.stop())
 
   ipcMain.handle(IPC.AiStream, async (event, request: AiStreamRequest) => {
     const controller = new AbortController()
@@ -395,5 +402,6 @@ if (!app.requestSingleInstanceLock()) {
     globalShortcut.unregisterAll()
     selectionService.dispose()
     screenshotService.dispose()
+    speechService.dispose()
   })
 }

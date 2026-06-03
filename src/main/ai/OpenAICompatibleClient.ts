@@ -135,14 +135,35 @@ export async function streamChatCompletion(
   return streamChatMessages(provider, [{ role: 'user', text: prompt }], systemPrompt, signal, onDelta)
 }
 
+const anthropicThinkingBudget: Record<Extract<ReasoningMode, 'low' | 'medium' | 'high'>, number> = {
+  low: 1024,
+  medium: 2048,
+  high: 4096
+}
+
 // Reasoning control. 'on' means "model default" — we send nothing extra, so it
 // works with every provider. 'off' explicitly suppresses thinking: Anthropic has
 // no thinking unless enabled (so nothing to do), while OpenAI-compatible thinking
-// models (Qwen/DeepSeek/GLM, vLLM, …) disable it via enable_thinking:false.
+// models (Qwen/DeepSeek/GLM, vLLM, ...) disable it via enable_thinking:false.
+// low/medium/high use the OpenAI-compatible reasoning_effort field; Anthropic
+// gets its native thinking budget when the user explicitly asks for intensity.
 function applyReasoning(body: Record<string, unknown>, apiType: ProviderApiType, reasoning: ReasoningMode): void {
-  if (reasoning !== 'off' || apiType === 'anthropic') return
-  body.enable_thinking = false
-  body.chat_template_kwargs = { enable_thinking: false }
+  if (reasoning === 'on') return
+  if (reasoning === 'off') {
+    if (apiType === 'anthropic') return
+    body.enable_thinking = false
+    body.chat_template_kwargs = { enable_thinking: false }
+    return
+  }
+
+  if (apiType === 'anthropic') {
+    const budget = anthropicThinkingBudget[reasoning]
+    body.thinking = { type: 'enabled', budget_tokens: budget }
+    body.max_tokens = Math.max(typeof body.max_tokens === 'number' ? body.max_tokens : 0, budget + 1024)
+    return
+  }
+
+  body.reasoning_effort = reasoning
 }
 
 export async function streamChatMessages(

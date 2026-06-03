@@ -23,7 +23,7 @@
   </p>
 </div>
 
-AIA Selection Assistant lives in your menu bar / system tray. Highlight some text in any app and a small toolbar slides in next to it — one click to translate, explain, summarize, rewrite, search, or copy. Prefer the keyboard? A global shortcut works too. Toolbar actions can be added, renamed, re-iconed, reordered, edited, or deleted; each prompt action can also use its own model template, disable reasoning, or open a type-in window from its own shortcut.
+AIA Selection Assistant lives in your menu bar / system tray. Highlight some text in any app and a small toolbar slides in next to it — one click to translate, explain, summarize, rewrite, search, copy, or read aloud. Prefer the keyboard? A global shortcut works too. Toolbar actions can be added, renamed, re-iconed, reordered, edited, or deleted; each prompt action can also use its own model template, adjust reasoning intensity, or open a type-in window from its own shortcut.
 
 It also ships a built-in region screenshot tool: drag to select an area, annotate with pen or arrows (brush size is a quick slider away), then save as PNG, copy to clipboard, pin to the desktop, or hand the image straight to AI for vision-based analysis. Pinned screenshots support wheel zoom, drag-to-move, opacity tweaking, and a right-click menu to re-send them to AI.
 
@@ -35,20 +35,20 @@ Currently runs on macOS and Windows.
 
 ## Download
 
-Latest published release **v0.5.0** — grab the installer for your platform:
+Latest published release **v0.6.0** — grab the installer for your platform:
 
 | Platform | Package | Link |
 | --- | --- | --- |
-| macOS (Apple Silicon) | `.dmg` | [AIA-Selection-Assistant-0.5.0-arm64.dmg](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.5.0/AIA-Selection-Assistant-0.5.0-arm64.dmg) |
-| macOS (Apple Silicon) | `.zip` | [AIA-Selection-Assistant-0.5.0-arm64-mac.zip](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.5.0/AIA-Selection-Assistant-0.5.0-arm64-mac.zip) |
-| Windows x64 | Installer | [AIA-Selection-Assistant-Setup-0.5.0.exe](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.5.0/AIA-Selection-Assistant-Setup-0.5.0.exe) |
-| Windows x64 | Portable | [AIA-Selection-Assistant-Portable-0.5.0.exe](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.5.0/AIA-Selection-Assistant-Portable-0.5.0.exe) |
+| macOS (Apple Silicon) | `.dmg` | [AIA-Selection-Assistant-0.6.0-arm64.dmg](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.6.0/AIA-Selection-Assistant-0.6.0-arm64.dmg) |
+| macOS (Apple Silicon) | `.zip` | [AIA-Selection-Assistant-0.6.0-arm64-mac.zip](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.6.0/AIA-Selection-Assistant-0.6.0-arm64-mac.zip) |
+| Windows x64 | Installer | [AIA-Selection-Assistant-Setup-0.6.0.exe](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.6.0/AIA-Selection-Assistant-Setup-0.6.0.exe) |
+| Windows x64 | Portable | [AIA-Selection-Assistant-Portable-0.6.0.exe](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.6.0/AIA-Selection-Assistant-Portable-0.6.0.exe) |
 
-### v0.5.0 highlights
+### v0.6.0 highlights
 
-- Custom actions: add, rename, change icons, edit prompts, reorder, and delete
-- Multiple API templates, with per-action model template and reasoning controls
-- Action input shortcuts, result-window size/font settings, and packaged launch-at-login support
+- System TTS read-aloud action for macOS and Windows, with a tray-menu stop command
+- Manual per-action reasoning intensity: auto, off, low, medium, and high
+- Upgrade migration automatically adds the new built-in read-aloud action for existing users
 
 For older versions and full asset lists, see [GitHub Releases](https://github.com/zcx960/AIA-selection-assistan/releases).
 
@@ -60,9 +60,10 @@ For older versions and full asset lists, see [GitHub Releases](https://github.co
 
 - Electron desktop app for macOS and Windows
 - Floating toolbar appears after text selection
+- System TTS can read selected text aloud on macOS and Windows
 - Built-in region screenshot: pin to desktop, copy, save, or hand it to AI for image understanding
 - Standalone AI chat window with multi-turn context and streaming follow-ups
-- Multiple API templates, with per-action model template and reasoning controls
+- Multiple API templates, with per-action model template and reasoning intensity
 - Custom actions: add, rename, change icons, edit prompts, reorder, and delete
 - Per-action input shortcuts: press a shortcut, type text, and run that action directly
 - Light, dark, and follow-system theme modes
@@ -94,9 +95,9 @@ For older versions and full asset lists, see [GitHub Releases](https://github.co
 ## Features
 
 - Shows a floating toolbar right after text selection
-- Built-in actions for translate, explain, summarize, polish, search, and copy, plus your own custom actions
+- Built-in actions for translate, explain, summarize, polish, search, copy, and read-aloud, plus your own custom actions
 - Supports multiple API templates for quick provider/model switching
-- Each prompt action can choose its own API template and independently turn reasoning on or off
+- Each prompt action can choose its own API template and independently set reasoning intensity
 - Each action can have an input shortcut, so it can run without a prior text selection
 - Toolbar can run in compact mode and can hide the app icon
 - Closing the app minimizes it to the menu bar or system tray instead of quitting
@@ -193,8 +194,9 @@ Notes:
 ### Action Configuration
 
 - Built-in actions can be edited, disabled, and reordered; custom actions can also be deleted
-- Prompt actions support custom prompts, icons, provider templates, and reasoning mode
+- Prompt actions support custom prompts, icons, provider templates, and reasoning intensity
 - Search actions support custom search URL templates
+- The read-aloud action uses system TTS, and the tray menu can stop current speech
 - Action shortcuts open a type-in window, then run the selected action once against that input
 
 ### Theme and UI

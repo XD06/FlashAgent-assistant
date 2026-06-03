@@ -228,6 +228,7 @@ const ACTION_ICON_CHOICES = [
   'scan-text',
   'search',
   'copy',
+  'volume-2',
   'book-open',
   'pencil',
   'flask-conical',
@@ -383,6 +384,9 @@ function ActionEditor({
                   onChange={(event) => onChange({ reasoning: event.target.value as ReasoningMode })}>
                   <option value="on">{t('reasoningOn')}</option>
                   <option value="off">{t('reasoningOff')}</option>
+                  <option value="low">{t('reasoningLow')}</option>
+                  <option value="medium">{t('reasoningMedium')}</option>
+                  <option value="high">{t('reasoningHigh')}</option>
                 </select>
               </label>
             </div>

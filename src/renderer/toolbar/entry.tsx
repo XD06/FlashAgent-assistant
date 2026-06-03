@@ -55,6 +55,12 @@ function ToolbarApp() {
       return
     }
 
+    if (action.type === 'speak') {
+      await window.assistantLite.speech.speak(selectedText)
+      await window.assistantLite.selection.hideToolbar()
+      return
+    }
+
     await window.assistantLite.selection.processAction({
       action,
       selectedText,

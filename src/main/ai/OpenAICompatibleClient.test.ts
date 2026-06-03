@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { listModels, normalizeBaseUrl, parseAnthropicStreamEvent, parseOpenAIStreamEvent, testModel } from './OpenAICompatibleClient'
+import {
+  listModels,
+  normalizeBaseUrl,
+  parseAnthropicStreamEvent,
+  parseOpenAIStreamEvent,
+  streamChatMessages,
+  testModel
+} from './OpenAICompatibleClient'
 import type { ProviderSettings } from '@shared/types'
 
 const provider: ProviderSettings = {
@@ -21,6 +28,17 @@ const anthropicProvider: ProviderSettings = {
 afterEach(() => {
   vi.restoreAllMocks()
 })
+
+function streamingTextResponse(text: string): Response {
+  const encoder = new TextEncoder()
+  const body = new ReadableStream({
+    start(controller) {
+      controller.enqueue(encoder.encode(`data: {"choices":[{"delta":{"content":"${text}"}}]}\n\n`))
+      controller.close()
+    }
+  })
+  return new Response(body, { status: 200 })
+}
 
 describe('OpenAI-compatible stream parser', () => {
   it('normalizes trailing slashes from base URLs', () => {
@@ -74,6 +92,26 @@ describe('OpenAI-compatible stream parser', () => {
       stream: false,
       max_completion_tokens: 8
     })
+  })
+
+  it('sends explicit OpenAI-compatible reasoning effort for selected intensity', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(streamingTextResponse('OK'))
+    const deltas: string[] = []
+
+    await streamChatMessages(
+      provider,
+      [{ role: 'user', text: 'explain this' }],
+      'system',
+      new AbortController().signal,
+      (delta) => deltas.push(delta),
+      'high'
+    )
+
+    const [, init] = fetchMock.mock.calls[0]
+    expect(JSON.parse(String(init?.body))).toMatchObject({
+      reasoning_effort: 'high'
+    })
+    expect(deltas).toEqual(['OK'])
   })
 
   it('lists anthropic models using the v1/models endpoint and anthropic headers', async () => {

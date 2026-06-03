@@ -244,6 +244,16 @@ function BookOpen({ size = 16, strokeWidth = 2 }: IconProps) {
   )
 }
 
+function Volume2({ size = 16, strokeWidth = 2 }: IconProps) {
+  return (
+    <svg {...baseProps(size)} strokeWidth={strokeWidth}>
+      <path d="M11 5 6 9H3v6h3l5 4V5Z" />
+      <path d="M16 8.5a5 5 0 0 1 0 7" />
+      <path d="M19 5.5a9 9 0 0 1 0 13" />
+    </svg>
+  )
+}
+
 const icons: Record<string, (props: IconProps) => React.JSX.Element> = {
   'circle-help': CircleHelp,
   'arrow-up': ArrowUp,
@@ -267,6 +277,7 @@ const icons: Record<string, (props: IconProps) => React.JSX.Element> = {
   sun: Sun,
   'trash-2': Trash2,
   'undo-2': Undo2,
+  'volume-2': Volume2,
   x: XIcon
 }
 

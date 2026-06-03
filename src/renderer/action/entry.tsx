@@ -365,6 +365,11 @@ function InputResult({ payload, settings, t, pinned, togglePin }: ResultProps) {
       void window.assistantLite.windowControls.close()
       return
     }
+    if (payload.action.type === 'speak') {
+      void window.assistantLite.speech.speak(value)
+      void window.assistantLite.windowControls.close()
+      return
+    }
     lastInputRef.current = input
     run(input)
   }

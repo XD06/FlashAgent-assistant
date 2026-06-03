@@ -21,6 +21,9 @@ export const IPC = {
   AiListModels: 'ai:list-models',
   AiTestModel: 'ai:test-model',
 
+  SpeechSpeak: 'speech:speak',
+  SpeechStop: 'speech:stop',
+
   WindowClose: 'window:close',
   WindowMinimize: 'window:minimize',
   WindowPin: 'window:pin',

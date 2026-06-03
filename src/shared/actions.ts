@@ -185,7 +185,8 @@ function clampInt(value: unknown, min: number, max: number, fallback: number): n
 }
 
 function normalizeReasoning(value: unknown): ReasoningMode {
-  return value === 'off' ? 'off' : 'on'
+  if (value === 'off' || value === 'low' || value === 'medium' || value === 'high') return value
+  return 'on'
 }
 
 function normalizeOptionalString(value: unknown): string | undefined {
@@ -193,7 +194,7 @@ function normalizeOptionalString(value: unknown): string | undefined {
 }
 
 function normalizeActionType(value: unknown): ActionType | null {
-  return value === 'copy' || value === 'search' || value === 'prompt' ? value : null
+  return value === 'copy' || value === 'search' || value === 'prompt' || value === 'speak' ? value : null
 }
 
 // Actions are a freely managed list (add / edit / rename / delete / reorder).
@@ -224,5 +225,17 @@ function normalizeActionItems(actions: unknown): ActionItem[] {
       shortcut: normalizeOptionalString(candidate.shortcut)
     })
   }
-  return result
+  return appendMissingBuiltInActions(result)
+}
+
+function appendMissingBuiltInActions(actions: ActionItem[]): ActionItem[] {
+  if (actions.some((action) => action.id === 'speak')) return actions
+
+  const hasMigratableBuiltInAction = actions.some((action) =>
+    defaultSettings.actions.some((defaultAction) => defaultAction.id !== 'speak' && defaultAction.id === action.id)
+  )
+  const speakAction = defaultSettings.actions.find((action) => action.id === 'speak')
+  if (!hasMigratableBuiltInAction || !speakAction) return actions
+
+  return [...actions, { ...speakAction }]
 }

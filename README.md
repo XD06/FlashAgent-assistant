@@ -23,7 +23,7 @@
   </p>
 </div>
 
-AIA划词助手是一个常驻菜单栏 / 系统托盘的小工具。在任意应用里选中一段文字，旁边会浮出一条工具栏，点一下就能翻译、解释、总结、润色、搜索或复制；不想用工具栏，也可以走全局快捷键。工具栏动作可以新增、重命名、换图标、改提示词、排序或删除，也能给某个动作单独绑定模型、关闭推理，或者配置快捷键后先弹出输入框再执行。
+AIA划词助手是一个常驻菜单栏 / 系统托盘的小工具。在任意应用里选中一段文字，旁边会浮出一条工具栏，点一下就能翻译、解释、总结、润色、搜索、复制或朗读；不想用工具栏，也可以走全局快捷键。工具栏动作可以新增、重命名、换图标、改提示词、排序或删除，也能给某个动作单独绑定模型、调整思考强度，或者配置快捷键后先弹出输入框再执行。
 
 除了划词，它还内置区域截图：拖拽框选一块屏幕，可以画线、画箭头标注，笔刷粗细随手拉滑杆调整。截完可以保存 PNG、复制到剪贴板、钉在桌面，或者直接交给 AI 识图。钉住的截图能滚轮缩放、拖拽搬位置、调整透明度，右键还能再次唤起 AI 识图。
 
@@ -35,20 +35,20 @@ AIA划词助手是一个常驻菜单栏 / 系统托盘的小工具。在任意�
 
 ## 下载
 
-最新发布版本 **v0.5.0**，可点击直接下载对应平台的安装包：
+最新发布版本 **v0.6.0**，可点击直接下载对应平台的安装包：
 
 | 平台 | 包类型 | 下载 |
 | --- | --- | --- |
-| macOS (Apple Silicon) | `.dmg` | [AIA-Selection-Assistant-0.5.0-arm64.dmg](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.5.0/AIA-Selection-Assistant-0.5.0-arm64.dmg) |
-| macOS (Apple Silicon) | `.zip` | [AIA-Selection-Assistant-0.5.0-arm64-mac.zip](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.5.0/AIA-Selection-Assistant-0.5.0-arm64-mac.zip) |
-| Windows x64 | 安装版 | [AIA-Selection-Assistant-Setup-0.5.0.exe](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.5.0/AIA-Selection-Assistant-Setup-0.5.0.exe) |
-| Windows x64 | 便携版 | [AIA-Selection-Assistant-Portable-0.5.0.exe](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.5.0/AIA-Selection-Assistant-Portable-0.5.0.exe) |
+| macOS (Apple Silicon) | `.dmg` | [AIA-Selection-Assistant-0.6.0-arm64.dmg](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.6.0/AIA-Selection-Assistant-0.6.0-arm64.dmg) |
+| macOS (Apple Silicon) | `.zip` | [AIA-Selection-Assistant-0.6.0-arm64-mac.zip](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.6.0/AIA-Selection-Assistant-0.6.0-arm64-mac.zip) |
+| Windows x64 | 安装版 | [AIA-Selection-Assistant-Setup-0.6.0.exe](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.6.0/AIA-Selection-Assistant-Setup-0.6.0.exe) |
+| Windows x64 | 便携版 | [AIA-Selection-Assistant-Portable-0.6.0.exe](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.6.0/AIA-Selection-Assistant-Portable-0.6.0.exe) |
 
-### v0.5.0 更新
+### v0.6.0 更新
 
-- 支持自定义动作：新增、重命名、换图标、编辑提示词、排序、删除
-- 支持多套 API 模板，并可按动作指定模型模板与推理开关
-- 支持动作输入快捷键、结果窗口默认尺寸与字体设置、安装版开机自启
+- 新增系统 TTS 朗读动作，支持 macOS 与 Windows，托盘菜单可停止当前朗读
+- 提示词动作支持手动设置思考强度：自动、关闭、低、中、高
+- 优化旧配置迁移，已有用户升级后会自动补齐新的内置朗读动作
 
 历史版本与全部产物：[GitHub Releases](https://github.com/zcx960/AIA-selection-assistan/releases)。
 
@@ -60,9 +60,10 @@ AIA划词助手是一个常驻菜单栏 / 系统托盘的小工具。在任意�
 
 - 适用于 macOS 和 Windows 的 Electron 桌面应用
 - 选中文本后弹出悬浮工具栏，直接触发常用动作
+- 支持系统 TTS 朗读选中文本，macOS 与 Windows 均可用
 - 内置区域截图，可直接钉图、复制、保存或交给 AI 识图
 - 独立 AI 对话窗口，支持多轮上下文与流式追问
-- 支持多套 API 模板，并可按动作指定模型与推理开关
+- 支持多套 API 模板，并可按动作指定模型与思考强度
 - 支持自定义动作：新增、重命名、换图标、编辑提示词、排序、删除
 - 支持动作输入快捷键：按快捷键弹出输入框，输入文本后直接运行指定动作
 - 支持亮色、暗色、跟随系统三种主题
@@ -94,9 +95,9 @@ AIA划词助手是一个常驻菜单栏 / 系统托盘的小工具。在任意�
 ## 功能特性
 
 - 选中文本后直接弹出悬浮工具栏
-- 内置翻译、解释、总结、润色、搜索、复制等动作，也可添加自己的动作
+- 内置翻译、解释、总结、润色、搜索、复制、朗读等动作，也可添加自己的动作
 - 支持多个 API 模板，切换模型和服务商更方便
-- 每个提示词动作可单独选择 API 模板，并独立开启或关闭推理
+- 每个提示词动作可单独选择 API 模板，并独立设置思考强度
 - 每个动作可配置输入快捷键，不需要先选中文本也能快速运行
 - 工具栏可切换紧凑模式，也能隐藏 app 图标
 - 应用关闭后最小化到状态栏或系统托盘，不会直接退出
@@ -193,8 +194,9 @@ pnpm dist:win
 ### 动作配置
 
 - 内置动作可编辑、停用、排序；自定义动作还可以删除
-- 提示词动作支持自定义提示词、图标、模型模板和推理开关
+- 提示词动作支持自定义提示词、图标、模型模板和思考强度
 - 搜索动作支持自定义搜索 URL 模板
+- 朗读动作使用系统 TTS，托盘菜单可停止当前朗读
 - 动作快捷键会打开输入窗口，输入文本后用对应动作一次性运行
 
 ### 主题与界面

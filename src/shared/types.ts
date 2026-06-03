@@ -1,11 +1,11 @@
 export type TriggerMode = 'selected' | 'shortcut'
 export type FilterMode = 'default' | 'whitelist' | 'blacklist'
-export type ActionType = 'copy' | 'search' | 'prompt'
+export type ActionType = 'copy' | 'search' | 'prompt' | 'speak'
 export type AppLanguage = 'zh-CN' | 'en'
 export type ThemeMode = 'system' | 'light' | 'dark'
 export type ProviderApiType = 'openai' | 'anthropic'
-/** 'on' lets the model reason at its own default; 'off' suppresses thinking. */
-export type ReasoningMode = 'on' | 'off'
+/** 'on' lets the model use its default; other values request explicit reasoning control. */
+export type ReasoningMode = 'on' | 'off' | 'low' | 'medium' | 'high'
 
 export interface ProviderSettings {
   apiType: ProviderApiType
