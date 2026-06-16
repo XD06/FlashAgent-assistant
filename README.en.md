@@ -35,20 +35,20 @@ Currently runs on macOS and Windows.
 
 ## Download
 
-Latest published release **v0.6.0** — grab the installer for your platform:
+Latest published release **v0.6.1** - grab the installer for your platform:
 
 | Platform | Package | Link |
 | --- | --- | --- |
-| macOS (Apple Silicon) | `.dmg` | [AIA-Selection-Assistant-0.6.0-arm64.dmg](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.6.0/AIA-Selection-Assistant-0.6.0-arm64.dmg) |
-| macOS (Apple Silicon) | `.zip` | [AIA-Selection-Assistant-0.6.0-arm64-mac.zip](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.6.0/AIA-Selection-Assistant-0.6.0-arm64-mac.zip) |
-| Windows x64 | Installer | [AIA-Selection-Assistant-Setup-0.6.0.exe](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.6.0/AIA-Selection-Assistant-Setup-0.6.0.exe) |
-| Windows x64 | Portable | [AIA-Selection-Assistant-Portable-0.6.0.exe](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.6.0/AIA-Selection-Assistant-Portable-0.6.0.exe) |
+| macOS (Apple Silicon) | `.dmg` | [AIA-Selection-Assistant-0.6.1-arm64.dmg](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.6.1/AIA-Selection-Assistant-0.6.1-arm64.dmg) |
+| macOS (Apple Silicon) | `.zip` | [AIA-Selection-Assistant-0.6.1-arm64-mac.zip](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.6.1/AIA-Selection-Assistant-0.6.1-arm64-mac.zip) |
+| Windows x64 | Installer | [AIA-Selection-Assistant-Setup-0.6.1.exe](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.6.1/AIA-Selection-Assistant-Setup-0.6.1.exe) |
+| Windows x64 | Portable | [AIA-Selection-Assistant-Portable-0.6.1.exe](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.6.1/AIA-Selection-Assistant-Portable-0.6.1.exe) |
 
-### v0.6.0 highlights
+### v0.6.1 highlights
 
-- System TTS read-aloud action for macOS and Windows, with a tray-menu stop command
-- Manual per-action reasoning intensity: auto, off, low, medium, and high
-- Upgrade migration automatically adds the new built-in read-aloud action for existing users
+- Fixes Windows portable builds that could report `fetch failed` while fetching models, testing a model, or translating
+- Fixes API template name editing with Chinese IME input, plus the cleared-name case that restored `Template 1`
+- OpenAI-compatible Base URL now accepts the API root, `/chat/completions`, or `/models` endpoint and normalizes it automatically
 
 For older versions and full asset lists, see [GitHub Releases](https://github.com/zcx960/AIA-selection-assistan/releases).
 
@@ -181,6 +181,7 @@ Notes:
 ### API Support
 
 - OpenAI-compatible: uses `/chat/completions` and `/models`
+- For OpenAI-compatible providers, enter the API root when possible, such as `https://api.example.com/v1`; if you paste a full `/chat/completions` or `/models` endpoint, the app normalizes it automatically
 - Anthropic: uses `/v1/messages` and `/v1/models`
 - In Anthropic mode, you only need to enter the base URL; `/v1` is appended automatically
 

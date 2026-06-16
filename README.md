@@ -35,20 +35,20 @@ AIA划词助手是一个常驻菜单栏 / 系统托盘的小工具。在任意�
 
 ## 下载
 
-最新发布版本 **v0.6.0**，可点击直接下载对应平台的安装包：
+最新发布版本 **v0.6.1**，可点击直接下载对应平台的安装包：
 
 | 平台 | 包类型 | 下载 |
 | --- | --- | --- |
-| macOS (Apple Silicon) | `.dmg` | [AIA-Selection-Assistant-0.6.0-arm64.dmg](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.6.0/AIA-Selection-Assistant-0.6.0-arm64.dmg) |
-| macOS (Apple Silicon) | `.zip` | [AIA-Selection-Assistant-0.6.0-arm64-mac.zip](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.6.0/AIA-Selection-Assistant-0.6.0-arm64-mac.zip) |
-| Windows x64 | 安装版 | [AIA-Selection-Assistant-Setup-0.6.0.exe](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.6.0/AIA-Selection-Assistant-Setup-0.6.0.exe) |
-| Windows x64 | 便携版 | [AIA-Selection-Assistant-Portable-0.6.0.exe](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.6.0/AIA-Selection-Assistant-Portable-0.6.0.exe) |
+| macOS (Apple Silicon) | `.dmg` | [AIA-Selection-Assistant-0.6.1-arm64.dmg](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.6.1/AIA-Selection-Assistant-0.6.1-arm64.dmg) |
+| macOS (Apple Silicon) | `.zip` | [AIA-Selection-Assistant-0.6.1-arm64-mac.zip](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.6.1/AIA-Selection-Assistant-0.6.1-arm64-mac.zip) |
+| Windows x64 | 安装版 | [AIA-Selection-Assistant-Setup-0.6.1.exe](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.6.1/AIA-Selection-Assistant-Setup-0.6.1.exe) |
+| Windows x64 | 便携版 | [AIA-Selection-Assistant-Portable-0.6.1.exe](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.6.1/AIA-Selection-Assistant-Portable-0.6.1.exe) |
 
-### v0.6.0 更新
+### v0.6.1 更新
 
-- 新增系统 TTS 朗读动作，支持 macOS 与 Windows，托盘菜单可停止当前朗读
-- 提示词动作支持手动设置思考强度：自动、关闭、低、中、高
-- 优化旧配置迁移，已有用户升级后会自动补齐新的内置朗读动作
+- 修复 Windows 便携版中获取模型列表、模型测活和翻译时可能出现 `fetch failed` 的问题
+- 修复 API 模板服务名称输入中文时被打断，以及清空名称后自动恢复为 `Template 1` 的问题
+- OpenAI-compatible 的 Base URL 兼容基础地址、`/chat/completions` 和 `/models` endpoint，应用会自动归一化
 
 历史版本与全部产物：[GitHub Releases](https://github.com/zcx960/AIA-selection-assistan/releases)。
 
@@ -181,6 +181,7 @@ pnpm dist:win
 ### API 支持
 
 - OpenAI-compatible：使用 `/chat/completions` 与 `/models`
+- OpenAI-compatible 的 Base URL 建议填到 API 根路径（例如 `https://api.example.com/v1`）；如果粘贴了完整 `/chat/completions` 或 `/models` endpoint，应用会自动归一化
 - Anthropic：使用 `/v1/messages` 与 `/v1/models`
 - Anthropic 模式下，Base URL 只需要填基础地址，不用手动补 `/v1`
 
