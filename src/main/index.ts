@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, Tray, globalShortcut, ipcMain, nativeImage, shell } from 'electron'
+import { app, BrowserWindow, Menu, Tray, globalShortcut, ipcMain, nativeImage, net, shell } from 'electron'
 import { electronApp, optimizer } from '@electron-toolkit/utils'
 import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -7,7 +7,7 @@ import { buildAssistantSystemPrompt, resolveProvider } from '@shared/actions'
 import { IPC } from '@shared/ipc'
 import { APP_ICON_DATA_URL, APP_TRAY_DATA_URL } from '@shared/brand'
 import type { AiStreamRequest, SettingsPatch } from '@shared/types'
-import { listModels, streamChatMessages, testModel } from './ai/OpenAICompatibleClient'
+import { listModels, streamChatMessages, testModel, type ProviderFetch } from './ai/OpenAICompatibleClient'
 import { decideSearch, formatSearchContext, searchExa } from './ai/WebSearch'
 import { ScreenshotService } from './ScreenshotService'
 import { SelectionService } from './SelectionService'
@@ -29,6 +29,7 @@ const CHAT_SHADOW_PADDING = 18
 const CHAT_DEFAULT_WIDTH = 440
 const CHAT_DEFAULT_HEIGHT = 580
 const abortControllers = new Map<string, AbortController>()
+const providerFetch: ProviderFetch = (url, init) => net.fetch(url, init)
 
 function createNativeImageFromFile(paths: string[], fallbackDataUrl: string): Electron.NativeImage {
   for (const path of paths) {
@@ -312,7 +313,8 @@ function registerIpc(): void {
               provider,
               userText,
               settings.language,
-              controller.signal
+              controller.signal,
+              { fetcher: providerFetch }
             )
             if (decision.needsSearch && decision.query) {
               event.sender.send(IPC.AiChunk, {
@@ -339,7 +341,8 @@ function registerIpc(): void {
         (delta) => {
           event.sender.send(IPC.AiChunk, { requestId: request.requestId, type: 'delta', text: delta })
         },
-        request.reasoning ?? 'on'
+        request.reasoning ?? 'on',
+        { fetcher: providerFetch }
       )
       event.sender.send(IPC.AiChunk, { requestId: request.requestId, type: 'done' })
     } catch (error) {
@@ -362,10 +365,10 @@ function registerIpc(): void {
     abortControllers.delete(requestId)
   })
   ipcMain.handle(IPC.AiListModels, (_event, providerTemplateId?: string) =>
-    listModels(resolveProvider(getSettings(), providerTemplateId))
+    listModels(resolveProvider(getSettings(), providerTemplateId), { fetcher: providerFetch })
   )
   ipcMain.handle(IPC.AiTestModel, async (_event, providerTemplateId?: string) => {
-    await testModel(resolveProvider(getSettings(), providerTemplateId))
+    await testModel(resolveProvider(getSettings(), providerTemplateId), { fetcher: providerFetch })
     return { ok: true }
   })
 }

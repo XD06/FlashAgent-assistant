@@ -3,8 +3,18 @@ import type { AiMessageInput, ProviderApiType, ProviderSettings, ReasoningMode }
 export class AiConfigurationError extends Error {}
 const ANTHROPIC_VERSION = '2023-06-01'
 
+export type ProviderFetch = (input: string, init?: RequestInit) => Promise<Response>
+
+export interface ProviderRequestOptions {
+  readonly fetcher?: ProviderFetch
+}
+
 export function normalizeBaseUrl(baseUrl: string): string {
-  return baseUrl.replace(/\/+$/, '')
+  return baseUrl
+    .trim()
+    .replace(/\/+$/, '')
+    .replace(/\/(?:chat\/completions|models)$/i, '')
+    .replace(/\/+$/, '')
 }
 
 function normalizeAnthropicBaseUrl(baseUrl: string): string {
@@ -34,6 +44,10 @@ function buildProviderHeaders(provider: ProviderSettings): Record<string, string
     'content-type': 'application/json',
     authorization: `Bearer ${provider.apiKey}`
   }
+}
+
+function fetchProvider(url: string, init: RequestInit, options: ProviderRequestOptions = {}): Promise<Response> {
+  return (options.fetcher ?? fetch)(url, init)
 }
 
 function assertProviderReady(provider: ProviderSettings, requireModel = true): void {
@@ -172,7 +186,8 @@ export async function streamChatMessages(
   systemPrompt: string,
   signal: AbortSignal,
   onDelta: (delta: string) => void,
-  reasoning: ReasoningMode = 'on'
+  reasoning: ReasoningMode = 'on',
+  options: ProviderRequestOptions = {}
 ): Promise<void> {
   assertProviderReady(provider)
 
@@ -203,12 +218,16 @@ export async function streamChatMessages(
         }
   applyReasoning(body, provider.apiType, reasoning)
 
-  const response = await fetch(buildProviderUrl(provider, provider.apiType === 'anthropic' ? 'messages' : 'chat/completions'), {
-    method: 'POST',
-    signal,
-    headers: buildProviderHeaders(provider),
-    body: JSON.stringify(body)
-  })
+  const response = await fetchProvider(
+    buildProviderUrl(provider, provider.apiType === 'anthropic' ? 'messages' : 'chat/completions'),
+    {
+      method: 'POST',
+      signal,
+      headers: buildProviderHeaders(provider),
+      body: JSON.stringify(body)
+    },
+    options
+  )
 
   if (!response.ok) {
     throw new Error(await readProviderError(response))
@@ -239,12 +258,16 @@ export async function streamChatMessages(
   }
 }
 
-export async function listModels(provider: ProviderSettings): Promise<string[]> {
+export async function listModels(provider: ProviderSettings, options: ProviderRequestOptions = {}): Promise<string[]> {
   assertProviderReady(provider, false)
-  const response = await fetch(buildProviderUrl(provider, 'models'), {
-    method: 'GET',
-    headers: buildProviderHeaders(provider)
-  })
+  const response = await fetchProvider(
+    buildProviderUrl(provider, 'models'),
+    {
+      method: 'GET',
+      headers: buildProviderHeaders(provider)
+    },
+    options
+  )
 
   if (!response.ok) throw new Error(await readProviderError(response))
 
@@ -255,7 +278,7 @@ export async function listModels(provider: ProviderSettings): Promise<string[]> 
     .sort((a, b) => a.localeCompare(b))
 }
 
-export async function testModel(provider: ProviderSettings): Promise<void> {
+export async function testModel(provider: ProviderSettings, options: ProviderRequestOptions = {}): Promise<void> {
   assertProviderReady(provider)
   const body =
     provider.apiType === 'anthropic'
@@ -278,11 +301,15 @@ export async function testModel(provider: ProviderSettings): Promise<void> {
           ]
         }
 
-  const response = await fetch(buildProviderUrl(provider, provider.apiType === 'anthropic' ? 'messages' : 'chat/completions'), {
-    method: 'POST',
-    headers: buildProviderHeaders(provider),
-    body: JSON.stringify(body)
-  })
+  const response = await fetchProvider(
+    buildProviderUrl(provider, provider.apiType === 'anthropic' ? 'messages' : 'chat/completions'),
+    {
+      method: 'POST',
+      headers: buildProviderHeaders(provider),
+      body: JSON.stringify(body)
+    },
+    options
+  )
 
   if (!response.ok) throw new Error(await readProviderError(response))
   await response.json().catch(() => undefined)

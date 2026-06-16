@@ -1,6 +1,7 @@
 import type { AppLanguage, ProviderSettings } from '@shared/types'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import { normalizeBaseUrl, type ProviderFetch } from './OpenAICompatibleClient'
 
 export interface ExaResult {
   title?: string
@@ -137,6 +138,10 @@ interface DecisionResult {
   query: string
 }
 
+interface DecisionRequestOptions {
+  readonly fetcher?: ProviderFetch
+}
+
 const DECISION_SYSTEM = (language: AppLanguage) => {
   const lang = language === 'zh-CN' ? 'Simplified Chinese' : 'English'
   const today = new Date().toISOString().slice(0, 10)
@@ -185,61 +190,70 @@ function parseDecision(text: string): DecisionResult {
   }
 }
 
-function normalizeBaseUrl(baseUrl: string): string {
-  return baseUrl.replace(/\/+$/, '')
-}
-
 function normalizeAnthropicBaseUrl(baseUrl: string): string {
   return normalizeBaseUrl(baseUrl).replace(/\/v1(?:\/messages|\/models)?$/i, '')
+}
+
+function fetchProvider(url: string, init: RequestInit, options: DecisionRequestOptions = {}): Promise<Response> {
+  return (options.fetcher ?? fetch)(url, init)
 }
 
 async function callProviderForDecision(
   provider: ProviderSettings,
   systemPrompt: string,
   userText: string,
-  signal: AbortSignal
+  signal: AbortSignal,
+  options: DecisionRequestOptions = {}
 ): Promise<string> {
   if (provider.apiType === 'anthropic') {
     const base = normalizeAnthropicBaseUrl(provider.baseUrl)
-    const response = await fetch(`${base}/v1/messages`, {
-      method: 'POST',
-      signal,
-      headers: {
-        'content-type': 'application/json',
-        'x-api-key': provider.apiKey,
-        'anthropic-version': ANTHROPIC_VERSION
+    const response = await fetchProvider(
+      `${base}/v1/messages`,
+      {
+        method: 'POST',
+        signal,
+        headers: {
+          'content-type': 'application/json',
+          'x-api-key': provider.apiKey,
+          'anthropic-version': ANTHROPIC_VERSION
+        },
+        body: JSON.stringify({
+          model: provider.model,
+          temperature: 0,
+          max_tokens: 120,
+          system: systemPrompt,
+          messages: [{ role: 'user', content: userText }]
+        })
       },
-      body: JSON.stringify({
-        model: provider.model,
-        temperature: 0,
-        max_tokens: 120,
-        system: systemPrompt,
-        messages: [{ role: 'user', content: userText }]
-      })
-    })
+      options
+    )
     if (!response.ok) throw new Error(`Provider decision failed (${response.status})`)
     const data = (await response.json()) as { content?: Array<{ type?: string; text?: string }> }
     const text = data.content?.find((block) => block.type === 'text')?.text ?? ''
     return text
   }
   const url = `${normalizeBaseUrl(provider.baseUrl)}/chat/completions`
-  const response = await fetch(url, {
-    method: 'POST',
-    signal,
-    headers: {
-      'content-type': 'application/json',
-      authorization: `Bearer ${provider.apiKey}`
+  const response = await fetchProvider(
+    url,
+    {
+      method: 'POST',
+      signal,
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${provider.apiKey}`
+      },
+      body: JSON.stringify({
+        model: provider.model,
+        temperature: 0,
+        max_completion_tokens: 120,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userText }
+        ]
+      })
     },
-    body: JSON.stringify({
-      model: provider.model,
-      temperature: 0,
-      max_completion_tokens: 120,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userText }
-      ]
-    })
-  })
+    options
+  )
   if (!response.ok) throw new Error(`Provider decision failed (${response.status})`)
   const data = (await response.json()) as {
     choices?: Array<{ message?: { content?: string } }>
@@ -251,12 +265,13 @@ export async function decideSearch(
   provider: ProviderSettings,
   userText: string,
   language: AppLanguage,
-  signal: AbortSignal
+  signal: AbortSignal,
+  options: DecisionRequestOptions = {}
 ): Promise<DecisionResult> {
   if (!userText.trim() || !provider.apiKey.trim() || !provider.model.trim()) {
     return { needsSearch: false, query: '' }
   }
   const systemPrompt = DECISION_SYSTEM(language)
-  const raw = await callProviderForDecision(provider, systemPrompt, userText, signal)
+  const raw = await callProviderForDecision(provider, systemPrompt, userText, signal, options)
   return parseDecision(raw)
 }

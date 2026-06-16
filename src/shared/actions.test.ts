@@ -105,6 +105,15 @@ describe('selection actions', () => {
     expect(normalized.activeProviderTemplateId).toBe(normalized.providerTemplates[0]?.id)
   })
 
+  it('keeps cleared provider template names instead of restoring Template 1', () => {
+    const normalized = normalizeSettings({
+      ...defaultSettings,
+      providerTemplates: [{ ...defaultSettings.providerTemplates[0], name: '' }]
+    })
+
+    expect(normalized.providerTemplates[0]?.name).toBe('')
+  })
+
   it('updates the active provider template when provider fields change', () => {
     const merged = mergeSettings(defaultSettings, { provider: { model: 'claude-3-5-sonnet-latest' } })
     expect(merged.provider.model).toBe('claude-3-5-sonnet-latest')

@@ -45,6 +45,11 @@ describe('OpenAI-compatible stream parser', () => {
     expect(normalizeBaseUrl('https://api.example.com/v1///')).toBe('https://api.example.com/v1')
   })
 
+  it('normalizes full OpenAI-compatible endpoint URLs back to the API root', () => {
+    expect(normalizeBaseUrl('https://api.example.com/v1/chat/completions')).toBe('https://api.example.com/v1')
+    expect(normalizeBaseUrl('https://api.example.com/v1/models/')).toBe('https://api.example.com/v1')
+  })
+
   it('parses text deltas from SSE events', () => {
     const event = 'data: {"choices":[{"delta":{"content":"hello"}}]}\n\n'
     expect(parseOpenAIStreamEvent(event)).toBe('hello')
@@ -71,6 +76,28 @@ describe('OpenAI-compatible stream parser', () => {
 
     await expect(listModels(provider)).resolves.toEqual(['a-model', 'z-model'])
     expect(fetchMock).toHaveBeenCalledWith('https://api.example.com/v1/models', {
+      method: 'GET',
+      headers: {
+        'content-type': 'application/json',
+        authorization: 'Bearer test-key'
+      }
+    })
+  })
+
+  it('uses an injected fetcher for provider requests', async () => {
+    const globalFetch = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('global fetch failed'))
+    const providerFetch = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: [{ id: 'custom-fetch-model' }]
+        }),
+        { status: 200 }
+      )
+    )
+
+    await expect(listModels(provider, { fetcher: providerFetch })).resolves.toEqual(['custom-fetch-model'])
+    expect(globalFetch).not.toHaveBeenCalled()
+    expect(providerFetch).toHaveBeenCalledWith('https://api.example.com/v1/models', {
       method: 'GET',
       headers: {
         'content-type': 'application/json',

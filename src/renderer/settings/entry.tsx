@@ -7,6 +7,7 @@ import { defaultActions } from '@shared/defaults'
 import { useThemeMode } from '../useThemeMode'
 import { useAppearance } from '../useAppearance'
 import { getActionLabel, getTranslator } from '../i18n'
+import { ProviderNameInput } from './ProviderNameInput'
 import type {
   ActionItem,
   AppLanguage,
@@ -597,11 +598,10 @@ function SettingsApp() {
                 return (
                   <div className="provider-card" key={template.id}>
                     <div className="provider-card__head">
-                      <input
-                        className="provider-name"
+                      <ProviderNameInput
                         value={template.name}
                         placeholder={t('providerTemplateName')}
-                        onChange={(event) => updateTemplate(template.id, { name: event.target.value })}
+                        onChange={(name) => updateTemplate(template.id, { name })}
                       />
                       <button
                         type="button"

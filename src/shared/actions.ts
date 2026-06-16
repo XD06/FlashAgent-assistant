@@ -165,10 +165,7 @@ function normalizeProviderTemplates(
     const candidate = template && typeof template === 'object' ? (template as Partial<ProviderTemplate>) : {}
     return {
       id: typeof candidate.id === 'string' && candidate.id.trim() ? candidate.id : `provider-template-${index + 1}`,
-      name:
-        typeof candidate.name === 'string' && candidate.name.trim()
-          ? candidate.name.trim()
-          : `Template ${index + 1}`,
+      name: typeof candidate.name === 'string' ? candidate.name : `Template ${index + 1}`,
       provider: normalizeProviderSettings(candidate.provider ?? fallbackProvider)
     }
   })
