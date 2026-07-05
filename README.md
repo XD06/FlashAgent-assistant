@@ -35,20 +35,18 @@ AIA划词助手是一个常驻菜单栏 / 系统托盘的小工具。在任意�
 
 ## 下载
 
-最新发布版本 **v0.6.1**，可点击直接下载对应平台的安装包：
+最新发布版本 **v0.6.2**，可点击直接下载对应平台的安装包：
 
 | 平台 | 包类型 | 下载 |
 | --- | --- | --- |
-| macOS (Apple Silicon) | `.dmg` | [AIA-Selection-Assistant-0.6.1-arm64.dmg](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.6.1/AIA-Selection-Assistant-0.6.1-arm64.dmg) |
-| macOS (Apple Silicon) | `.zip` | [AIA-Selection-Assistant-0.6.1-arm64-mac.zip](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.6.1/AIA-Selection-Assistant-0.6.1-arm64-mac.zip) |
-| Windows x64 | 安装版 | [AIA-Selection-Assistant-Setup-0.6.1.exe](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.6.1/AIA-Selection-Assistant-Setup-0.6.1.exe) |
-| Windows x64 | 便携版 | [AIA-Selection-Assistant-Portable-0.6.1.exe](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.6.1/AIA-Selection-Assistant-Portable-0.6.1.exe) |
+| macOS (Apple Silicon) | `.dmg` | [AIA-Selection-Assistant-0.6.2-arm64.dmg](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.6.2/AIA-Selection-Assistant-0.6.2-arm64.dmg) |
+| macOS (Apple Silicon) | `.zip` | [AIA-Selection-Assistant-0.6.2-arm64-mac.zip](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.6.2/AIA-Selection-Assistant-0.6.2-arm64-mac.zip) |
+| Windows x64 | 安装版 | [AIA-Selection-Assistant-Setup-0.6.2.exe](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.6.2/AIA-Selection-Assistant-Setup-0.6.2.exe) |
+| Windows x64 | 便携版 | [AIA-Selection-Assistant-Portable-0.6.2.exe](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.6.2/AIA-Selection-Assistant-Portable-0.6.2.exe) |
 
-### v0.6.1 更新
+### v0.6.2 更新
 
-- 修复 Windows 便携版中获取模型列表、模型测活和翻译时可能出现 `fetch failed` 的问题
-- 修复 API 模板服务名称输入中文时被打断，以及清空名称后自动恢复为 `Template 1` 的问题
-- OpenAI-compatible 的 Base URL 兼容基础地址、`/chat/completions` 和 `/models` endpoint，应用会自动归一化
+- 修复划词悬浮工具栏显示时可能抢占原应用文本焦点的问题，降低与鼠标手势、剪贴板增强等工具的冲突概率
 
 历史版本与全部产物：[GitHub Releases](https://github.com/zcx960/AIA-selection-assistan/releases)。
 

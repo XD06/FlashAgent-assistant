@@ -241,8 +241,8 @@ export class SelectionService {
       fullscreenable: false,
       hasShadow: false,
       autoHideMenuBar: true,
+      focusable: false,
       ...(isMac ? { type: 'panel' as const, hiddenInMissionControl: true, acceptFirstMouse: true } : {}),
-      ...(!isMac ? { focusable: true } : {}),
       webPreferences: {
         preload: this.preloadPath,
         contextIsolation: true,

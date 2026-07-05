@@ -35,20 +35,18 @@ Currently runs on macOS and Windows.
 
 ## Download
 
-Latest published release **v0.6.1** - grab the installer for your platform:
+Latest published release **v0.6.2** - grab the installer for your platform:
 
 | Platform | Package | Link |
 | --- | --- | --- |
-| macOS (Apple Silicon) | `.dmg` | [AIA-Selection-Assistant-0.6.1-arm64.dmg](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.6.1/AIA-Selection-Assistant-0.6.1-arm64.dmg) |
-| macOS (Apple Silicon) | `.zip` | [AIA-Selection-Assistant-0.6.1-arm64-mac.zip](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.6.1/AIA-Selection-Assistant-0.6.1-arm64-mac.zip) |
-| Windows x64 | Installer | [AIA-Selection-Assistant-Setup-0.6.1.exe](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.6.1/AIA-Selection-Assistant-Setup-0.6.1.exe) |
-| Windows x64 | Portable | [AIA-Selection-Assistant-Portable-0.6.1.exe](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.6.1/AIA-Selection-Assistant-Portable-0.6.1.exe) |
+| macOS (Apple Silicon) | `.dmg` | [AIA-Selection-Assistant-0.6.2-arm64.dmg](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.6.2/AIA-Selection-Assistant-0.6.2-arm64.dmg) |
+| macOS (Apple Silicon) | `.zip` | [AIA-Selection-Assistant-0.6.2-arm64-mac.zip](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.6.2/AIA-Selection-Assistant-0.6.2-arm64-mac.zip) |
+| Windows x64 | Installer | [AIA-Selection-Assistant-Setup-0.6.2.exe](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.6.2/AIA-Selection-Assistant-Setup-0.6.2.exe) |
+| Windows x64 | Portable | [AIA-Selection-Assistant-Portable-0.6.2.exe](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.6.2/AIA-Selection-Assistant-Portable-0.6.2.exe) |
 
-### v0.6.1 highlights
+### v0.6.2 highlights
 
-- Fixes Windows portable builds that could report `fetch failed` while fetching models, testing a model, or translating
-- Fixes API template name editing with Chinese IME input, plus the cleared-name case that restored `Template 1`
-- OpenAI-compatible Base URL now accepts the API root, `/chat/completions`, or `/models` endpoint and normalizes it automatically
+- Fixes the floating selection toolbar so it no longer takes focus from the app that owns the selected text, reducing conflicts with mouse gesture and clipboard helper tools
 
 For older versions and full asset lists, see [GitHub Releases](https://github.com/zcx960/AIA-selection-assistan/releases).
 
