@@ -1,5 +1,4 @@
 import { BrowserWindow, clipboard, ipcMain, screen, systemPreferences } from 'electron'
-import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import { IPC } from '@shared/ipc'
 import { shouldProcessProgram } from '@shared/selectionFilter'
@@ -12,8 +11,6 @@ import type {
   SelectionHookInstance,
   TextSelectionData
 } from 'selection-hook'
-
-const require = createRequire(import.meta.url)
 
 type Point = { x: number; y: number }
 type Orientation = 'topLeft' | 'topRight' | 'topMiddle' | 'bottomLeft' | 'bottomRight' | 'bottomMiddle'
@@ -35,12 +32,14 @@ export class SelectionService {
   // renderer pulls it synchronously on its first render (SelectionGetInitialAction).
   private pendingInitialPayload = new Map<number, ActionPayload>()
   private started = false
+  private toolbarIdleTimer: NodeJS.Timeout | null = null
   private toolbarWidth = DEFAULT_TOOLBAR_WIDTH
-  private lastActionSize = { width: ACTION_WIDTH, height: ACTION_HEIGHT }
+  private lastActionSize = { width: 0, height: 0 } // lazily initialized from settings
   private hideListenerActive = false
 
   constructor(
     private getSettings: () => AppSettings,
+    private updateSettings: (patch: Partial<AppSettings>) => AppSettings,
     private preloadPath: string,
     private rendererDir: string,
     private windowIcon: Electron.NativeImage
@@ -65,7 +64,6 @@ export class SelectionService {
     if (!this.hook || !this.hookCtor || this.started) return false
     if (isMac && !systemPreferences.isTrustedAccessibilityClient(false)) return false
 
-    this.createToolbarWindow()
     this.hook.on('text-selection', this.handleSelection)
 
     if (!this.hook.start({ debug: !process.env.NODE_ENV || process.env.NODE_ENV === 'development' })) return false
@@ -78,6 +76,7 @@ export class SelectionService {
   stop(): void {
     if (!this.hook || !this.started) return
     this.stopHideListeners()
+    this.clearToolbarIdleTimer()
     this.hook.stop()
     this.hook.cleanup()
     this.toolbarWindow?.close()
@@ -118,6 +117,27 @@ export class SelectionService {
     if (!this.toolbarWindow || this.toolbarWindow.isDestroyed()) return
     this.toolbarWindow.hide()
     this.toolbarWindow.webContents.send(IPC.SelectionVisibility, false)
+    this.scheduleToolbarIdleDestroy()
+  }
+
+  // A hidden toolbar still holds a renderer process (~30-60MB). Destroy it
+  // after 30s of inactivity; the next selection recreates it lazily.
+  private scheduleToolbarIdleDestroy(): void {
+    this.clearToolbarIdleTimer()
+    this.toolbarIdleTimer = setTimeout(() => {
+      this.toolbarIdleTimer = null
+      if (this.toolbarWindow && !this.toolbarWindow.isDestroyed() && !this.toolbarWindow.isVisible()) {
+        this.toolbarWindow.close()
+        this.toolbarWindow = null
+      }
+    }, 30_000)
+  }
+
+  private clearToolbarIdleTimer(): void {
+    if (this.toolbarIdleTimer) {
+      clearTimeout(this.toolbarIdleTimer)
+      this.toolbarIdleTimer = null
+    }
   }
 
   writeClipboard(text: string): boolean {
@@ -247,7 +267,8 @@ export class SelectionService {
         preload: this.preloadPath,
         contextIsolation: true,
         nodeIntegration: false,
-        sandbox: false
+        sandbox: true,
+        backgroundThrottling: true
       }
     })
 
@@ -262,6 +283,7 @@ export class SelectionService {
 
   private createActionWindow(): BrowserWindow {
     const settings = this.getSettings()
+    this.ensureLastActionSize(settings)
     const width = settings.rememberWindowSize ? this.lastActionSize.width : settings.actionWindowWidth
     const height = settings.rememberWindowSize ? this.lastActionSize.height : settings.actionWindowHeight
     const win = new BrowserWindow({
@@ -281,11 +303,25 @@ export class SelectionService {
         preload: this.preloadPath,
         contextIsolation: true,
         nodeIntegration: false,
-        sandbox: false
+        sandbox: true,
+        backgroundThrottling: true
       }
     })
 
     const wcId = win.webContents.id
+    win.on('close', () => {
+      if (!win.isDestroyed() && this.getSettings().rememberWindowSize) {
+        const bounds = win.getBounds()
+        this.lastActionSize = {
+          width: Math.max(320, bounds.width - ACTION_SHADOW_PADDING * 2),
+          height: Math.max(240, bounds.height - ACTION_SHADOW_PADDING * 2)
+        }
+        void this.updateSettings({
+          actionWindowWidth: this.lastActionSize.width,
+          actionWindowHeight: this.lastActionSize.height
+        })
+      }
+    })
     win.on('closed', () => {
       this.actionWindows.delete(win)
       this.pendingInitialPayload.delete(wcId)
@@ -297,6 +333,11 @@ export class SelectionService {
           width: Math.max(320, bounds.width - ACTION_SHADOW_PADDING * 2),
           height: Math.max(240, bounds.height - ACTION_SHADOW_PADDING * 2)
         }
+        // Persist to settings (debounced via updateSettings)
+        void this.updateSettings({
+          actionWindowWidth: this.lastActionSize.width,
+          actionWindowHeight: this.lastActionSize.height
+        })
       }
     })
     this.actionWindows.add(win)
@@ -375,6 +416,7 @@ export class SelectionService {
 
   private showToolbar(anchor: Point, orientation: Orientation, payload: SelectedTextPayload): void {
     if (!this.toolbarWindow || this.toolbarWindow.isDestroyed()) return
+    this.clearToolbarIdleTimer()
     const position = this.calculateToolbarPosition(anchor, orientation)
     this.toolbarWindow.setBounds({
       x: position.x - TOOLBAR_SHADOW_PADDING,
@@ -446,7 +488,18 @@ export class SelectionService {
     return height + ACTION_SHADOW_PADDING * 2
   }
 
+  /** Ensure lastActionSize is initialized from persisted settings */
+  private ensureLastActionSize(settings: AppSettings): void {
+    if (this.lastActionSize.width === 0 || this.lastActionSize.height === 0) {
+      this.lastActionSize = {
+        width: settings.actionWindowWidth || ACTION_WIDTH,
+        height: settings.actionWindowHeight || ACTION_HEIGHT
+      }
+    }
+  }
+
   private positionAndShowActionWindow(win: BrowserWindow, settings: AppSettings): void {
+    this.ensureLastActionSize(settings)
     const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
     const area = display.workArea
     const width = settings.rememberWindowSize ? this.lastActionSize.width : settings.actionWindowWidth
@@ -474,6 +527,7 @@ export class SelectionService {
   }
 
   private positionActionWindowCenter(win: BrowserWindow, settings: AppSettings): void {
+    this.ensureLastActionSize(settings)
     const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
     const area = display.workArea
     const width = settings.rememberWindowSize ? this.lastActionSize.width : settings.actionWindowWidth

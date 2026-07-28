@@ -1,0 +1,5 @@
+nodeLinker: hoisted
+allowBuilds:
+  electron: true
+  esbuild: true
+  selection-hook: true

@@ -4,9 +4,167 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Selection Toolbar</title>
+    <link rel="stylesheet" href="./styles.css" />
   </head>
-  <body style="background: transparent">
-    <div id="root"></div>
-    <script type="module" src="./toolbar/entry.tsx"></script>
+  <body class="toolbar-page" style="background: transparent; margin: 0; overflow: hidden">
+    <div class="toolbar-root" id="toolbar-root"></div>
+    <script>
+      (function () {
+        var root = document.getElementById('toolbar-root');
+        var currentSelection = null;
+
+        // ---- Icon SVGs (inline, matching icons.tsx paths) ----
+        var ICON_PATHS = {
+          'circle-help': '<circle cx="12" cy="12" r="9"/><path d="M9.5 9.25a2.7 2.7 0 0 1 5 1.4c0 1.7-1.9 2.45-2.5 3.35"/><circle cx="12" cy="16.9" r="0.6" fill="currentColor" stroke="none"/>',
+          copy: '<rect x="9" y="9" width="10" height="10" rx="2"/><path d="M7 15H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v1"/>',
+          'flask-conical': '<path d="M10 3h4"/><path d="M10 3v4.5l-5.8 9.5A2 2 0 0 0 5.9 20h12.2a2 2 0 0 0 1.7-3l-5.8-9.5V3"/><path d="M8 13h8"/>',
+          languages: '<path d="M4 6h7"/><path d="M7.5 4v2a10 10 0 0 1-3 7"/><path d="M4.5 13c1.5-.2 3-.9 4.5-2.1"/><path d="M13 6h7"/><path d="M16.5 4v2a10 10 0 0 1-3 7"/><path d="M13.5 13c1.5-.2 3-.9 4.5-2.1"/>',
+          'scan-text': '<path d="M7 4H5a2 2 0 0 0-2 2v2"/><path d="M17 4h2a2 2 0 0 1 2 2v2"/><path d="M7 20H5a2 2 0 0 1-2-2v-2"/><path d="M17 20h2a2 2 0 0 0 2-2v-2"/><path d="M8 8h8"/><path d="M8 12h8"/><path d="M8 16h5"/>',
+          search: '<circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/>',
+          sparkles: '<path d="m12 3 1.4 3.6L17 8l-3.6 1.4L12 13l-1.4-3.6L7 8l3.6-1.4L12 3Z"/><path d="m5 14 .8 2.2L8 17l-2.2.8L5 20l-.8-2.2L2 17l2.2-.8L5 14Z"/><path d="m19 13 .5 1.3L21 15l-1.5.7L19 17l-.5-1.3L17 15l1.5-.7L19 13Z"/>',
+          'volume-2': '<path d="M11 5 6 9H3v6h3l5 4V5Z"/><path d="M16 8.5a5 5 0 0 1 0 7"/><path d="M19 5.5a9 9 0 0 1 0 13"/>',
+          'book-open': '<path d="M12 6.5C10.5 5 8 4.5 4 4.5v13c4 0 6.5.5 8 2 1.5-1.5 4-2 8-2v-13c-4 0-6.5.5-8 2Z"/><path d="M12 6.5v12"/>',
+          pencil: '<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5Z"/>',
+          'mouse-pointer': '<path d="m4 4 7 16 2.2-7.2L20 10.5 4 4Z"/>',
+          download: '<path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M5 19h14"/>',
+          'arrow-up-right': '<path d="M7 17 17 7"/><path d="M8 7h9v9"/>',
+          pin: '<path d="m15 4 5 5-3 1-3 6-1.5-1.5-6 3 3-6L8 8l7-4Z"/>',
+          'pin-off': '<path d="m15 4 5 5-3 1-1.2 2.3"/><path d="m11.7 12.3-1.2 2.2L8 8l7-4"/><path d="m3 21 6-6"/>',
+          x: '<path d="m6 6 12 12"/><path d="M18 6 6 18"/>',
+          square: '<rect x="5" y="5" width="14" height="14" rx="2"/>',
+          'arrow-up': '<path d="M12 5v14"/><path d="m6 11 6-6 6 6"/>',
+          power: '<path d="M12 3v9"/><path d="M6.4 7.4a8 8 0 1 0 11.2 0"/>',
+          sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2.2"/><path d="M12 19.3v2.2"/><path d="m4.8 4.8 1.6 1.6"/><path d="m17.6 17.6 1.6 1.6"/><path d="M2.5 12h2.2"/><path d="M19.3 12h2.2"/><path d="m4.8 19.2 1.6-1.6"/><path d="m17.6 6.4 1.6-1.6"/>',
+          moon: '<path d="M20 14.5A7.5 7.5 0 1 1 9.5 4 6.5 6.5 0 0 0 20 14.5Z"/>',
+          laptop: '<rect x="5" y="6" width="14" height="10" rx="2"/><path d="M3 18h18"/>',
+          'trash-2': '<path d="M4 7h16"/><path d="M10 3h4"/><path d="M6.5 7 7.3 19a2 2 0 0 0 2 1.9h5.4a2 2 0 0 0 2-1.9L17.5 7"/><path d="M10 11v5"/><path d="M14 11v5"/>',
+          'undo-2': '<path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/>'
+        };
+
+        function iconSvg(name) {
+          var paths = ICON_PATHS[name] || ICON_PATHS['sparkles'];
+          return '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + paths + '</svg>';
+        }
+
+        // ---- App icon SVG (from shared/brand.ts) ----
+        var APP_ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="16" fill="#101010"/><path d="M21 18h-5a4 4 0 0 0-4 4v20a4 4 0 0 0 4 4h5" fill="none" stroke="#F7F7F5" stroke-width="4" stroke-linecap="round"/><path d="M43 18h5a4 4 0 0 1 4 4v20a4 4 0 0 1-4 4h-5" fill="none" stroke="#F7F7F5" stroke-width="4" stroke-linecap="round"/><path d="M24 25h16M24 32h16M24 39h10" fill="none" stroke="#F7F7F5" stroke-width="3.5" stroke-linecap="round"/></svg>';
+
+        // ---- i18n (action labels only) ----
+        var ACTION_LABELS = {
+          'zh-CN': {
+            translate: '翻译', explain: '解释', summarize: '总结', search: '搜索',
+            copy: '复制', speak: '朗读', polish: '润色'
+          },
+          en: {
+            translate: 'Translate', explain: 'Explain', summarize: 'Summarize', search: 'Search',
+            copy: 'Copy', speak: 'Speak', polish: 'Polish'
+          }
+        };
+
+        var DEFAULT_ACTION_NAMES = { translate: 'Translate', explain: 'Explain', summarize: 'Summarize', search: 'Search', copy: 'Copy', speak: 'Speak', polish: 'Polish' };
+
+        function getActionLabel(action, language) {
+          var labels = ACTION_LABELS[language] || ACTION_LABELS['zh-CN'];
+          var localized = labels[action.id];
+          var defaultName = DEFAULT_ACTION_NAMES[action.id];
+          if (localized && (!action.name || action.name === defaultName)) return localized;
+          return action.name || localized || action.id;
+        }
+
+        // ---- buildSearchUrl (from shared/actions.ts) ----
+        function isUriOrFilePath(value) {
+          var text = value.trim();
+          if (!text || /\s/.test(text)) return false;
+          return /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(text) || /^[a-zA-Z]:[/\\]/.test(text) || /^\/[^/]/.test(text);
+        }
+
+        function buildSearchUrl(action, selectedText) {
+          var text = selectedText.trim();
+          if (!text) return '';
+          if (isUriOrFilePath(text)) return text;
+          var template = action.searchUrlTemplate || 'https://www.google.com/search?q={{query}}';
+          return template.replaceAll('{{query}}', encodeURIComponent(text)).replaceAll('{{text}}', encodeURIComponent(text));
+        }
+
+        // ---- Theme ----
+        function applyTheme(theme) {
+          var resolved = theme === 'light' || theme === 'dark' ? theme
+            : (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+          document.documentElement.dataset.theme = resolved;
+          document.documentElement.style.colorScheme = resolved;
+        }
+
+        function applyAppearance(settings) {
+          var family = settings.fontFamily && settings.fontFamily.trim();
+          if (family) document.documentElement.style.setProperty('--app-font', family + ', ui-sans-serif, system-ui, sans-serif');
+          else document.documentElement.style.removeProperty('--app-font');
+          document.documentElement.style.setProperty('--app-font-size', settings.fontSize + 'px');
+        }
+
+        // ---- Render ----
+        function render(settings) {
+          applyTheme(settings.theme);
+          applyAppearance(settings);
+          var actions = settings.actions.filter(function (a) { return a.enabled; });
+          var html = '';
+          if (settings.showToolbarAppIcon) {
+            html += '<div class="toolbar-logo">' + APP_ICON_SVG + '</div>';
+          }
+          for (var i = 0; i < actions.length; i++) {
+            var action = actions[i];
+            var label = getActionLabel(action, settings.language);
+            html += '<button class="toolbar-button" data-action-id="' + action.id + '" title="' + label + '">'
+              + iconSvg(action.icon)
+              + (settings.compactToolbar ? '' : '<span>' + label + '</span>')
+              + '</button>';
+          }
+          root.innerHTML = html;
+
+          // Measure width and notify main process
+          requestAnimationFrame(function () {
+            var width = Math.max(root.scrollWidth, root.getBoundingClientRect().width);
+            if (width > 0) window.assistantLite.selection.determineToolbarSize(width);
+          });
+        }
+
+        // ---- Action click handling ----
+        root.addEventListener('click', function (e) {
+          var btn = e.target.closest('.toolbar-button');
+          if (!btn || !currentSelection) return;
+          var actionId = btn.dataset.actionId;
+          window.assistantLite.settings.get().then(function (settings) {
+            var action = settings.actions.find(function (a) { return a.id === actionId; });
+            if (!action) return;
+            var text = currentSelection.text;
+            if (!text) return;
+
+            if (action.type === 'copy') {
+              window.assistantLite.selection.writeClipboard(text);
+            } else if (action.type === 'search') {
+              var url = buildSearchUrl(action, text);
+              if (url) window.assistantLite.app.openExternal(url);
+              window.assistantLite.selection.hideToolbar();
+            } else if (action.type === 'speak') {
+              window.assistantLite.speech.speak(text);
+              window.assistantLite.selection.hideToolbar();
+            } else {
+              window.assistantLite.selection.processAction({
+                action: action,
+                selectedText: text,
+                isFullscreen: currentSelection.isFullscreen
+              });
+              window.assistantLite.selection.hideToolbar();
+            }
+          });
+        });
+
+        // ---- Init ----
+        window.assistantLite.settings.get().then(render);
+        window.assistantLite.settings.onChanged(render);
+        window.assistantLite.selection.onSelected(function (payload) {
+          currentSelection = payload;
+        });
+      })();
+    </script>
   </body>
 </html>

@@ -379,6 +379,14 @@ function ActionEditor({
                 </select>
               </label>
               <label className="field">
+                <span>{t('actionModel')}</span>
+                <input
+                  value={action.model ?? ''}
+                  placeholder={t('actionModelPlaceholder')}
+                  onChange={(event) => onChange({ model: event.target.value.trim() || undefined })}
+                />
+              </label>
+              <label className="field">
                 <span>{t('actionReasoning')}</span>
                 <select
                   value={action.reasoning ?? 'on'}
@@ -388,6 +396,19 @@ function ActionEditor({
                   <option value="low">{t('reasoningLow')}</option>
                   <option value="medium">{t('reasoningMedium')}</option>
                   <option value="high">{t('reasoningHigh')}</option>
+                </select>
+              </label>
+              <label className="field">
+                <span>{t('actionWebSearch')}</span>
+                <select
+                  value={action.webSearch === undefined ? 'inherit' : action.webSearch ? 'on' : 'off'}
+                  onChange={(event) => {
+                    const val = event.target.value
+                    onChange({ webSearch: val === 'inherit' ? undefined : val === 'on' })
+                  }}>
+                  <option value="inherit">{t('actionWebSearchInherit')}</option>
+                  <option value="on">{t('actionWebSearchOn')}</option>
+                  <option value="off">{t('actionWebSearchOff')}</option>
                 </select>
               </label>
             </div>
@@ -425,6 +446,8 @@ function SettingsApp() {
   const [modelsByTemplate, setModelsByTemplate] = React.useState<Record<string, string[]>>({})
   const [statusByTemplate, setStatusByTemplate] = React.useState<Record<string, string>>({})
   const [busyTemplate, setBusyTemplate] = React.useState<{ id: string; kind: 'list' | 'test' } | null>(null)
+  const [proxyTesting, setProxyTesting] = React.useState(false)
+  const [proxyStatus, setProxyStatus] = React.useState<string | null>(null)
   const t = getTranslator(settings.language)
   useThemeMode(settings.theme)
   useAppearance(settings)
@@ -495,6 +518,20 @@ function SettingsApp() {
       setStatusByTemplate((current) => ({ ...current, [id]: error instanceof Error ? error.message : String(error) }))
     } finally {
       setBusyTemplate(null)
+    }
+  }
+
+  const testProxyNow = async () => {
+    setProxyTesting(true)
+    setProxyStatus(null)
+    try {
+      const result = await window.assistantLite.network.testProxy(settings?.proxyUrl ?? '')
+      const via = t(result.via === 'manual' ? 'proxyViaManual' : result.via === 'system' ? 'proxyViaSystem' : 'proxyViaDirect')
+      setProxyStatus(result.ok ? `✅ ${via} · ${result.latencyMs}ms` : `❌ ${via} · ${result.error ?? ''}`)
+    } catch (error) {
+      setProxyStatus(`❌ ${error instanceof Error ? error.message : String(error)}`)
+    } finally {
+      setProxyTesting(false)
     }
   }
 
@@ -713,6 +750,38 @@ function SettingsApp() {
                 label={t('webSearchEnabled')}
                 onChange={(webSearchEnabled) => update({ webSearchEnabled })}
               />
+            </SettingRow>
+          </SettingSection>
+
+          <SettingSection title={t('featureModelGroup')}>
+            <SettingRow title={t('visionModel')} description={t('visionModelDesc')}>
+              <input
+                value={settings.visionModel}
+                placeholder="gpt-4o"
+                onChange={(event) => update({ visionModel: event.target.value.trim() })}
+              />
+            </SettingRow>
+            <SettingRow title={t('compressModel')} description={t('compressModelDesc')}>
+              <input
+                value={settings.compressModel}
+                placeholder="gpt-4o-mini"
+                onChange={(event) => update({ compressModel: event.target.value.trim() })}
+              />
+            </SettingRow>
+          </SettingSection>
+
+          <SettingSection title={t('proxyGroup')}>
+            <SettingRow title={t('proxyUrl')} description={proxyStatus ?? t('proxyUrlDesc')}>
+              <div className="proxy-field">
+                <input
+                  value={settings.proxyUrl}
+                  placeholder="http://127.0.0.1:7890"
+                  onChange={(event) => update({ proxyUrl: event.target.value.trim() })}
+                />
+                <button type="button" className="pill" onClick={() => void testProxyNow()} disabled={proxyTesting}>
+                  {proxyTesting ? t('proxyTestLoading') : t('proxyTest')}
+                </button>
+              </div>
             </SettingRow>
           </SettingSection>
         </div>

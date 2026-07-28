@@ -18,8 +18,27 @@ export const IPC = {
   AiStream: 'ai:stream',
   AiChunk: 'ai:chunk',
   AiAbort: 'ai:abort',
+  AiInject: 'ai:inject',
   AiListModels: 'ai:list-models',
   AiTestModel: 'ai:test-model',
+  AiSummarize: 'ai:summarize',
+
+  AgentPickWorkingDir: 'agent:pick-working-dir',
+  AgentApproveTool: 'agent:approve-tool',
+  AgentRevertTool: 'agent:revert-tool',
+
+  ChatExportMarkdown: 'chat:export-markdown',
+
+  MemoryOpen: 'memory:open',
+  MemoryOpenProject: 'memory:open-project',
+
+  ExtStatus: 'ext:status',
+  ExtOpenSkillsDir: 'ext:open-skills-dir',
+  ExtLinkSkillDir: 'ext:link-skill-dir',
+  ExtUnlinkSkillDir: 'ext:unlink-skill-dir',
+  ExtMcpReconnect: 'ext:mcp-reconnect',
+
+  ProxyTest: 'proxy:test',
 
   SpeechSpeak: 'speech:speak',
   SpeechStop: 'speech:stop',
@@ -34,15 +53,13 @@ export const IPC = {
   ScreenshotOverlayInit: 'screenshot:overlay-init',
   ScreenshotOverlayConfirm: 'screenshot:overlay-confirm',
   ScreenshotOverlayCancel: 'screenshot:overlay-cancel',
-  ScreenshotPreviewInit: 'screenshot:preview-init',
   ScreenshotSave: 'screenshot:save',
   ScreenshotCopy: 'screenshot:copy',
   ScreenshotPin: 'screenshot:pin',
   ScreenshotPinInit: 'screenshot:pin-init',
   ScreenshotPinZoom: 'screenshot:pin-zoom',
   ScreenshotPinMove: 'screenshot:pin-move',
-  ScreenshotPinMenu: 'screenshot:pin-menu',
-  ScreenshotExplain: 'screenshot:explain'
+  ScreenshotPinMenu: 'screenshot:pin-menu'
 } as const
 
 export type IpcName = (typeof IPC)[keyof typeof IPC]

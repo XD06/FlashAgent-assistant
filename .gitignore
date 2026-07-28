@@ -1,5 +1,9 @@
 node_modules/
 dist/
+dist-app/
+dist-build-*/
+dist-portable/
+build/
 out/
 .cache/
 coverage/

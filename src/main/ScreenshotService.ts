@@ -46,21 +46,11 @@ export interface OverlayConfirmPayload {
   imageDataUrl?: string
 }
 
-export interface PreviewInitPayload {
-  imageDataUrl: string
-  width: number
-  height: number
-}
-
 interface DisplayCapture {
   display: Electron.Display
   image: Electron.NativeImage
   dataUrl: string
 }
-
-const PREVIEW_DEFAULT_WIDTH = 560
-const PREVIEW_DEFAULT_HEIGHT = 520
-const PREVIEW_SHADOW_PADDING = 18
 
 interface PinState {
   dataUrl: string
@@ -74,7 +64,6 @@ interface PinState {
 
 export class ScreenshotService {
   private overlayWindow: BrowserWindow | null = null
-  private previewWindow: BrowserWindow | null = null
   private pinWindows = new Map<BrowserWindow, PinState>()
   private currentCapture: DisplayCapture | null = null
   private capturing = false
@@ -83,7 +72,9 @@ export class ScreenshotService {
     private getSettings: () => AppSettings,
     private preloadPath: string,
     private rendererDir: string,
-    private windowIcon: Electron.NativeImage
+    private windowIcon: Electron.NativeImage,
+    /** Route AI vision into the shared action window (avoids a third React process). */
+    private onExplainImage: (imageDataUrl: string) => void = () => undefined
   ) {}
 
   registerIpc(): void {
@@ -128,8 +119,6 @@ export class ScreenshotService {
 
   dispose(): void {
     this.closeOverlay()
-    if (this.previewWindow && !this.previewWindow.isDestroyed()) this.previewWindow.close()
-    this.previewWindow = null
     for (const win of this.pinWindows.keys()) {
       if (!win.isDestroyed()) win.close()
     }
@@ -198,7 +187,8 @@ export class ScreenshotService {
         preload: this.preloadPath,
         contextIsolation: true,
         nodeIntegration: false,
-        sandbox: false
+        sandbox: true,
+        backgroundThrottling: true
       }
     })
     this.overlayWindow.setAlwaysOnTop(true, 'screen-saver')
@@ -282,45 +272,8 @@ export class ScreenshotService {
         return
       case 'explain':
       default:
-        this.openPreview({ imageDataUrl: dataUrl, width: size.width, height: size.height })
+        this.onExplainImage(dataUrl)
     }
-  }
-
-  private openPreview(payload: PreviewInitPayload): void {
-    if (this.previewWindow && !this.previewWindow.isDestroyed()) {
-      this.previewWindow.close()
-    }
-    this.previewWindow = new BrowserWindow({
-      width: PREVIEW_DEFAULT_WIDTH + PREVIEW_SHADOW_PADDING * 2,
-      height: PREVIEW_DEFAULT_HEIGHT + PREVIEW_SHADOW_PADDING * 2,
-      minWidth: 380 + PREVIEW_SHADOW_PADDING * 2,
-      minHeight: 360 + PREVIEW_SHADOW_PADDING * 2,
-      icon: this.windowIcon,
-      title: 'AIA划词助手',
-      autoHideMenuBar: true,
-      show: false,
-      frame: false,
-      transparent: true,
-      hasShadow: false,
-      titleBarStyle: 'hidden',
-      trafficLightPosition: { x: PREVIEW_SHADOW_PADDING + 12, y: PREVIEW_SHADOW_PADDING + 10 },
-      webPreferences: {
-        preload: this.preloadPath,
-        contextIsolation: true,
-        nodeIntegration: false,
-        sandbox: false
-      }
-    })
-    const win = this.previewWindow
-    win.on('closed', () => {
-      if (this.previewWindow === win) this.previewWindow = null
-    })
-    this.loadRenderer(win, 'screenshotPreview.html')
-    win.webContents.once('did-finish-load', () => {
-      win.webContents.send(IPC.ScreenshotPreviewInit, payload)
-      win.show()
-      win.focus()
-    })
   }
 
   private async saveImage(dataUrl: string): Promise<boolean> {
@@ -358,12 +311,8 @@ export class ScreenshotService {
       // ignore — older Electron may not support this signature
     }
 
-    const parent = this.previewWindow && !this.previewWindow.isDestroyed() ? this.previewWindow : undefined
-
     try {
-      const result = parent
-        ? await dialog.showSaveDialog(parent, options)
-        : await dialog.showSaveDialog(options)
+      const result = await dialog.showSaveDialog(options)
       if (result.canceled || !result.filePath) return false
       await writeFile(result.filePath, image.toPNG())
       return true
@@ -418,9 +367,10 @@ export class ScreenshotService {
       ...(isMac ? { type: 'panel' as const, hiddenInMissionControl: true, acceptFirstMouse: true } : {}),
       webPreferences: {
         preload: this.preloadPath,
-        contextIsolation: true,
-        nodeIntegration: false,
-        sandbox: false
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      backgroundThrottling: true
       }
     })
     pin.setAlwaysOnTop(true, isMac ? 'floating' : 'pop-up-menu')
@@ -484,13 +434,7 @@ export class ScreenshotService {
     const menu = Menu.buildFromTemplate([
       {
         label: labels.explain,
-        click: () => {
-          this.openPreview({
-            imageDataUrl: state.dataUrl,
-            width: state.baseWidth,
-            height: state.baseHeight
-          })
-        }
+        click: () => this.onExplainImage(state.dataUrl)
       },
       {
         label: labels.copy,

@@ -12,13 +12,20 @@ const store = new Store<{ settings: AppSettings }>({
 
 const listeners = new Set<(settings: AppSettings) => void>()
 
+// getSettings is on the hot path (every selection/mouse event reads it), and
+// normalizeSettings does a full defaults merge — cache the normalized result
+// and invalidate only when the store is written.
+let cachedSettings: AppSettings | null = null
+
 export function getSettings(): AppSettings {
-  return normalizeSettings(store.get('settings'))
+  if (!cachedSettings) cachedSettings = normalizeSettings(store.get('settings'))
+  return cachedSettings
 }
 
 export function updateSettings(patch: SettingsPatch): AppSettings {
   const next = mergeSettings(getSettings(), patch)
   store.set('settings', next)
+  cachedSettings = next
   listeners.forEach((listener) => listener(next))
   return next
 }

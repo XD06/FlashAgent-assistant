@@ -5,8 +5,10 @@ import type {
   AiChunkPayload,
   AiStreamRequest,
   AppSettings,
+  McpServerStatus,
   SelectedTextPayload,
-  SettingsPatch
+  SettingsPatch,
+  SkillInfo
 } from '@shared/types'
 
 const api = {
@@ -59,9 +61,14 @@ const api = {
   ai: {
     stream: (request: AiStreamRequest): Promise<void> => ipcRenderer.invoke(IPC.AiStream, request),
     abort: (requestId: string): Promise<void> => ipcRenderer.invoke(IPC.AiAbort, requestId),
+    /** Queue a user note for delivery into a running request's tool loop.
+     * Returns false when the request is no longer accepting injections. */
+    inject: (requestId: string, text: string): Promise<boolean> => ipcRenderer.invoke(IPC.AiInject, requestId, text),
     listModels: (providerTemplateId?: string): Promise<string[]> => ipcRenderer.invoke(IPC.AiListModels, providerTemplateId),
     testModel: (providerTemplateId?: string): Promise<{ ok: true }> =>
       ipcRenderer.invoke(IPC.AiTestModel, providerTemplateId),
+    summarize: (text: string, model?: string): Promise<string> =>
+      ipcRenderer.invoke(IPC.AiSummarize, { text, model }),
     onChunk: (callback: (payload: AiChunkPayload) => void) => {
       const listener = (_event: Electron.IpcRendererEvent, payload: AiChunkPayload) => callback(payload)
       ipcRenderer.on(IPC.AiChunk, listener)
@@ -69,6 +76,35 @@ const api = {
         ipcRenderer.off(IPC.AiChunk, listener)
       }
     }
+  },
+  agent: {
+    pickWorkingDir: (): Promise<string | null> => ipcRenderer.invoke(IPC.AgentPickWorkingDir),
+    approveTool: (callId: string, approved: boolean, alwaysAllow?: boolean): Promise<boolean> =>
+      ipcRenderer.invoke(IPC.AgentApproveTool, callId, approved, alwaysAllow),
+    revertTool: (callId: string): Promise<boolean> => ipcRenderer.invoke(IPC.AgentRevertTool, callId)
+  },
+  chat: {
+    /** Returns the saved file path, or null when cancelled/failed. */
+    exportMarkdown: (title: string, markdown: string): Promise<string | null> =>
+      ipcRenderer.invoke(IPC.ChatExportMarkdown, { title, markdown })
+  },
+  memory: {
+    open: (): Promise<string> => ipcRenderer.invoke(IPC.MemoryOpen),
+    openProject: (workingDir: string): Promise<string> => ipcRenderer.invoke(IPC.MemoryOpenProject, workingDir)
+  },
+  ext: {
+    status: (): Promise<{ skills: SkillInfo[]; mcp: McpServerStatus[] }> => ipcRenderer.invoke(IPC.ExtStatus),
+    openSkillsDir: (): Promise<string> => ipcRenderer.invoke(IPC.ExtOpenSkillsDir),
+    linkSkillDir: (): Promise<{ ok: boolean; name?: string; error?: string } | null> =>
+      ipcRenderer.invoke(IPC.ExtLinkSkillDir),
+    unlinkSkillDir: (dir: string): Promise<void> => ipcRenderer.invoke(IPC.ExtUnlinkSkillDir, dir),
+    reconnectMcp: (id: string): Promise<void> => ipcRenderer.invoke(IPC.ExtMcpReconnect, id)
+  },
+  network: {
+    testProxy: (
+      proxyUrl: string
+    ): Promise<{ ok: boolean; latencyMs?: number; via: 'manual' | 'system' | 'direct'; error?: string }> =>
+      ipcRenderer.invoke(IPC.ProxyTest, proxyUrl)
   },
   speech: {
     speak: (text: string): Promise<boolean> => ipcRenderer.invoke(IPC.SpeechSpeak, text),
@@ -108,13 +144,6 @@ const api = {
       ipcRenderer.on(IPC.ScreenshotOverlayInit, listener)
       return () => {
         ipcRenderer.off(IPC.ScreenshotOverlayInit, listener)
-      }
-    },
-    onPreviewInit: (callback: (payload: { imageDataUrl: string; width: number; height: number }) => void) => {
-      const listener = (_event: Electron.IpcRendererEvent, payload: { imageDataUrl: string; width: number; height: number }) => callback(payload)
-      ipcRenderer.on(IPC.ScreenshotPreviewInit, listener)
-      return () => {
-        ipcRenderer.off(IPC.ScreenshotPreviewInit, listener)
       }
     },
     onPinInit: (callback: (payload: { imageDataUrl: string; width: number; height: number }) => void) => {

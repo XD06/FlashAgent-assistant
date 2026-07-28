@@ -95,11 +95,18 @@ export const defaultSettings: AppSettings = {
   providerTemplates: [defaultProviderTemplate],
   activeProviderTemplateId: defaultProviderTemplate.id,
   webSearchEnabled: true,
+  proxyUrl: '',
+  compressModel: '',
+  visionModel: '',
+  agentFullAccess: false,
   shortcuts: {
     toggleAssistant: 'CommandOrControl+Shift+Space',
     processSelection: 'CommandOrControl+Shift+S',
     captureScreen: 'CommandOrControl+Shift+A',
     chat: 'CommandOrControl+Shift+C'
   },
-  actions: defaultActions
+  actions: defaultActions,
+  mcpServers: [],
+  disabledSkills: [],
+  linkedSkillDirs: []
 }

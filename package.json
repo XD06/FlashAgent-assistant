@@ -1,8 +1,8 @@
 {
   "name": "selection-assistant-lite",
-  "version": "0.6.2",
+  "version": "0.7.0",
   "description": "轻量跨平台 AI 划词助手，支持 OpenAI-compatible 与 Anthropic API。",
-  "main": "out/main/index.js",
+  "main": "out/main/index.cjs",
   "author": "selection-assistant-lite contributors",
   "license": "MIT",
   "repository": {
@@ -25,45 +25,42 @@
   ],
   "type": "module",
   "scripts": {
-    "dev": "electron-vite dev",
-    "start": "electron-vite preview",
+    "dev": "node scripts/launch.mjs dev",
+    "start": "node scripts/launch.mjs preview",
     "build": "pnpm typecheck && electron-vite build",
     "prepare:selection-hook": "node scripts/prepare-selection-hook.js",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
     "dist:mac": "pnpm build && pnpm prepare:selection-hook && electron-builder --mac dmg zip --publish never",
-    "dist:win": "pnpm build && pnpm prepare:selection-hook && electron-builder --win nsis portable --x64 --publish never",
-    "dist:win:x64": "pnpm build && pnpm prepare:selection-hook && electron-builder --win nsis portable --x64 --publish never",
-    "dist:win:arm64": "pnpm build && pnpm prepare:selection-hook && electron-builder --win nsis portable --arm64 --publish never"
+    "dist:win": "pnpm build && pnpm prepare:selection-hook && node scripts/dist-win.cjs --win portable --x64 --publish never",
+    "dist:win:full": "pnpm build && pnpm prepare:selection-hook && node scripts/dist-win.cjs --win nsis portable --x64 --publish never",
+    "dist:win:arm64": "pnpm build && pnpm prepare:selection-hook && node scripts/dist-win.cjs --win nsis portable --arm64 --publish never",
+    "pack:portable": "pnpm build && node scripts/package-portable.cjs"
   },
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.0",
     "@electron-toolkit/utils": "^4.0.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "electron-store": "^8.2.0",
+    "marked": "^18.0.7",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-markdown": "^10.1.0",
-    "remark-gfm": "^4.0.1",
-    "selection-hook": "2.0.1"
+    "selection-hook": "2.0.1",
+    "undici": "^6.28.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "^4.3.4",
+    "dompurify": "^3.4.12",
     "electron": "^33.2.1",
     "electron-builder": "^25.1.8",
+    "electron-packager": "^17.1.2",
     "electron-vite": "^2.3.0",
+    "mermaid": "^11.16.0",
     "typescript": "^5.7.2",
     "vite": "^5.4.21",
     "vitest": "^2.1.8"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "electron",
-      "esbuild",
-      "selection-hook"
-    ]
   }
 }

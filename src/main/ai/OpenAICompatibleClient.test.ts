@@ -1,11 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  extractAnthropicBlocks,
   listModels,
   normalizeBaseUrl,
   parseAnthropicStreamEvent,
   parseOpenAIStreamEvent,
   streamChatMessages,
-  testModel
+  testModel,
+  type AnthropicStreamBlock
 } from './OpenAICompatibleClient'
 import type { ProviderSettings } from '@shared/types'
 
@@ -52,7 +54,17 @@ describe('OpenAI-compatible stream parser', () => {
 
   it('parses text deltas from SSE events', () => {
     const event = 'data: {"choices":[{"delta":{"content":"hello"}}]}\n\n'
-    expect(parseOpenAIStreamEvent(event)).toBe('hello')
+    expect(parseOpenAIStreamEvent(event)).toEqual({ content: 'hello' })
+  })
+
+  it('parses reasoning_content from SSE events', () => {
+    const event = 'data: {"choices":[{"delta":{"reasoning_content":"thinking..."}}]}\n\n'
+    expect(parseOpenAIStreamEvent(event)).toEqual({ reasoning: 'thinking...' })
+  })
+
+  it('parses both content and reasoning from SSE events', () => {
+    const event = 'data: {"choices":[{"delta":{"content":"hi","reasoning_content":"thought"}}]}\n\n'
+    expect(parseOpenAIStreamEvent(event)).toEqual({ content: 'hi', reasoning: 'thought' })
   })
 
   it('returns null for done events', () => {
@@ -61,7 +73,12 @@ describe('OpenAI-compatible stream parser', () => {
 
   it('parses anthropic text deltas from SSE events', () => {
     const event = 'event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"type":"text_delta","text":"hello"}}\n\n'
-    expect(parseAnthropicStreamEvent(event)).toBe('hello')
+    expect(parseAnthropicStreamEvent(event)).toEqual({ content: 'hello' })
+  })
+
+  it('parses anthropic thinking deltas from SSE events', () => {
+    const event = 'event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"reasoning..."}}\n\n'
+    expect(parseAnthropicStreamEvent(event)).toEqual({ reasoning: 'reasoning...' })
   })
 
   it('lists sorted model ids and filters invalid model entries', async () => {
@@ -130,7 +147,7 @@ describe('OpenAI-compatible stream parser', () => {
       [{ role: 'user', text: 'explain this' }],
       'system',
       new AbortController().signal,
-      (delta) => deltas.push(delta),
+      (delta) => { if (delta.content) deltas.push(delta.content) },
       'high'
     )
 
@@ -182,5 +199,166 @@ describe('OpenAI-compatible stream parser', () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('bad key', { status: 401, statusText: 'Unauthorized' }))
 
     await expect(testModel(provider)).rejects.toThrow('Provider request failed (401): bad key')
+  })
+
+  it('parses SSE events separated by CRLF blank lines', async () => {
+    const encoder = new TextEncoder()
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          encoder.encode(
+            'data: {"choices":[{"delta":{"content":"foo"}}]}\r\n\r\ndata: {"choices":[{"delta":{"content":"bar"}}]}\r\n\r\n'
+          )
+        )
+        controller.close()
+      }
+    })
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(body, { status: 200 }))
+    const deltas: string[] = []
+
+    await streamChatMessages(
+      provider,
+      [{ role: 'user', text: 'hi' }],
+      'system',
+      new AbortController().signal,
+      (delta) => { if (delta.content) deltas.push(delta.content) },
+      'off'
+    )
+
+    expect(deltas).toEqual(['foo', 'bar'])
+  })
+
+  // ---- Tool-loop context control ----
+  const toolDef = { name: 'read_file', description: 'read', parameters: { type: 'object', properties: {} } }
+  function toolCallResponse(callId: string): Response {
+    const encoder = new TextEncoder()
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          encoder.encode(
+            `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"${callId}","function":{"name":"read_file","arguments":"{}"}}]}}]}\n\n`
+          )
+        )
+        controller.close()
+      }
+    })
+    return new Response(body, { status: 200 })
+  }
+
+  it('caps oversized tool results before sending them back to the model', async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(toolCallResponse('call_1'))
+      .mockResolvedValueOnce(streamingTextResponse('done'))
+
+    await streamChatMessages(
+      provider,
+      [{ role: 'user', text: 'read it' }],
+      'system',
+      new AbortController().signal,
+      () => {},
+      'off',
+      {
+        tools: [toolDef],
+        onToolCall: async () => 'x'.repeat(30_000),
+        maxToolRounds: 3
+      }
+    )
+
+    const secondBody = JSON.parse(String(fetchMock.mock.calls[1][1]?.body)) as {
+      messages: Array<{ role: string; content: string }>
+    }
+    const toolMsg = secondBody.messages.find((m) => m.role === 'tool')
+    expect(toolMsg).toBeDefined()
+    expect(toolMsg!.content.length).toBeLessThan(15_000)
+    expect(toolMsg!.content).toContain('chars truncated')
+  })
+
+  it('stubs out tool results older than the recent-rounds window', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+    // 7 rounds of tool calls, then a final plain-text reply. Round 0's
+    // result should be aged out by the time round 6 sends its request.
+    for (let i = 0; i < 7; i++) fetchMock.mockResolvedValueOnce(toolCallResponse(`call_${i}`))
+    fetchMock.mockResolvedValueOnce(streamingTextResponse('done'))
+
+    await streamChatMessages(
+      provider,
+      [{ role: 'user', text: 'work' }],
+      'system',
+      new AbortController().signal,
+      () => {},
+      'off',
+      {
+        tools: [toolDef],
+        onToolCall: async () => 'y'.repeat(2_000),
+        maxToolRounds: 10
+      }
+    )
+
+    const lastBody = JSON.parse(String(fetchMock.mock.calls[7][1]?.body)) as {
+      messages: Array<{ role: string; content: string }>
+    }
+    const toolMsgs = lastBody.messages.filter((m) => m.role === 'tool')
+    expect(toolMsgs.length).toBe(7)
+    // Oldest results are stubbed, the most recent ones stay verbatim.
+    expect(toolMsgs[0].content).toContain('trimmed to save context')
+    expect(toolMsgs[toolMsgs.length - 1].content).toBe('y'.repeat(2_000))
+  })
+})
+
+describe('extractAnthropicBlocks', () => {
+  it('accumulates tool_use arguments streamed as input_json_delta', () => {
+    const map = new Map<number, AnthropicStreamBlock>()
+    extractAnthropicBlocks(
+      'event: content_block_start\ndata: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_1","name":"web_search"}}\n',
+      map
+    )
+    extractAnthropicBlocks(
+      'data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\\"query\\":"}}\n',
+      map
+    )
+    extractAnthropicBlocks(
+      'data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\\"news\\"}"}}\n',
+      map
+    )
+
+    const block = map.get(1)
+    expect(block?.type).toBe('tool_use')
+    expect(block?.id).toBe('toolu_1')
+    expect(block?.name).toBe('web_search')
+    expect(JSON.parse(block?.json ?? '')).toEqual({ query: 'news' })
+  })
+
+  it('accumulates thinking and signature deltas on the same block', () => {
+    const map = new Map<number, AnthropicStreamBlock>()
+    extractAnthropicBlocks(
+      'data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking"}}\n',
+      map
+    )
+    extractAnthropicBlocks(
+      'data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"step one"}}\n',
+      map
+    )
+    extractAnthropicBlocks(
+      'data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig123"}}\n',
+      map
+    )
+
+    expect(map.get(0)).toMatchObject({ type: 'thinking', thinking: 'step one', signature: 'sig123' })
+  })
+
+  it('tracks text blocks by index alongside tool blocks', () => {
+    const map = new Map<number, AnthropicStreamBlock>()
+    extractAnthropicBlocks(
+      [
+        'data: {"type":"content_block_start","index":0,"content_block":{"type":"text"}}',
+        'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Let me search."}}',
+        'data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"t1","name":"web_search"}}'
+      ].join('\n'),
+      map
+    )
+
+    expect(map.get(0)).toMatchObject({ type: 'text', text: 'Let me search.' })
+    expect(map.get(1)).toMatchObject({ type: 'tool_use', id: 't1' })
   })
 })

@@ -4,9 +4,94 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Pinned Screenshot</title>
+    <link rel="stylesheet" href="./styles.css" />
   </head>
   <body style="background: transparent; margin: 0; overflow: hidden">
-    <div id="root"></div>
-    <script type="module" src="./screenshot/pin.tsx"></script>
+    <div class="screenshot-pin" id="pin-container">
+      <img class="screenshot-pin__img" id="pin-img" draggable="false" alt="" />
+    </div>
+    <script>
+      (function () {
+        var img = document.getElementById('pin-img');
+        var container = document.getElementById('pin-container');
+
+        // 1. Receive image from main process
+        window.assistantLite.screenshot.onPinInit(function (payload) {
+          img.src = payload.imageDataUrl;
+        });
+
+        // 2. Esc closes the window
+        window.addEventListener('keydown', function (e) {
+          if (e.key === 'Escape') window.assistantLite.windowControls.close();
+        });
+
+        // 3. Wheel zoom — accumulate deltaY and flush once per animation frame
+        //    to avoid IPC flooding while keeping macOS trackpad bursts responsive.
+        var wheelAccum = 0;
+        var wheelRaf = null;
+        function flushWheel() {
+          wheelRaf = null;
+          var dy = wheelAccum;
+          wheelAccum = 0;
+          if (dy !== 0) window.assistantLite.screenshot.pinZoom(dy);
+        }
+        container.addEventListener('wheel', function (e) {
+          e.preventDefault();
+          wheelAccum += e.deltaY;
+          if (wheelRaf === null) wheelRaf = requestAnimationFrame(flushWheel);
+        }, { passive: false });
+
+        // 4. Manual window drag — batch per animation frame to avoid IPC flooding.
+        //    Can't use -webkit-app-region: drag because it would swallow wheel events.
+        var dragging = false;
+        var lastX = 0, lastY = 0;
+        var pendingX = 0, pendingY = 0;
+        var dragRaf = null;
+
+        function flushDrag() {
+          dragRaf = null;
+          if (pendingX !== 0 || pendingY !== 0) {
+            window.assistantLite.screenshot.pinMove(pendingX, pendingY);
+            pendingX = 0;
+            pendingY = 0;
+          }
+        }
+
+        container.addEventListener('mousedown', function (e) {
+          if (e.button !== 0) return;
+          dragging = true;
+          lastX = e.screenX;
+          lastY = e.screenY;
+          e.preventDefault();
+        });
+
+        window.addEventListener('mousemove', function (e) {
+          if (!dragging) return;
+          var dx = e.screenX - lastX;
+          var dy = e.screenY - lastY;
+          if (dx === 0 && dy === 0) return;
+          lastX = e.screenX;
+          lastY = e.screenY;
+          pendingX += dx;
+          pendingY += dy;
+          if (dragRaf === null) dragRaf = requestAnimationFrame(flushDrag);
+        });
+
+        window.addEventListener('mouseup', function () {
+          dragging = false;
+          if (dragRaf !== null) {
+            cancelAnimationFrame(dragRaf);
+            dragRaf = null;
+          }
+          flushDrag();
+        });
+
+        // 5. Right-click menu
+        container.addEventListener('contextmenu', function (e) {
+          e.preventDefault();
+          window.assistantLite.screenshot.pinMenu();
+        });
+      })();
+    </script>
   </body>
 </html>

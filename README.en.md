@@ -27,7 +27,7 @@ AIA Selection Assistant lives in your menu bar / system tray. Highlight some tex
 
 It also ships a built-in region screenshot tool: drag to select an area, annotate with pen or arrows (brush size is a quick slider away), then save as PNG, copy to clipboard, pin to the desktop, or hand the image straight to AI for vision-based analysis. Pinned screenshots support wheel zoom, drag-to-move, opacity tweaking, and a right-click menu to re-send them to AI.
 
-The result window is its own conversation — keep asking follow-ups, AI sees the earlier turns, and output streams in so you can interrupt any time. Flip on web search when you need fresh information; AI will fetch pages itself and cite the sources at the bottom of the answer.
+The result window is its own conversation — keep asking follow-ups, AI sees the earlier turns, and output streams in so you can interrupt any time. The standalone chat window goes further: multi-topic history is saved locally and can be switched, deleted, or exported to Markdown in one click; long conversations are automatically compacted into a structured recap so context stays bounded. There is also an Agent mode — the model can read/write files and run commands, with every tool call individually approved (dangerous commands always require confirmation, catastrophic ones are blocked outright) and file changes revertible in one click. The extensions panel hooks up memory, Skills, and MCP servers. Flip on web search when you need fresh information; AI will fetch pages itself and cite the sources at the bottom of the answer.
 
 For models you can point it at either **OpenAI-compatible** endpoints (your own endpoint, OpenAI, DeepSeek, Moonshot, Zhipu, any third-party proxy) or the **Anthropic** API. Multiple templates let you swap endpoint / key / model in one click, and individual actions can bind to a specific template. API keys stay on disk. Light / dark / system theme modes are supported, the UI ships in English and Chinese, and the result window's default size, font family, and font size can be customized.
 
@@ -59,8 +59,10 @@ For older versions and full asset lists, see [GitHub Releases](https://github.co
 - Electron desktop app for macOS and Windows
 - Floating toolbar appears after text selection
 - System TTS can read selected text aloud on macOS and Windows
-- Built-in region screenshot: pin to desktop, copy, save, or hand it to AI for image understanding
-- Standalone AI chat window with multi-turn context and streaming follow-ups
+- Built-in region screenshot: pin to desktop, copy, save, or hand it to AI vision (with a dedicated vision model setting)
+- Standalone AI chat window: multi-topic history, automatic long-chat compaction, Markdown export
+- Agent mode: file read/write and command tools with per-call approval, tiered dangerous-command gating, and revertible edits
+- Extension system: memory, Skills, MCP servers, and a permissions mode
 - Multiple API templates, with per-action model template and reasoning intensity
 - Custom actions: add, rename, change icons, edit prompts, reorder, and delete
 - Per-action input shortcuts: press a shortcut, type text, and run that action directly
@@ -110,10 +112,20 @@ For older versions and full asset lists, see [GitHub Releases](https://github.co
 ### AI Chat and Follow-up
 
 - Dedicated chat window, decoupled from the toolbar's one-shot result popup
-- Multi-turn context: keep asking follow-ups and the model sees the previous turns
+- Multi-topic history: persisted locally, switchable and deletable, and any topic can be exported to Markdown (written straight into Downloads and revealed in Explorer)
+- Automatic compaction: earlier turns are summarized by an LLM into a structured recap, with an optional dedicated compaction model and an on-screen progress hint
 - Streaming output, rendered as it arrives, with interrupt support at any time
 - Markdown code blocks include a copy button and wrap long lines
-- The window can be pinned on top; closing it destroys the session so context never leaks
+- The window can be pinned on top
+
+### Agent Mode and Extensions
+
+- In Agent mode the model can use built-in tools: read/write/edit files (with bulk replace), run commands, list directories, and more
+- Every tool call pauses for approval; "always allow" can be granted per session
+- Three-tier command risk gating: catastrophic commands (e.g. `rm -rf /`, `format c:`) are blocked unconditionally; dangerous ones (e.g. `rm`, `git reset --hard`) always require confirmation in any mode
+- File mutations are snapshotted to disk, so a single tool edit can be reverted even after an app restart
+- Extensions panel: memory (writes need confirmation), Skills, MCP servers (tool calls always need confirmation), and a permissions tab with an optional full-access mode that never bypasses the danger gates
+- Feature models: dedicated models for vision and compaction, plus per-action model overrides
 
 ## Platform Notes
 

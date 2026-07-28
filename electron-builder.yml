@@ -13,6 +13,10 @@ extraResources:
     to: build/icon.png
 asarUnpack:
   - node_modules/selection-hook/**
+electronLanguages:
+  - zh-CN
+  - en-US
+  - en-GB
 mac:
   icon: build/icon.icns
   category: public.app-category.productivity
@@ -27,6 +31,7 @@ dmg:
   artifactName: AIA-Selection-Assistant-${version}-${arch}.${ext}
 win:
   icon: build/icon.ico
+  forceCodeSigning: false
   target:
     - target: nsis
       arch:

@@ -5,6 +5,14 @@ import { resolve } from 'node:path'
 export default defineConfig({
   main: {
     plugins: [externalizeDepsPlugin()],
+    build: {
+      rollupOptions: {
+        output: {
+          format: 'cjs',
+          entryFileNames: '[name].cjs'
+        }
+      }
+    },
     resolve: {
       alias: {
         '@main': resolve('src/main'),
@@ -14,6 +22,14 @@ export default defineConfig({
   },
   preload: {
     plugins: [externalizeDepsPlugin()],
+    build: {
+      rollupOptions: {
+        output: {
+          format: 'cjs',
+          entryFileNames: '[name].cjs'
+        }
+      }
+    },
     resolve: {
       alias: {
         '@shared': resolve('src/shared')
@@ -22,6 +38,14 @@ export default defineConfig({
   },
   renderer: {
     plugins: [react()],
+    // Pin the dev server to IPv4. Without this, "localhost" may bind to ::1
+    // (IPv6) while Electron resolves it to 127.0.0.1 — the window then loads
+    // a blank page with ERR_CONNECTION_REFUSED, seemingly at random.
+    server: {
+      host: '127.0.0.1',
+      port: 5173,
+      strictPort: true
+    },
     resolve: {
       alias: {
         '@renderer': resolve('src/renderer'),
@@ -32,12 +56,9 @@ export default defineConfig({
       rollupOptions: {
         input: {
           settings: resolve(__dirname, 'src/renderer/settings.html'),
-          selectionToolbar: resolve(__dirname, 'src/renderer/selectionToolbar.html'),
           selectionAction: resolve(__dirname, 'src/renderer/selectionAction.html'),
-          screenshotOverlay: resolve(__dirname, 'src/renderer/screenshotOverlay.html'),
-          screenshotPreview: resolve(__dirname, 'src/renderer/screenshotPreview.html'),
-          screenshotPin: resolve(__dirname, 'src/renderer/screenshotPin.html'),
-          chat: resolve(__dirname, 'src/renderer/chat.html')
+          selectionToolbar: resolve(__dirname, 'src/renderer/selectionToolbar.html'),
+          screenshotOverlay: resolve(__dirname, 'src/renderer/screenshotOverlay.html')
         }
       }
     }

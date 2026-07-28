@@ -1,7 +1,5 @@
-import type { AppLanguage, ProviderSettings } from '@shared/types'
-import { Client } from '@modelcontextprotocol/sdk/client/index.js'
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
-import { normalizeBaseUrl, type ProviderFetch } from './OpenAICompatibleClient'
+import type { AppLanguage } from '@shared/types'
+import type { ProviderFetch } from './OpenAICompatibleClient'
 
 export interface ExaResult {
   title?: string
@@ -13,7 +11,71 @@ export interface ExaResult {
 
 const EXA_MCP_URL = 'https://mcp.exa.ai/mcp'
 const EXA_TOOL_NAME = 'web_search_exa'
-const ANTHROPIC_VERSION = '2023-06-01'
+
+// ---- Minimal MCP JSON-RPC client (replaces @modelcontextprotocol/sdk) ----
+
+interface McpResponse {
+  result?: unknown
+  error?: { message?: string }
+}
+
+async function mcpJsonRpc(
+  url: string,
+  body: Record<string, unknown>,
+  signal: AbortSignal,
+  fetcher: ProviderFetch,
+  sessionId?: string
+): Promise<{ data: McpResponse; sessionId?: string }> {
+  const headers: Record<string, string> = {
+    'content-type': 'application/json',
+    accept: 'application/json, text/event-stream'
+  }
+  if (sessionId) headers['mcp-session-id'] = sessionId
+
+  const response = await fetcher(url, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(body),
+    signal
+  })
+  if (!response.ok) throw new Error(`MCP request failed (${response.status})`)
+
+  const newSessionId = response.headers.get('mcp-session-id') ?? sessionId
+  const contentType = response.headers.get('content-type') ?? ''
+
+  let data: McpResponse
+  if (contentType.includes('text/event-stream')) {
+    // Parse SSE: extract first `data:` JSON payload
+    const text = await response.text()
+    let parsed: McpResponse | undefined
+    for (const line of text.split('\n')) {
+      if (line.startsWith('data: ')) {
+        try {
+          parsed = JSON.parse(line.slice(6))
+          break
+        } catch {
+          // skip malformed line
+        }
+      }
+    }
+    data = parsed ?? {}
+  } else {
+    const text = await response.text()
+    if (!text.trim()) {
+      data = {}
+    } else {
+      try {
+        data = JSON.parse(text) as McpResponse
+      } catch {
+        data = {}
+      }
+    }
+  }
+
+  return { data, sessionId: newSessionId }
+}
+
+// ---- Exa search result parsing (unchanged) ----
 
 interface McpToolContent {
   type?: string
@@ -30,8 +92,6 @@ function parseExaToolText(text: string): ExaResult[] {
   if (!text) return []
   const trimmed = text.trim()
   if (!trimmed) return []
-  // The Exa MCP returns either a JSON object/array or pre-formatted markdown.
-  // We try JSON first, then fall back to a single text blob.
   try {
     const parsed = JSON.parse(trimmed)
     const results: unknown =
@@ -62,44 +122,146 @@ function parseExaToolText(text: string): ExaResult[] {
   }
 }
 
-export async function searchExa(query: string, signal: AbortSignal, numResults = 10): Promise<ExaResult[]> {
-  const transport = new StreamableHTTPClientTransport(new URL(EXA_MCP_URL))
-  const client = new Client(
-    { name: 'aia-selection-assistant', version: '0.2.0' },
-    { capabilities: {} }
-  )
-  try {
-    await client.connect(transport)
-    if (signal.aborted) throw new DOMException('Aborted', 'AbortError')
+// ---- Public API (signature unchanged) ----
 
-    const result = (await client.callTool({
-      name: EXA_TOOL_NAME,
-      arguments: { query, numResults }
-    })) as McpToolResultRaw
-    if (result.isError) throw new Error('Exa MCP returned an error result')
-
-    // Prefer structuredContent if provided, else collect all text blocks.
-    if (
-      result.structuredContent &&
-      typeof result.structuredContent === 'object' &&
-      result.structuredContent !== null
-    ) {
-      const sc = result.structuredContent as { results?: unknown }
-      if (Array.isArray(sc.results)) {
-        return parseExaToolText(JSON.stringify(sc.results))
+export async function searchExa(
+  query: string,
+  signal: AbortSignal,
+  numResults = 10,
+  fetcher: ProviderFetch = fetch
+): Promise<ExaResult[]> {
+  // Step 1: Initialize MCP session
+  const { sessionId } = await mcpJsonRpc(
+    EXA_MCP_URL,
+    {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: {
+        protocolVersion: '2025-03-26',
+        capabilities: {},
+        clientInfo: { name: 'aia-selection-assistant', version: '0.2.0' }
       }
+    },
+    signal,
+    fetcher
+  )
+  if (signal.aborted) throw new DOMException('Aborted', 'AbortError')
+
+  // Step 2: Send initialized notification (fire-and-forget, no response expected)
+  await mcpJsonRpc(
+    EXA_MCP_URL,
+    {
+      jsonrpc: '2.0',
+      method: 'notifications/initialized'
+    },
+    signal,
+    fetcher,
+    sessionId
+  )
+  if (signal.aborted) throw new DOMException('Aborted', 'AbortError')
+
+  // Step 3: Call the web_search_exa tool
+  const { data } = await mcpJsonRpc(
+    EXA_MCP_URL,
+    {
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'tools/call',
+      params: {
+        name: EXA_TOOL_NAME,
+        arguments: { query, numResults }
+      }
+    },
+    signal,
+    fetcher,
+    sessionId
+  )
+
+  if (data.error) throw new Error(data.error.message ?? 'Exa MCP returned an error')
+  const result = data.result as McpToolResultRaw | undefined
+  if (!result) throw new Error('Exa MCP returned no result')
+  if (result.isError) throw new Error('Exa MCP returned an error result')
+
+  // Prefer structuredContent if provided, else collect all text blocks.
+  if (
+    result.structuredContent &&
+    typeof result.structuredContent === 'object' &&
+    result.structuredContent !== null
+  ) {
+    const sc = result.structuredContent as { results?: unknown }
+    if (Array.isArray(sc.results)) {
+      return parseExaToolText(JSON.stringify(sc.results))
     }
-    const textBlocks = (result.content ?? [])
-      .filter((block) => block.type === 'text' && typeof block.text === 'string')
-      .map((block) => block.text as string)
-      .join('\n')
-    return parseExaToolText(textBlocks)
-  } finally {
-    try {
-      await client.close()
-    } catch {
-      // ignore
+  }
+  const textBlocks = (result.content ?? [])
+    .filter((block) => block.type === 'text' && typeof block.text === 'string')
+    .map((block) => block.text as string)
+    .join('\n')
+  return parseExaToolText(textBlocks)
+}
+
+// ---- DuckDuckGo HTML fallback (no API key required) ----
+
+async function searchDuckDuckGo(
+  query: string,
+  signal: AbortSignal,
+  numResults = 8,
+  fetcher: ProviderFetch = fetch
+): Promise<ExaResult[]> {
+  const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`
+  const response = await fetcher(url, {
+    method: 'GET',
+    signal,
+    headers: { 'accept': 'text/html' }
+  })
+  if (!response.ok) throw new Error(`DuckDuckGo request failed (${response.status})`)
+  const html = await response.text()
+
+  const results: ExaResult[] = []
+  // Parse result blocks from DDG HTML
+  const blockRegex = /<div class="result[^"]*">([\s\S]*?)<\/div>\s*<\/div>/g
+  let match: RegExpExecArray | null
+  while ((match = blockRegex.exec(html)) !== null && results.length < numResults) {
+    const block = match[1]
+    const titleMatch = block.match(/<a[^>]*class="result__a"[^>]*>(.*?)<\/a>/)
+    const urlMatch = block.match(/<a[^>]*class="result__a"[^>]*href="([^"]*)"/)
+    const snippetMatch = block.match(/<a[^>]*class="result__snippet"[^>]*>(.*?)<\/a>/)
+
+    const title = titleMatch ? titleMatch[1].replace(/<[^>]*>/g, '').trim() : undefined
+    // DDG wraps URLs in a redirect; extract the actual URL
+    let href = urlMatch ? urlMatch[1] : ''
+    const uddgMatch = href.match(/uddg=([^&]+)/)
+    if (uddgMatch) {
+      try { href = decodeURIComponent(uddgMatch[1]) } catch { /* keep original */ }
     }
+    const snippet = snippetMatch ? snippetMatch[1].replace(/<[^>]*>/g, '').trim() : undefined
+
+    if (title || snippet) {
+      results.push({ title, url: href || undefined, text: snippet })
+    }
+  }
+  return results
+}
+
+/** Try Exa MCP first; fall back to DuckDuckGo HTML on failure. The fetcher
+ * should be Electron's net.fetch so requests honour the system proxy, exactly
+ * like provider requests do. */
+export async function searchWithFallback(
+  query: string,
+  signal: AbortSignal,
+  numResults = 10,
+  fetcher: ProviderFetch = fetch
+): Promise<ExaResult[]> {
+  try {
+    const results = await searchExa(query, signal, numResults, fetcher)
+    if (results.length > 0) return results
+    // Exa returned empty — try DDG
+    return await searchDuckDuckGo(query, signal, numResults, fetcher)
+  } catch (err) {
+    if (signal.aborted) throw err
+    console.warn('[web-search] Exa failed, falling back to DuckDuckGo:', err instanceof Error ? err.message : err)
+    return await searchDuckDuckGo(query, signal, numResults, fetcher)
   }
 }
 
@@ -108,7 +270,6 @@ export function formatSearchContext(query: string, results: ExaResult[], languag
   const isZh = language === 'zh-CN'
   const today = new Date().toISOString().slice(0, 10)
 
-  // Sort by recency when publishedDate is available so newer items render first.
   const sorted = [...results].sort((a, b) => {
     const ta = a.publishedDate ? Date.parse(a.publishedDate) : 0
     const tb = b.publishedDate ? Date.parse(b.publishedDate) : 0
@@ -133,145 +294,26 @@ export function formatSearchContext(query: string, results: ExaResult[], languag
   return `${header}\n\n${items}\n`
 }
 
-interface DecisionResult {
-  needsSearch: boolean
-  query: string
+// ---- Tool definition for MCP-style tool calling ----
+
+export interface WebSearchToolDefinition {
+  name: string
+  description: string
+  parameters: Record<string, unknown>
 }
 
-interface DecisionRequestOptions {
-  readonly fetcher?: ProviderFetch
-}
-
-const DECISION_SYSTEM = (language: AppLanguage) => {
-  const lang = language === 'zh-CN' ? 'Simplified Chinese' : 'English'
-  const today = new Date().toISOString().slice(0, 10)
-  return `Today's date is ${today}. You decide whether the user's request requires fresh, up-to-date, or external information that should be retrieved via web search BEFORE answering.
-
-Answer YES (needs_search=true) only when the request clearly depends on:
-- Current events, news, prices, weather, sports, or anything that changes over time
-- Specific facts that the user wants verified or sourced
-- Niche or recent topics where outdated info would be wrong
-
-Answer NO (needs_search=false) for:
-- Pure translation, rewriting, summarization, or explanation of provided text
-- General knowledge or reasoning that does not depend on recent data
-- Coding, math, or creative writing tasks
-
-Search query rules:
-- Do NOT bake any specific year (e.g. "2023", "2024") into the query unless the user explicitly asked about that year. Use words like "今日"/"最新"/"latest"/"current" to mean "today".
-- Keep the query concise (under ~12 words) and in ${lang}.
-
-Respond with ONLY a single JSON object on one line, no prose, no markdown, no code fences:
-{"needs_search": true | false, "query": "<concise search query in ${lang}, empty string if no search>"}`
-}
-
-function extractJsonObject(text: string): string | null {
-  const trimmed = text.trim()
-  if (trimmed.startsWith('{')) {
-    const end = trimmed.lastIndexOf('}')
-    if (end > 0) return trimmed.slice(0, end + 1)
-  }
-  const match = trimmed.match(/\{[\s\S]*\}/)
-  return match ? match[0] : null
-}
-
-function parseDecision(text: string): DecisionResult {
-  const fallback: DecisionResult = { needsSearch: false, query: '' }
-  const json = extractJsonObject(text)
-  if (!json) return fallback
-  try {
-    const parsed = JSON.parse(json) as { needs_search?: unknown; query?: unknown }
-    const needsSearch = parsed.needs_search === true
-    const query = typeof parsed.query === 'string' ? parsed.query.trim() : ''
-    if (!needsSearch || !query) return { needsSearch: false, query: '' }
-    return { needsSearch: true, query }
-  } catch {
-    return fallback
-  }
-}
-
-function normalizeAnthropicBaseUrl(baseUrl: string): string {
-  return normalizeBaseUrl(baseUrl).replace(/\/v1(?:\/messages|\/models)?$/i, '')
-}
-
-function fetchProvider(url: string, init: RequestInit, options: DecisionRequestOptions = {}): Promise<Response> {
-  return (options.fetcher ?? fetch)(url, init)
-}
-
-async function callProviderForDecision(
-  provider: ProviderSettings,
-  systemPrompt: string,
-  userText: string,
-  signal: AbortSignal,
-  options: DecisionRequestOptions = {}
-): Promise<string> {
-  if (provider.apiType === 'anthropic') {
-    const base = normalizeAnthropicBaseUrl(provider.baseUrl)
-    const response = await fetchProvider(
-      `${base}/v1/messages`,
-      {
-        method: 'POST',
-        signal,
-        headers: {
-          'content-type': 'application/json',
-          'x-api-key': provider.apiKey,
-          'anthropic-version': ANTHROPIC_VERSION
-        },
-        body: JSON.stringify({
-          model: provider.model,
-          temperature: 0,
-          max_tokens: 120,
-          system: systemPrompt,
-          messages: [{ role: 'user', content: userText }]
-        })
-      },
-      options
-    )
-    if (!response.ok) throw new Error(`Provider decision failed (${response.status})`)
-    const data = (await response.json()) as { content?: Array<{ type?: string; text?: string }> }
-    const text = data.content?.find((block) => block.type === 'text')?.text ?? ''
-    return text
-  }
-  const url = `${normalizeBaseUrl(provider.baseUrl)}/chat/completions`
-  const response = await fetchProvider(
-    url,
-    {
-      method: 'POST',
-      signal,
-      headers: {
-        'content-type': 'application/json',
-        authorization: `Bearer ${provider.apiKey}`
-      },
-      body: JSON.stringify({
-        model: provider.model,
-        temperature: 0,
-        max_completion_tokens: 120,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userText }
-        ]
-      })
+export const webSearchTool: WebSearchToolDefinition = {
+  name: 'web_search',
+  description:
+    'Search the web for current, up-to-date information. Use this when the user asks about recent events, news, prices, weather, sports, or any topic that requires fresh data. Do not use for translation, summarization, or general knowledge.',
+  parameters: {
+    type: 'object',
+    properties: {
+      query: {
+        type: 'string',
+        description: 'The search query. Keep it concise (under ~12 words).'
+      }
     },
-    options
-  )
-  if (!response.ok) throw new Error(`Provider decision failed (${response.status})`)
-  const data = (await response.json()) as {
-    choices?: Array<{ message?: { content?: string } }>
+    required: ['query']
   }
-  return data.choices?.[0]?.message?.content ?? ''
-}
-
-export async function decideSearch(
-  provider: ProviderSettings,
-  userText: string,
-  language: AppLanguage,
-  signal: AbortSignal,
-  options: DecisionRequestOptions = {}
-): Promise<DecisionResult> {
-  if (!userText.trim() || !provider.apiKey.trim() || !provider.model.trim()) {
-    return { needsSearch: false, query: '' }
-  }
-  const systemPrompt = DECISION_SYSTEM(language)
-  const raw = await callProviderForDecision(provider, systemPrompt, userText, signal, options)
-  return parseDecision(raw)
 }
