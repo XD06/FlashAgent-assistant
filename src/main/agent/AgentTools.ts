@@ -6,6 +6,9 @@ import { isWin } from '../platform'
 import type { ToolDefinition } from '../ai/OpenAICompatibleClient'
 
 const MAX_READ_LINES = 2000
+// Reading loads the whole file into a string first — cap the size so the
+// model cannot ask for a multi-GB file and balloon main-process memory.
+const MAX_READ_FILE_SIZE = 10 * 1024 * 1024
 const MAX_LIST_ENTRIES = 500
 const MAX_COMMAND_OUTPUT = 10_000
 const DEFAULT_COMMAND_TIMEOUT_MS = 60_000
@@ -54,6 +57,24 @@ export function resolveAgentPath(workingDir: string, inputPath: string): string 
   return isAbsolute(expanded) ? resolve(expanded) : resolve(workingDir, expanded)
 }
 
+let cachedBashPath: string | null | undefined
+/** Locate Git Bash on Windows; returns null when unavailable (fallback: pwsh). */
+function findGitBash(): string | null {
+  if (cachedBashPath !== undefined) return cachedBashPath
+  const candidates = [
+    process.env.ProgramFiles ? resolve(process.env.ProgramFiles, 'Git', 'bin', 'bash.exe') : '',
+    process.env['ProgramFiles(x86)'] ? resolve(process.env['ProgramFiles(x86)'], 'Git', 'bin', 'bash.exe') : '',
+    process.env.LOCALAPPDATA ? resolve(process.env.LOCALAPPDATA, 'Programs', 'Git', 'bin', 'bash.exe') : '',
+    // Custom install location: derive from the Git\cmd entry on PATH.
+    ...(process.env.PATH ?? '')
+      .split(';')
+      .filter((entry) => /[\\/]Git[\\/]cmd[\\/]?$/i.test(entry.trim()))
+      .map((entry) => resolve(entry.trim(), '..', 'bin', 'bash.exe'))
+  ].filter(Boolean)
+  cachedBashPath = candidates.find((candidate) => existsSync(candidate)) ?? null
+  return cachedBashPath
+}
+
 export const agentToolDefinitions: ToolDefinition[] = [
   {
     name: 'read_file',
@@ -84,7 +105,7 @@ export const agentToolDefinitions: ToolDefinition[] = [
   {
     name: 'edit_file',
     description:
-      'Replace an exact text snippet in a file. old_text must match exactly once — include enough surrounding lines to make it unique. Set replace_all to true to replace every occurrence instead.',
+      'Replace an exact text snippet in a file. old_text must match exactly once — include enough surrounding lines to make it unique. Set replace_all to true to replace every occurrence instead. Matching tolerates line-ending (CRLF/LF) and trailing-whitespace differences, but indentation must match exactly.',
     parameters: {
       type: 'object',
       properties: {
@@ -110,13 +131,13 @@ export const agentToolDefinitions: ToolDefinition[] = [
   {
     name: 'search_files',
     description:
-      'Recursively search for files by name glob and/or line content regex. Returns "path:line: snippet" matches. Much cheaper than reading files one by one — prefer this to locate code.',
+      'Recursively search for files by name glob and/or line content regex. Returns "path:line: snippet" matches. Much cheaper than reading files one by one — prefer this to locate code. You MUST provide at least one of "glob" or "pattern" (or both).',
     parameters: {
       type: 'object',
       properties: {
         path: { type: 'string', description: 'Directory to search. Defaults to the working directory.' },
-        glob: { type: 'string', description: 'Filename glob like "*.ts" or "config.*". Optional.' },
-        pattern: { type: 'string', description: 'Case-insensitive regex matched against each line. Optional, but glob or pattern is required.' },
+        glob: { type: 'string', description: 'Filename glob like "*.ts" or "config.*". Optional, but at least one of glob/pattern is required.' },
+        pattern: { type: 'string', description: 'Case-insensitive regex matched against each line. Optional, but at least one of glob/pattern is required.' },
         max_results: { type: 'number', description: 'Max matches to return. Default 50, max 200.' }
       },
       required: []
@@ -124,8 +145,12 @@ export const agentToolDefinitions: ToolDefinition[] = [
   },
   {
     name: 'run_command',
+    // Tell the model which shell it actually gets: Git Bash when installed,
+    // PowerShell otherwise (bash syntax like `grep`/`&&` would fail there).
     description:
-      'Run a shell command in the working directory (Git Bash on Windows, bash elsewhere). Returns stdout+stderr, truncated to 10KB. Not interactive.',
+      `Run a shell command in the working directory (${
+        isWin ? (findGitBash() ? 'Git Bash' : 'PowerShell — use PowerShell syntax, not bash') : 'bash'
+      }). Returns stdout+stderr, truncated to 10KB. Not interactive.`,
     parameters: {
       type: 'object',
       properties: {
@@ -143,6 +168,12 @@ function asString(value: unknown): string {
 
 async function readFileTool(workingDir: string, args: Record<string, unknown>): Promise<string> {
   const filePath = resolveAgentPath(workingDir, asString(args.path))
+  const stat = await fs.stat(filePath)
+  if (stat.size > MAX_READ_FILE_SIZE) {
+    throw new Error(
+      `File is too large to read (${Math.round(stat.size / 1024 / 1024)} MB, limit ${MAX_READ_FILE_SIZE / 1024 / 1024} MB): ${filePath}`
+    )
+  }
   const raw = await fs.readFile(filePath, 'utf8')
   const lines = raw.split(/\r?\n/)
   const offset = Math.max(1, typeof args.offset === 'number' ? Math.floor(args.offset) : 1)
@@ -151,7 +182,8 @@ async function readFileTool(workingDir: string, args: Record<string, unknown>): 
   const numbered = slice.map((line, i) => `${offset + i}→${line}`).join('\n')
   const remaining = lines.length - (offset - 1 + slice.length)
   const suffix = remaining > 0 ? `\n... (${remaining} more lines, total ${lines.length})` : ''
-  return `${filePath} (lines ${offset}-${offset + slice.length - 1} of ${lines.length}):\n${numbered}${suffix}`
+  // EOL tag so the model knows what to expect before writing an edit_file old_text.
+  return `${filePath} (lines ${offset}-${offset + slice.length - 1} of ${lines.length}, ${detectEol(raw)}):\n${numbered}${suffix}`
 }
 
 async function writeFileTool(workingDir: string, args: Record<string, unknown>): Promise<string> {
@@ -192,6 +224,44 @@ function findFlexibleMatches(raw: string, oldText: string): MatchRange[] {
   return ranges
 }
 
+/** Last-resort match: additionally tolerate trailing whitespace at the end of
+ * each line — editors strip it, models add it, and the mismatch is invisible
+ * in any rendering. Leading indentation stays significant: it carries meaning
+ * and relaxing it invites wrong-place matches. */
+function findWhitespaceTolerantMatches(raw: string, oldText: string): MatchRange[] {
+  const source = escapeRegExp(oldText)
+    .replace(/[ \t]*(?:\r\n|\r|\n)/g, '[ \\t]*\\r?\\n')
+    .replace(/[ \t]*$/, '[ \\t]*')
+  const pattern = new RegExp(source, 'g')
+  const ranges: MatchRange[] = []
+  for (let match = pattern.exec(raw); match; match = pattern.exec(raw)) {
+    ranges.push({ start: match.index, end: match.index + match[0].length })
+  }
+  return ranges
+}
+
+function detectEol(raw: string): 'CRLF' | 'LF' {
+  return raw.includes('\r\n') ? 'CRLF' : 'LF'
+}
+
+/** Actionable diagnosis for a failed edit_file match — point the model at the
+ * closest spot instead of sending it off to blindly re-read the whole file. */
+function buildEditFailureHint(raw: string, oldText: string, fileName: string): string {
+  const eol = detectEol(raw)
+  const fileLines = raw.split(/\r?\n/)
+  const oldLines = oldText.split(/\r?\n/)
+  const firstLine = oldLines.map((line) => line.trim()).find((line) => line.length > 0)
+  if (firstLine) {
+    const index = fileLines.findIndex((line) => line.trim() === firstLine || (firstLine.length >= 8 && line.includes(firstLine)))
+    if (index >= 0) {
+      const from = index + 1
+      const to = Math.min(fileLines.length, index + oldLines.length)
+      return `old_text not found in ${fileName} (file uses ${eol} line endings). Its first line appears at line ${from}, but the following lines diverge from the file — re-read lines ${from}-${to} and rebuild old_text from the actual content.`
+    }
+  }
+  return `old_text not found in ${fileName} (${fileLines.length} lines, ${eol} line endings) — re-read the file, or use search_files to locate the text first, then match the exact current content.`
+}
+
 /** Convert replacement text to the file's dominant line ending so a CRLF
  * file does not end up with mixed endings after a tolerant match. */
 function matchFileEol(text: string, raw: string): string {
@@ -206,15 +276,18 @@ async function editFileTool(workingDir: string, args: Record<string, unknown>): 
   const newText = asString(args.new_text)
   if (!oldText) throw new Error('old_text must not be empty')
   const raw = await fs.readFile(filePath, 'utf8')
-  // Exact byte match first; fall back to line-ending-tolerant matching.
+  // Tiered matching: exact bytes first, then line-ending tolerance, then
+  // trailing-whitespace tolerance — each tier only runs when the stricter
+  // one found nothing, so a clean match can never be shadowed.
   let ranges = findExactMatches(raw, oldText)
   let replacement = newText
   if (!ranges.length) {
     ranges = findFlexibleMatches(raw, oldText)
+    if (!ranges.length) ranges = findWhitespaceTolerantMatches(raw, oldText)
     if (ranges.length) replacement = matchFileEol(newText, raw)
   }
   if (!ranges.length) {
-    throw new Error(`old_text not found in ${basename(filePath)} — re-read the file and match the exact current content`)
+    throw new Error(buildEditFailureHint(raw, oldText, basename(filePath)))
   }
   if (ranges.length > 1 && args.replace_all !== true) {
     throw new Error(`old_text matches multiple locations (${ranges.length}) in ${basename(filePath)} — include more surrounding context to make it unique, or set replace_all to true`)
@@ -241,24 +314,6 @@ async function listDirTool(workingDir: string, args: Record<string, unknown>): P
     .sort()
   const suffix = entries.length > MAX_LIST_ENTRIES ? `\n... (${entries.length - MAX_LIST_ENTRIES} more entries)` : ''
   return `${dirPath}:\n${names.join('\n')}${suffix}`
-}
-
-let cachedBashPath: string | null | undefined
-/** Locate Git Bash on Windows; returns null when unavailable (fallback: pwsh). */
-function findGitBash(): string | null {
-  if (cachedBashPath !== undefined) return cachedBashPath
-  const candidates = [
-    process.env.ProgramFiles ? resolve(process.env.ProgramFiles, 'Git', 'bin', 'bash.exe') : '',
-    process.env['ProgramFiles(x86)'] ? resolve(process.env['ProgramFiles(x86)'], 'Git', 'bin', 'bash.exe') : '',
-    process.env.LOCALAPPDATA ? resolve(process.env.LOCALAPPDATA, 'Programs', 'Git', 'bin', 'bash.exe') : '',
-    // Custom install location: derive from the Git\cmd entry on PATH.
-    ...(process.env.PATH ?? '')
-      .split(';')
-      .filter((entry) => /[\\/]Git[\\/]cmd[\\/]?$/i.test(entry.trim()))
-      .map((entry) => resolve(entry.trim(), '..', 'bin', 'bash.exe'))
-  ].filter(Boolean)
-  cachedBashPath = candidates.find((candidate) => existsSync(candidate)) ?? null
-  return cachedBashPath
 }
 
 function runCommandTool(
@@ -294,7 +349,16 @@ function runCommandTool(
   return new Promise<string>((promiseResolve, promiseReject) => {
     const child = exec(
       execCommand,
-      { cwd: workingDir, timeout, maxBuffer: 1024 * 1024, windowsHide: true, ...(shell ? { shell } : {}) },
+      {
+        cwd: workingDir,
+        timeout,
+        maxBuffer: 1024 * 1024,
+        windowsHide: true,
+        // Force UTF-8 for piped Python output — on zh-CN Windows it defaults
+        // to GBK, which Node then mis-decodes as UTF-8 (mojibake).
+        env: { ...process.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' },
+        ...(shell ? { shell } : {})
+      },
       (error, stdout, stderr) => {
         const merged = [stdout, stderr].filter(Boolean).join('\n---stderr---\n').trim()
         const truncated =

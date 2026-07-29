@@ -114,6 +114,9 @@ export interface AppSettings {
   proxyUrl: string
   /** Model used to compress long chat history. Empty = current chat model. */
   compressModel: string
+  /** Chat context attention budget in tokens; compression triggers at 95%.
+   * Set to match the context window of the model in use. */
+  contextWindowTokens: number
   /** Model used for screenshot AI vision. Empty = current chat model. */
   visionModel: string
   /** Full-access mode: agent tools run without per-call approval; dangerous
@@ -195,11 +198,14 @@ export interface AiChunkPayload {
   requestId: string
   /** 'injected' confirms a queued user note was delivered into the running
    * tool loop — `text` carries the note verbatim. */
-  type: 'delta' | 'done' | 'error' | 'status' | 'reasoning' | 'tool' | 'injected'
+  type: 'delta' | 'done' | 'error' | 'status' | 'reasoning' | 'tool' | 'injected' | 'usage'
   text?: string
   reasoning?: string
   error?: string
   tool?: AgentToolEvent
+  /** Real token usage reported by the provider for the latest model request
+   * — promptTokens is the actual size of the context that was sent. */
+  usage?: { promptTokens: number; completionTokens: number }
 }
 
 export type SettingsPatch = Partial<Omit<AppSettings, 'provider' | 'shortcuts'>> & {

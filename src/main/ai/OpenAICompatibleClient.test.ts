@@ -5,6 +5,7 @@ import {
   normalizeBaseUrl,
   parseAnthropicStreamEvent,
   parseOpenAIStreamEvent,
+  parseUsageEvent,
   streamChatMessages,
   testModel,
   type AnthropicStreamBlock
@@ -69,6 +70,24 @@ describe('OpenAI-compatible stream parser', () => {
 
   it('returns null for done events', () => {
     expect(parseOpenAIStreamEvent('data: [DONE]\n\n')).toBeNull()
+  })
+
+  it('parses OpenAI usage from the trailing stream chunk', () => {
+    const event = 'data: {"choices":[],"usage":{"prompt_tokens":1234,"completion_tokens":56}}\n\n'
+    expect(parseUsageEvent('openai', event)).toEqual({ promptTokens: 1234, completionTokens: 56 })
+  })
+
+  it('returns null usage for delta chunks and done events', () => {
+    expect(parseUsageEvent('openai', 'data: {"choices":[{"delta":{"content":"hi"}}]}\n\n')).toBeNull()
+    expect(parseUsageEvent('openai', 'data: [DONE]\n\n')).toBeNull()
+  })
+
+  it('parses anthropic usage from message_start and message_delta events', () => {
+    const start =
+      'event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":2000,"output_tokens":1}}}\n\n'
+    expect(parseUsageEvent('anthropic', start)).toEqual({ promptTokens: 2000, completionTokens: 1 })
+    const delta = 'event: message_delta\ndata: {"type":"message_delta","usage":{"output_tokens":42}}\n\n'
+    expect(parseUsageEvent('anthropic', delta)).toEqual({ completionTokens: 42 })
   })
 
   it('parses anthropic text deltas from SSE events', () => {
@@ -201,6 +220,108 @@ describe('OpenAI-compatible stream parser', () => {
     await expect(testModel(provider)).rejects.toThrow('Provider request failed (401): bad key')
   })
 
+  // ---- Transient-failure retry ----
+  function rateLimitedResponse(retryAfterSeconds = 0): Response {
+    return new Response('rate limited', { status: 429, headers: { 'retry-after': String(retryAfterSeconds) } })
+  }
+
+  it('retries transient failures and succeeds without surfacing an error', async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(rateLimitedResponse())
+      .mockResolvedValueOnce(streamingTextResponse('OK'))
+    const deltas: string[] = []
+    const statuses: string[] = []
+
+    await streamChatMessages(
+      provider,
+      [{ role: 'user', text: 'hi' }],
+      'system',
+      new AbortController().signal,
+      (delta) => { if (delta.content) deltas.push(delta.content) },
+      'off',
+      { onStatus: (text) => statuses.push(text), retryNotice: 'retrying ({attempt}/{max})' }
+    )
+
+    expect(deltas).toEqual(['OK'])
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(statuses).toEqual(['retrying (1/3)'])
+  })
+
+  it('gives up after exhausting retries and throws the provider error', async () => {
+    // Fresh Response per attempt — a body can only be read once.
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => rateLimitedResponse())
+
+    await expect(
+      streamChatMessages(
+        provider,
+        [{ role: 'user', text: 'hi' }],
+        'system',
+        new AbortController().signal,
+        () => {},
+        'off'
+      )
+    ).rejects.toThrow('Provider request failed (429): rate limited')
+    // 1 initial attempt + 3 retries
+    expect(fetchMock).toHaveBeenCalledTimes(4)
+  })
+
+  it('does not retry non-transient errors like 401', async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response('bad key', { status: 401 }))
+
+    await expect(
+      streamChatMessages(
+        provider,
+        [{ role: 'user', text: 'hi' }],
+        'system',
+        new AbortController().signal,
+        () => {},
+        'off'
+      )
+    ).rejects.toThrow('Provider request failed (401): bad key')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('aborting during a retry wait stops immediately', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(rateLimitedResponse(20))
+    const controller = new AbortController()
+    setTimeout(() => controller.abort(), 30)
+
+    await expect(
+      streamChatMessages(
+        provider,
+        [{ role: 'user', text: 'hi' }],
+        'system',
+        controller.signal,
+        () => {},
+        'off'
+      )
+    ).rejects.toThrow(/abort/i)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('retries network-level fetch failures', async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockRejectedValueOnce(new TypeError('fetch failed'))
+      .mockResolvedValueOnce(streamingTextResponse('OK'))
+    const deltas: string[] = []
+
+    await streamChatMessages(
+      provider,
+      [{ role: 'user', text: 'hi' }],
+      'system',
+      new AbortController().signal,
+      (delta) => { if (delta.content) deltas.push(delta.content) },
+      'off'
+    )
+
+    expect(deltas).toEqual(['OK'])
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  }, 10_000)
+
   it('parses SSE events separated by CRLF blank lines', async () => {
     const encoder = new TextEncoder()
     const body = new ReadableStream({
@@ -226,6 +347,130 @@ describe('OpenAI-compatible stream parser', () => {
     )
 
     expect(deltas).toEqual(['foo', 'bar'])
+  })
+
+  // ---- Usage capture (P1-A) ----
+  function streamingTextWithUsageResponse(text: string): Response {
+    const encoder = new TextEncoder()
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode(`data: {"choices":[{"delta":{"content":"${text}"}}]}\n\n`))
+        controller.enqueue(
+          encoder.encode('data: {"choices":[],"usage":{"prompt_tokens":1234,"completion_tokens":56}}\n\n')
+        )
+        controller.enqueue(encoder.encode('data: [DONE]\n\n'))
+        controller.close()
+      }
+    })
+    return new Response(body, { status: 200 })
+  }
+
+  it('requests include_usage and reports usage from the trailing chunk', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(streamingTextWithUsageResponse('OK'))
+    const onUsage = vi.fn()
+    const deltas: string[] = []
+
+    await streamChatMessages(
+      provider,
+      [{ role: 'user', text: 'hi' }],
+      'system',
+      new AbortController().signal,
+      (delta) => { if (delta.content) deltas.push(delta.content) },
+      'off',
+      { onUsage }
+    )
+
+    expect(deltas).toEqual(['OK'])
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body)) as Record<string, unknown>
+    expect(body.stream_options).toEqual({ include_usage: true })
+    expect(onUsage).toHaveBeenCalledTimes(1)
+    expect(onUsage).toHaveBeenCalledWith({ promptTokens: 1234, completionTokens: 56 })
+  })
+
+  it('does not request include_usage when no onUsage listener is set', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(streamingTextResponse('OK'))
+
+    await streamChatMessages(
+      provider,
+      [{ role: 'user', text: 'hi' }],
+      'system',
+      new AbortController().signal,
+      () => {},
+      'off'
+    )
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body)) as Record<string, unknown>
+    expect('stream_options' in body).toBe(false)
+  })
+
+  it('drops stream_options and retries once when the server rejects it with 400', async () => {
+    // Fresh Response per attempt — a body can only be read once.
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockImplementationOnce(async () => new Response('unknown field stream_options', { status: 400 }))
+      .mockImplementationOnce(async () => streamingTextResponse('OK'))
+    const onUsage = vi.fn()
+    const deltas: string[] = []
+
+    await streamChatMessages(
+      provider,
+      [{ role: 'user', text: 'hi' }],
+      'system',
+      new AbortController().signal,
+      (delta) => { if (delta.content) deltas.push(delta.content) },
+      'off',
+      { onUsage }
+    )
+
+    expect(deltas).toEqual(['OK'])
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    const firstBody = JSON.parse(String(fetchMock.mock.calls[0][1]?.body)) as Record<string, unknown>
+    const secondBody = JSON.parse(String(fetchMock.mock.calls[1][1]?.body)) as Record<string, unknown>
+    expect(firstBody.stream_options).toEqual({ include_usage: true })
+    expect('stream_options' in secondBody).toBe(false)
+    // No usage chunk arrives without stream_options — nothing is reported.
+    expect(onUsage).not.toHaveBeenCalled()
+  })
+
+  it('anthropic requests skip stream_options but still report usage', async () => {
+    const encoder = new TextEncoder()
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          encoder.encode(
+            'event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":2000,"output_tokens":1}}}\n\n'
+          )
+        )
+        controller.enqueue(
+          encoder.encode(
+            'event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"type":"text_delta","text":"hi"}}\n\n'
+          )
+        )
+        controller.enqueue(
+          encoder.encode('event: message_delta\ndata: {"type":"message_delta","usage":{"output_tokens":42}}\n\n')
+        )
+        controller.close()
+      }
+    })
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(body, { status: 200 }))
+    const onUsage = vi.fn()
+    const deltas: string[] = []
+
+    await streamChatMessages(
+      anthropicProvider,
+      [{ role: 'user', text: 'hi' }],
+      'system',
+      new AbortController().signal,
+      (delta) => { if (delta.content) deltas.push(delta.content) },
+      'off',
+      { onUsage }
+    )
+
+    expect(deltas).toEqual(['hi'])
+    const requestBody = JSON.parse(String(fetchMock.mock.calls[0][1]?.body)) as Record<string, unknown>
+    expect('stream_options' in requestBody).toBe(false)
+    expect(onUsage).toHaveBeenCalledTimes(1)
+    expect(onUsage).toHaveBeenCalledWith({ promptTokens: 2000, completionTokens: 42 })
   })
 
   // ---- Tool-loop context control ----
@@ -276,9 +521,10 @@ describe('OpenAI-compatible stream parser', () => {
 
   it('stubs out tool results older than the recent-rounds window', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch')
-    // 7 rounds of tool calls, then a final plain-text reply. Round 0's
-    // result should be aged out by the time round 6 sends its request.
-    for (let i = 0; i < 7; i++) fetchMock.mockResolvedValueOnce(toolCallResponse(`call_${i}`))
+    // 25 rounds of tool calls, then a final plain-text reply. With a keep
+    // window of 25 rounds, round 0's result is first aged out by the check
+    // that runs just before the round-25 request goes out.
+    for (let i = 0; i < 25; i++) fetchMock.mockResolvedValueOnce(toolCallResponse(`call_${i}`))
     fetchMock.mockResolvedValueOnce(streamingTextResponse('done'))
 
     await streamChatMessages(
@@ -291,18 +537,61 @@ describe('OpenAI-compatible stream parser', () => {
       {
         tools: [toolDef],
         onToolCall: async () => 'y'.repeat(2_000),
-        maxToolRounds: 10
+        maxToolRounds: 30
       }
     )
 
-    const lastBody = JSON.parse(String(fetchMock.mock.calls[7][1]?.body)) as {
+    const lastBody = JSON.parse(String(fetchMock.mock.calls[25][1]?.body)) as {
       messages: Array<{ role: string; content: string }>
     }
     const toolMsgs = lastBody.messages.filter((m) => m.role === 'tool')
-    expect(toolMsgs.length).toBe(7)
-    // Oldest results are stubbed, the most recent ones stay verbatim.
-    expect(toolMsgs[0].content).toContain('trimmed to save context')
-    expect(toolMsgs[toolMsgs.length - 1].content).toBe('y'.repeat(2_000))
+    expect(toolMsgs.length).toBe(25)
+    // Every result keeps its identity prefix; the oldest is stubbed while the
+    // most recent stays verbatim after the prefix line.
+    expect(toolMsgs[0].content.startsWith('[tool:')).toBe(true)
+    expect(toolMsgs[0].content).toContain('trimmed')
+    const newest = toolMsgs[toolMsgs.length - 1].content
+    expect(newest.startsWith('[tool:')).toBe(true)
+    expect(newest).toContain('y'.repeat(2_000))
+  })
+
+  it('returns an actionable error to the model when tool arguments are not valid JSON', async () => {
+    const encoder = new TextEncoder()
+    const badArgsBody = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          encoder.encode(
+            'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_bad","function":{"name":"read_file","arguments":"{broken"}}]}}]}\n\n'
+          )
+        )
+        controller.close()
+      }
+    })
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(badArgsBody, { status: 200 }))
+      .mockResolvedValueOnce(streamingTextResponse('done'))
+    const onToolCall = vi.fn(async () => 'never called')
+
+    await streamChatMessages(
+      provider,
+      [{ role: 'user', text: 'read it' }],
+      'system',
+      new AbortController().signal,
+      () => {},
+      'off',
+      { tools: [toolDef], onToolCall, maxToolRounds: 3 }
+    )
+
+    // The tool must not run with a silently-empty argument object.
+    expect(onToolCall).not.toHaveBeenCalled()
+    const secondBody = JSON.parse(String(fetchMock.mock.calls[1][1]?.body)) as {
+      messages: Array<{ role: string; content: string; tool_call_id?: string }>
+    }
+    const toolMsg = secondBody.messages.find((m) => m.role === 'tool')
+    expect(toolMsg?.tool_call_id).toBe('call_bad')
+    expect(toolMsg?.content).toContain('Invalid tool call')
+    expect(toolMsg?.content).toContain('Re-issue the tool call with valid JSON arguments')
   })
 })
 

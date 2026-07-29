@@ -1,3 +1,4 @@
+import { exec } from 'node:child_process'
 import type { McpServerConfig, McpServerStatus } from '@shared/types'
 import type { ToolDefinition } from '../ai/OpenAICompatibleClient'
 import { buildMcpToolName, mcpConfigKey, parseEnvBlock, tokenizeCommand } from './mcpUtil'
@@ -24,6 +25,20 @@ interface ManagedServer {
 }
 
 const CALL_TIMEOUT_MS = 120_000
+
+/** Close a client and reap its process tree. On Windows stdio servers run
+ * behind a cmd.exe wrapper (see openClient); transport.close() only kills the
+ * wrapper, orphaning the actual server (npx → node …), so take the whole tree
+ * down by pid first while the parent is still alive. */
+function closeClient(client: Client): void {
+  const transport = client.transport as { pid?: number | null } | undefined
+  const pid = typeof transport?.pid === 'number' ? transport.pid : null
+  if (process.platform === 'win32' && pid !== null) {
+    exec(`taskkill /pid ${pid} /t /f`, () => void client.close().catch(() => undefined))
+    return
+  }
+  void client.close().catch(() => undefined)
+}
 
 let sdkPromise: Promise<{
   Client: typeof import('@modelcontextprotocol/sdk/client/index.js').Client
@@ -90,7 +105,7 @@ export class McpManager {
     const entry = this.servers.get(id)
     if (!entry) return
     this.servers.delete(id)
-    void entry.client?.close().catch(() => undefined)
+    if (entry.client) closeClient(entry.client)
   }
 
   private async connect(config: McpServerConfig): Promise<void> {
@@ -106,7 +121,7 @@ export class McpManager {
       const client = await this.openClient(config)
       // The server may have been removed/edited while we were connecting.
       if (this.servers.get(config.id) !== entry) {
-        void client.close().catch(() => undefined)
+        closeClient(client)
         return
       }
       const listed = await client.listTools()

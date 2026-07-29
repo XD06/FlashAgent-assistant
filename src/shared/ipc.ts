@@ -22,6 +22,7 @@ export const IPC = {
   AiListModels: 'ai:list-models',
   AiTestModel: 'ai:test-model',
   AiSummarize: 'ai:summarize',
+  AiNameTopic: 'ai:name-topic',
 
   AgentPickWorkingDir: 'agent:pick-working-dir',
   AgentApproveTool: 'agent:approve-tool',

@@ -97,6 +97,7 @@ export const defaultSettings: AppSettings = {
   webSearchEnabled: true,
   proxyUrl: '',
   compressModel: '',
+  contextWindowTokens: 128_000,
   visionModel: '',
   agentFullAccess: false,
   shortcuts: {

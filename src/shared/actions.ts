@@ -4,6 +4,8 @@ import type {
   ActionType,
   AppLanguage,
   AppSettings,
+  FilterMode,
+  McpServerConfig,
   ProviderApiType,
   ProviderSettings,
   ProviderTemplate,
@@ -103,6 +105,11 @@ export function mergeSettings(current: AppSettings, patch: SettingsPatch): AppSe
     ...rest,
     theme: normalizeThemeMode(rest.theme ?? current.theme),
     triggerMode: normalizeTriggerMode(rest.triggerMode ?? current.triggerMode),
+    filterMode: normalizeFilterMode(rest.filterMode ?? current.filterMode),
+    filterList: normalizeStringArray(rest.filterList ?? current.filterList),
+    mcpServers: normalizeMcpServers(rest.mcpServers ?? current.mcpServers),
+    disabledSkills: normalizeStringArray(rest.disabledSkills ?? current.disabledSkills),
+    linkedSkillDirs: normalizeStringArray(rest.linkedSkillDirs ?? current.linkedSkillDirs),
     webSearchEnabled:
       typeof rest.webSearchEnabled === 'boolean' ? rest.webSearchEnabled : current.webSearchEnabled,
     actionWindowWidth: clampInt(rest.actionWindowWidth ?? current.actionWindowWidth, 320, 1600, defaultSettings.actionWindowWidth),
@@ -135,6 +142,37 @@ function normalizeTriggerMode(mode: unknown): TriggerMode {
 function normalizeThemeMode(mode: unknown): ThemeMode {
   if (mode === 'light' || mode === 'dark') return mode
   return 'system'
+}
+
+function normalizeFilterMode(mode: unknown): FilterMode {
+  return mode === 'whitelist' || mode === 'blacklist' ? mode : 'default'
+}
+
+function normalizeStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
+}
+
+// A corrupted settings.json must not take the app down: every consumer of
+// mcpServers assumes a well-formed array (`.filter`, `.map` at boot), so
+// invalid entries are dropped here instead of crashing later.
+function normalizeMcpServers(value: unknown): McpServerConfig[] {
+  if (!Array.isArray(value)) return []
+  const result: McpServerConfig[] = []
+  for (const raw of value) {
+    if (!raw || typeof raw !== 'object') continue
+    const candidate = raw as Partial<McpServerConfig>
+    if (typeof candidate.id !== 'string' || !candidate.id.trim()) continue
+    result.push({
+      id: candidate.id,
+      name: typeof candidate.name === 'string' ? candidate.name : candidate.id,
+      transport: candidate.transport === 'http' ? 'http' : 'stdio',
+      command: typeof candidate.command === 'string' ? candidate.command : undefined,
+      env: typeof candidate.env === 'string' ? candidate.env : undefined,
+      url: typeof candidate.url === 'string' ? candidate.url : undefined,
+      enabled: candidate.enabled === true
+    })
+  }
+  return result
 }
 
 function normalizeProviderApiType(type: unknown): ProviderApiType {

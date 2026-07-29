@@ -768,6 +768,18 @@ function SettingsApp() {
                 onChange={(event) => update({ compressModel: event.target.value.trim() })}
               />
             </SettingRow>
+            <SettingRow title={t('contextWindow')} description={t('contextWindowDesc')}>
+              <input
+                type="number"
+                min={4000}
+                step={1000}
+                value={settings.contextWindowTokens}
+                onChange={(event) => {
+                  const value = Math.floor(Number(event.target.value))
+                  if (Number.isFinite(value) && value >= 4000) update({ contextWindowTokens: value })
+                }}
+              />
+            </SettingRow>
           </SettingSection>
 
           <SettingSection title={t('proxyGroup')}>

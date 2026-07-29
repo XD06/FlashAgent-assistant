@@ -11,6 +11,7 @@ import type { AgentToolEvent, AiStreamRequest, SettingsPatch } from '@shared/typ
 import { listModels, streamChatMessages, testModel, type ProviderFetch } from './ai/OpenAICompatibleClient'
 import { formatSearchContext, searchWithFallback, webSearchTool } from './ai/WebSearch'
 import { agentToolDefinitions, assessCommandRisk, executeAgentTool, requiresApproval, restoreSnapshot, snapshotForMutation, summarizeToolCall } from './agent/AgentTools'
+import { validateAgentToolArgs } from './agent/validateToolArgs'
 import { deleteSnapshot, loadSnapshot, saveSnapshot } from './agent/SnapshotStore'
 import { cancelApprovalsForRequest, resolveApproval, waitForApproval } from './agent/AgentSession'
 import { buildMemoryPrompt, ensureGlobalMemoryFile, getGlobalMemoryPath } from './memory'
@@ -110,8 +111,8 @@ function mainText(key: 'enable' | 'disable' | 'settings' | 'stopSpeech' | 'quit'
     quit: '退出'
   }
   const en = {
-    enable: 'Enable AIA Selection Assistant',
-    disable: 'Disable AIA Selection Assistant',
+    enable: 'Enable FlashAgent-assistant',
+    disable: 'Disable FlashAgent-assistant',
     settings: 'Settings',
     stopSpeech: 'Stop speaking',
     quit: 'Quit'
@@ -552,6 +553,14 @@ function registerIpc(): void {
         const sendTool = (patch: Partial<AgentToolEvent>): void => {
           sendChunk({ type: 'tool', tool: { callId, toolName: name, summary, ...diff, ...patch } })
         }
+        // Schema-validate before anything else: a malformed call must not
+        // reach the approval card or snapshotting — return an actionable
+        // error so the model corrects itself in the next round.
+        const invalid = validateAgentToolArgs(name, args)
+        if (invalid) {
+          sendTool({ state: 'error', result: invalid })
+          return `[Invalid tool call: ${invalid}]`
+        }
         // Risk gate: forbidden commands never run; dangerous ones always
         // pause for approval, even in full-access / always-allow mode.
         const risk = name === 'run_command' ? assessCommandRisk(String(args.command ?? '')) : 'safe'
@@ -665,6 +674,12 @@ function registerIpc(): void {
                 ? '⚠️ 已达到单次对话的最大工具调用轮次（任务尚未完成）。可回复“继续”让我接着做。'
                 : '⚠️ Reached the max tool-call rounds for one turn (task may be unfinished). Reply “continue” to keep going.'
               : undefined,
+          // Transient provider failures are retried inside the loop — surface
+          // each wait as a status line so it doesn't look like a hang.
+          retryNotice:
+            settings.language === 'zh-CN'
+              ? '⚠️ 连接波动，正在重试（{attempt}/{max}）…'
+              : '⚠️ Connection hiccup — retrying ({attempt}/{max})…',
           // Between tool rounds, hand queued user notes to the loop and tell
           // the renderer they were actually delivered (vs. left for fallback).
           drainInjected: () => {
@@ -683,6 +698,9 @@ function registerIpc(): void {
             if (toolName && toolName !== webSearchTool.name) return
             sendChunk({ type: 'status', text })
           },
+          // Real context size per request — renderer shows it and P1-B will
+          // trigger compression from it.
+          onUsage: (usage) => sendChunk({ type: 'usage', usage }),
           onToolCall: async (name: string, args: Record<string, unknown>) => {
             if (name === webSearchTool.name) {
               const query = typeof args.query === 'string' ? args.query : ''
@@ -786,10 +804,12 @@ function registerIpc(): void {
     return { ok: true }
   })
 
-  // Compress old chat history into a structured summary.
+  // Compress old chat history into a five-section "rework document" (P1-C)
+  // the next turn can resume from seamlessly.
   // Order: compressModel (if set) → retry once → fall back to the chat model
-  // passed by the renderer. Failures throw so the UI can keep compactRef and
-  // retry on the next completed turn (truncateForSend still caps payload size).
+  // passed by the renderer (its window certainly fits — we just talked to it).
+  // Failures throw so the renderer can surface the pre-send compaction as a
+  // normal request failure — no "send the uncompressed original" fallback.
   ipcMain.handle(IPC.AiSummarize, async (_event, payload: { text: string; model?: string }) => {
     if (typeof payload?.text !== 'string' || !payload.text.trim()) return ''
     const settings = getSettings()
@@ -802,13 +822,24 @@ function registerIpc(): void {
     if (!candidates.length) candidates.push(base.model)
 
     const systemPrompt = [
-      '你是对话历史压缩器。把给定的对话（可能包含一段已有摘要）合并压缩成一份结构化摘要，供后续对话作为上下文。',
-      '输出格式（缺的小节可省略）：',
-      '## 对话目标',
-      '## 关键信息与事实',
-      '## 已完成 / 已决定',
-      '## 待办与未决问题',
-      '要求：只保留对后续对话有用的内容；专有名词、数据、代码要点保留原文；用原对话的主要语言书写；总长不超过 800 字；直接输出摘要，不要寒暄。'
+      '你是对话历史压缩器。把给定的对话（可能包含一段已有摘要）合并压缩成一份「复工文档」，供后续对话作为上下文无缝接上任务。',
+      '固定输出以下五节结构（标题逐字使用，缺内容的小节写“无”，不得自创或省略标题）：',
+      '# 复工文档',
+      '## 1. 原始任务',
+      '用户最初的目标 + 后续修正/追加要求（逐条，保留用户原话中的关键限定）',
+      '## 2. 关键结论与事实',
+      '已确认的事实、决定、参数（列表；标识符/数值/命令逐字保留）',
+      '## 3. 涉及文件与当前状态',
+      '每行：`路径` — 已改/已读/待改 + 改动要点一行',
+      '## 4. 已尝试且失败的路径',
+      '踩过的坑与原因，避免重复（无则写“无”）',
+      '## 5. 下一步',
+      '接下来的具体动作 1–3 条（含进行到一半的操作及其断点）',
+      '要求：',
+      '- 文件路径、函数名、命令、数值逐字保留，禁止意译改写；',
+      '- 只记录实际发生的事，禁止把“计划做”写成“已做”；',
+      '- 「3. 涉及文件与当前状态」和「5. 下一步」优先级最高；字数紧张时先压「2」的叙述、再压「1」的历史修正过程，「3」「5」不让步；',
+      '- 用原对话的主要语言书写；总长不超过 3000 字；直接输出文档本体，不要寒暄或评论。'
     ].join('\n')
 
     const runOnce = async (model: string): Promise<string> => {
@@ -850,6 +881,56 @@ function registerIpc(): void {
     const message =
       lastError instanceof Error ? lastError.message : String(lastError ?? 'summarize failed')
     throw new Error(message)
+  })
+
+  // Best-effort topic naming: one short completion after the first round.
+  // Same model preference as summarize (compressModel → chat model), but
+  // failures return '' — the renderer keeps its truncated-message fallback.
+  ipcMain.handle(IPC.AiNameTopic, async (_event, payload: { text: string; model?: string }) => {
+    if (typeof payload?.text !== 'string' || !payload.text.trim()) return ''
+    const settings = getSettings()
+    const base = resolveProvider(settings, undefined)
+    const chatModel =
+      (typeof payload.model === 'string' && payload.model.trim()) || base.model
+    const compressModel = settings.compressModel.trim()
+    const candidates = [...new Set([compressModel, chatModel].filter(Boolean))]
+    if (!candidates.length) candidates.push(base.model)
+
+    const systemPrompt = [
+      '为给定的对话生成一个话题标题。',
+      '要求：',
+      '- 用对话的主要语言书写；',
+      '- 不超过 16 个字（英文不超过 6 个词）；',
+      '- 概括对话主题，名词短语优先，不带句号、引号或任何解释；',
+      '- 只输出标题本身。'
+    ].join('\n')
+
+    for (const model of candidates) {
+      const provider = { ...base, model }
+      let title = ''
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(), 20_000)
+      try {
+        await streamChatMessages(
+          provider,
+          [{ role: 'user', text: payload.text }],
+          systemPrompt,
+          controller.signal,
+          (delta) => {
+            if (delta.content) title += delta.content
+          },
+          'off',
+          { fetcher: providerFetch }
+        )
+      } catch {
+        // Best-effort: fall through to the next candidate model.
+      } finally {
+        clearTimeout(timeout)
+      }
+      const clean = title.trim()
+      if (clean) return clean
+    }
+    return ''
   })
 }
 

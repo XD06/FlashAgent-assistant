@@ -18,3 +18,9 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+
+# E2E 驱动脚本的构建产物（源码 run-e2e.ts 保留入库）
+sandbox-e2e/run-e2e.cjs
+
+# 个人笔记（不入库）
+使用bug.txt

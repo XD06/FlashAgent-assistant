@@ -224,7 +224,7 @@ export function ExtensionsPanel({ settings, isZh, workingDir, onClose }: Extensi
                 <span className="ext-panel__item-desc">{skill.description}</span>
                 {skill.linked && (
                   <button
-                    className="ext-panel__icon-btn"
+                    className="ext-panel__icon-btn ext-panel__icon-btn--danger"
                     title={isZh ? '取消链接（不会删除原文件夹）' : 'Unlink (folder is kept)'}
                     onClick={() => unlinkSkill(skill.id)}
                   >
@@ -301,7 +301,7 @@ export function ExtensionsPanel({ settings, isZh, workingDir, onClose }: Extensi
                     <Icon name="refresh-cw" size={12} />
                   </button>
                 )}
-                <button className="ext-panel__icon-btn" title={isZh ? '删除' : 'Remove'} onClick={() => removeServer(server.id)}>
+                <button className="ext-panel__icon-btn ext-panel__icon-btn--danger" title={isZh ? '删除' : 'Remove'} onClick={() => removeServer(server.id)}>
                   <Icon name="trash-2" size={12} />
                 </button>
                 <PillSwitch

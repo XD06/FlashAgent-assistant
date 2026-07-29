@@ -50,6 +50,73 @@ function fetchProvider(url: string, init: RequestInit, options: ProviderRequestO
   return (options.fetcher ?? fetch)(url, init)
 }
 
+// Transient provider failures (rate limits, gateway hiccups, dropped
+// connections) used to kill the whole conversation mid-task. Retry them with
+// exponential backoff — but only before the first streamed byte: once deltas
+// have reached the UI a replay could duplicate content, so mid-stream stalls
+// still fail fast.
+const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504])
+const RETRY_BACKOFF_MS = [1_000, 2_000, 4_000]
+const RETRY_AFTER_CAP_MS = 30_000
+
+function parseRetryAfter(header: string | null): number | null {
+  if (!header) return null
+  const seconds = Number(header)
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.min(seconds * 1000, RETRY_AFTER_CAP_MS)
+  const at = Date.parse(header)
+  if (!Number.isNaN(at)) return Math.min(Math.max(0, at - Date.now()), RETRY_AFTER_CAP_MS)
+  return null
+}
+
+function sleepUnlessAborted(ms: number, signal: AbortSignal | null | undefined): Promise<void> {
+  return new Promise((resolvePromise, rejectPromise) => {
+    if (signal?.aborted) {
+      rejectPromise(new DOMException('The operation was aborted.', 'AbortError'))
+      return
+    }
+    const onAbort = (): void => {
+      clearTimeout(timer)
+      rejectPromise(new DOMException('The operation was aborted.', 'AbortError'))
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort)
+      resolvePromise()
+    }, ms)
+    signal?.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
+/** fetchProvider with backoff on transient failures. Non-retryable responses
+ * (401, 400, ...) are returned as-is for the caller's !ok check; retryable
+ * ones are retried and, once attempts run out, thrown as a readable error. */
+async function fetchProviderWithRetry(
+  url: string,
+  init: RequestInit,
+  options: ProviderRequestOptions,
+  onRetryWait?: (waitMs: number, attempt: number, maxAttempts: number) => void
+): Promise<Response> {
+  const signal = init.signal as AbortSignal | null | undefined
+  for (let attempt = 0; ; attempt++) {
+    let failure: string
+    let retryAfterMs: number | null = null
+    try {
+      const response = await fetchProvider(url, init, options)
+      if (response.ok || !RETRYABLE_STATUS.has(response.status)) return response
+      failure = await readProviderError(response)
+      retryAfterMs = parseRetryAfter(response.headers.get('retry-after'))
+    } catch (error) {
+      // Abort is the user's call, never retried; anything else at the fetch
+      // layer is a network-level transient (ECONNRESET, dead proxy, ...).
+      if (signal?.aborted || (error instanceof Error && error.name === 'AbortError')) throw error
+      failure = error instanceof Error ? error.message : String(error)
+    }
+    if (attempt >= RETRY_BACKOFF_MS.length) throw new Error(failure)
+    const waitMs = retryAfterMs ?? RETRY_BACKOFF_MS[attempt]
+    onRetryWait?.(waitMs, attempt + 1, RETRY_BACKOFF_MS.length)
+    await sleepUnlessAborted(waitMs, signal)
+  }
+}
+
 function assertProviderReady(provider: ProviderSettings, requireModel = true): void {
   if (!provider.apiKey.trim()) {
     throw new AiConfigurationError('Missing API key. Open Settings and configure your API provider.')
@@ -144,6 +211,59 @@ function parseProviderStreamEvent(apiType: ProviderApiType, raw: string): Stream
   return apiType === 'anthropic' ? parseAnthropicStreamEvent(raw) : parseOpenAIStreamEvent(raw)
 }
 
+/** Real token usage reported by the provider for one model request. The
+ * newest promptTokens value is the actual size of the sent context — the
+ * ground truth token-driven compression will be built on (P1-A). */
+export interface TokenUsage {
+  promptTokens: number
+  completionTokens: number
+}
+
+/** Pull token usage out of a stream event. OpenAI-compatible servers append
+ * a final chunk carrying `usage` when stream_options.include_usage was
+ * requested; Anthropic always reports input_tokens in message_start and
+ * output_tokens in message_delta. Returns partials — callers merge. */
+export function parseUsageEvent(apiType: ProviderApiType, raw: string): Partial<TokenUsage> | null {
+  const lines = raw
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith('data:'))
+
+  for (const line of lines) {
+    const payload = line.slice(5).trim()
+    if (!payload || payload === '[DONE]') continue
+    try {
+      if (apiType === 'anthropic') {
+        const parsed = JSON.parse(payload) as {
+          type?: string
+          message?: { usage?: { input_tokens?: number; output_tokens?: number } }
+          usage?: { input_tokens?: number; output_tokens?: number }
+        }
+        const usage =
+          parsed.type === 'message_start' ? parsed.message?.usage : parsed.type === 'message_delta' ? parsed.usage : undefined
+        if (!usage) continue
+        const result: Partial<TokenUsage> = {}
+        if (typeof usage.input_tokens === 'number') result.promptTokens = usage.input_tokens
+        if (typeof usage.output_tokens === 'number') result.completionTokens = usage.output_tokens
+        if (Object.keys(result).length) return result
+      } else {
+        const parsed = JSON.parse(payload) as {
+          usage?: { prompt_tokens?: number; completion_tokens?: number } | null
+        }
+        if (!parsed.usage) continue
+        const result: Partial<TokenUsage> = {}
+        if (typeof parsed.usage.prompt_tokens === 'number') result.promptTokens = parsed.usage.prompt_tokens
+        if (typeof parsed.usage.completion_tokens === 'number') result.completionTokens = parsed.usage.completion_tokens
+        if (Object.keys(result).length) return result
+      }
+    } catch {
+      // Incomplete or malformed JSON chunk — skip silently
+      continue
+    }
+  }
+  return null
+}
+
 function parseDataUrl(dataUrl: string): { mediaType: string; data: string } | null {
   const match = /^data:([^;]+);base64,(.+)$/i.exec(dataUrl.trim())
   if (!match) return null
@@ -177,6 +297,43 @@ function buildAnthropicContent(message: AiMessageInput): unknown {
 
 // SSE events are separated by a blank line; some providers emit CRLF line endings.
 const SSE_EVENT_SEPARATOR = /\r?\n\r?\n/
+
+// Providers occasionally stall mid-stream (dead proxy, hung server): without
+// an idle timeout such a request never settles until the user aborts. Reading
+// through this helper also guarantees the body is cancelled on every exit
+// path, so the underlying connection is released even when a handler throws.
+const STREAM_IDLE_TIMEOUT_MS = 90_000
+
+async function readSseStream(body: ReadableStream<Uint8Array>, onEvent: (event: string) => void): Promise<void> {
+  const reader = body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  try {
+    while (true) {
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const idle = new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`Provider sent no data for ${STREAM_IDLE_TIMEOUT_MS / 1000}s — stream aborted.`)),
+          STREAM_IDLE_TIMEOUT_MS
+        )
+      })
+      let chunk: Awaited<ReturnType<typeof reader.read>>
+      try {
+        chunk = await Promise.race([reader.read(), idle])
+      } finally {
+        clearTimeout(timer)
+      }
+      if (chunk.done) break
+      buffer += decoder.decode(chunk.value, { stream: true })
+      const events = buffer.split(SSE_EVENT_SEPARATOR)
+      buffer = events.pop() ?? ''
+      for (const event of events) onEvent(event)
+    }
+    if (buffer.trim()) onEvent(buffer)
+  } finally {
+    void reader.cancel().catch(() => undefined)
+  }
+}
 
 // Anthropic requires max_tokens; give reasoning modes extra room so long
 // answers are not silently truncated.
@@ -247,6 +404,14 @@ interface ToolCallStreamOptions extends ProviderRequestOptions {
   /** Override temperature for the tool-calling loop (agent mode uses a low
    * value to reduce hallucinated tool calls). */
   agentTemperature?: number
+  /** Localized status-line template shown while a transient provider failure
+   * is being retried; "{attempt}" and "{max}" are substituted. */
+  retryNotice?: string
+  /** Real token usage per model request (OpenAI-compatible needs
+   * stream_options.include_usage — added automatically; Anthropic always
+   * reports). Fired once per request; in the tool loop that means once per
+   * round, each newer promptTokens superseding the last. */
+  onUsage?: (usage: TokenUsage) => void
 }
 
 // In-loop context control, mirroring the renderer's "keep the last ~5 rounds
@@ -257,7 +422,7 @@ const TOOL_RESULT_MAX_CHARS = 12_000
 /** Rounds whose tool results are kept verbatim; older ones become stubs.
  * Too small forgets files the model just read, forcing re-reads that burn
  * extra rounds — the re-read loop costs more than the retained context. */
-const TOOL_KEEP_RECENT_ROUNDS = 10
+const TOOL_KEEP_RECENT_ROUNDS = 25
 /** Length a stubbed-out old result is trimmed down to. */
 const TOOL_STUB_CHARS = 300
 
@@ -270,10 +435,31 @@ function capToolResult(content: string): string {
   return `${head}\n\n[... ${content.length - head.length - tail.length} chars truncated ...]\n\n${tail}`
 }
 
-/** Replace an aged-out result with a short stub of its beginning. */
+/** Identity prefix prepended to every tool result inside the loop so the
+ * model always knows which tool produced which output — even after stubbing. */
+function toolResultPrefix(name: string, args: Record<string, unknown>, ok: boolean): string {
+  // Compact arg summary: keep first 120 chars of the most informative keys.
+  // Deliberately excludes bulk-payload keys like `content` — a truncated file
+  // opening says nothing about identity and just wastes prefix budget.
+  const keys = ['path', 'command', 'query', 'glob', 'pattern']
+  const parts = keys
+    .filter((k) => typeof args[k] === 'string' && (args[k] as string).length > 0)
+    .map((k) => `${k}=${JSON.stringify((args[k] as string).slice(0, 80))}`)
+  const argSummary = parts.length ? parts.join(', ').slice(0, 120) : '…'
+  return `[tool: ${name}(${argSummary}) → ${ok ? 'ok' : 'error'}]\n`
+}
+
+/** Replace an aged-out result with a short stub. The identity prefix (first
+ * line, `[tool: ...]`) is always preserved so the model still knows which
+ * tool produced this result and whether it succeeded or failed. */
 function stubToolResult(content: string): string {
   if (content.length <= TOOL_STUB_CHARS) return content
-  return `${content.slice(0, TOOL_STUB_CHARS)}\n[... earlier tool output trimmed to save context — call the tool again if you need it ...]`
+  // Preserve the [tool: ...] prefix line if present.
+  const nlIdx = content.indexOf('\n')
+  const prefix = nlIdx > 0 && content.startsWith('[tool:') ? content.slice(0, nlIdx + 1) : ''
+  const body = prefix ? content.slice(prefix.length) : content
+  const budget = Math.max(60, TOOL_STUB_CHARS - prefix.length)
+  return `${prefix}${body.slice(0, budget)}\n[... earlier tool output trimmed — call the tool again if needed ...]`
 }
 
 /** Parse OpenAI streaming event for tool-call fragments. */
@@ -387,6 +573,48 @@ export async function streamChatMessages(
   const { tools, onToolCall, onStatus } = options
   const useToolCalling = !!(tools?.length && onToolCall)
 
+  const notifyRetry = (attempt: number, max: number): void => {
+    const template = options.retryNotice ?? '⚠️ Connection hiccup — retrying ({attempt}/{max})…'
+    onStatus?.(template.replace('{attempt}', String(attempt)).replace('{max}', String(max)))
+  }
+
+  // ---- Usage capture (P1-A) ----
+  // Ask OpenAI-compatible servers for a trailing usage chunk. Some reject
+  // unknown stream_options with a 400 — postChat drops the field, retries
+  // once, and stops asking for the rest of this request.
+  let wantUsage = !!options.onUsage && provider.apiType !== 'anthropic'
+  const postChat = async (
+    url: string,
+    body: Record<string, unknown>,
+    onRetryWait: (waitMs: number, attempt: number, maxAttempts: number) => void
+  ): Promise<Response> => {
+    if (wantUsage) body.stream_options = { include_usage: true }
+    const makeInit = (): RequestInit => ({
+      method: 'POST',
+      signal,
+      headers: buildProviderHeaders(provider),
+      body: JSON.stringify(body)
+    })
+    let response = await fetchProviderWithRetry(url, makeInit(), options, onRetryWait)
+    if (!response.ok && response.status === 400 && 'stream_options' in body) {
+      void response.body?.cancel().catch(() => undefined)
+      delete body.stream_options
+      wantUsage = false
+      response = await fetchProviderWithRetry(url, makeInit(), options, onRetryWait)
+    }
+    return response
+  }
+  const collectUsage = (event: string, acc: Partial<TokenUsage>): void => {
+    if (!options.onUsage) return
+    const usage = parseUsageEvent(provider.apiType, event)
+    if (usage) Object.assign(acc, usage)
+  }
+  const emitUsage = (acc: Partial<TokenUsage>): void => {
+    if (options.onUsage && typeof acc.promptTokens === 'number') {
+      options.onUsage({ promptTokens: acc.promptTokens, completionTokens: acc.completionTokens ?? 0 })
+    }
+  }
+
   // ---- Simple flow (no tools) — existing behaviour ----
   if (!useToolCalling) {
     const body: Record<string, unknown> =
@@ -416,32 +644,21 @@ export async function streamChatMessages(
           }
     applyReasoning(body, provider.apiType, reasoning)
 
-    const response = await fetchProvider(
+    const response = await postChat(
       buildProviderUrl(provider, provider.apiType === 'anthropic' ? 'messages' : 'chat/completions'),
-      { method: 'POST', signal, headers: buildProviderHeaders(provider), body: JSON.stringify(body) },
-      options
+      body,
+      (_waitMs, attempt, max) => notifyRetry(attempt, max)
     )
     if (!response.ok) throw new Error(await readProviderError(response))
     if (!response.body) throw new Error('Provider returned an empty response body.')
 
-    const reader = response.body.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ''
-    while (true) {
-      const { value, done } = await reader.read()
-      if (done) break
-      buffer += decoder.decode(value, { stream: true })
-      const events = buffer.split(SSE_EVENT_SEPARATOR)
-      buffer = events.pop() ?? ''
-      for (const event of events) {
-        const delta = parseProviderStreamEvent(provider.apiType, event)
-        if (delta) onDelta(delta)
-      }
-    }
-    if (buffer.trim()) {
-      const delta = parseProviderStreamEvent(provider.apiType, buffer)
+    const usageAcc: Partial<TokenUsage> = {}
+    await readSseStream(response.body, (event) => {
+      const delta = parseProviderStreamEvent(provider.apiType, event)
       if (delta) onDelta(delta)
-    }
+      collectUsage(event, usageAcc)
+    })
+    emitUsage(usageAcc)
     return
   }
 
@@ -458,6 +675,11 @@ export async function streamChatMessages(
   // long agent sessions otherwise accumulate every file read and command
   // output and eventually overflow the model context.
   const toolResultRefs: Array<{ round: number; shrink: () => void; shrunk?: boolean }> = []
+  // Mutating tools that actually ran (and weren't rejected) this turn. The
+  // hallucination guard cross-checks against this: a wrap-up summary after
+  // real edits is grounded and must not be flagged, while "I created/edited X"
+  // with zero mutations backing it is fabrication.
+  const executedMutatingTools = new Set<string>()
 
   // Build initial API messages array
   let apiMessages: unknown[]
@@ -525,21 +747,24 @@ export async function streamChatMessages(
           }
     applyReasoning(body, apiType, reasoning)
 
-    const response = await fetchProvider(
+    const response = await postChat(
       buildProviderUrl(provider, apiType === 'anthropic' ? 'messages' : 'chat/completions'),
-      { method: 'POST', signal, headers: buildProviderHeaders(provider), body: JSON.stringify(body) },
-      options
+      body,
+      (waitMs, attempt, max) => {
+        // Backoff waits are provider downtime, not model streaming — exempt
+        // them from the loop budget like tool-execution time.
+        toolTimeMs += waitMs
+        notifyRetry(attempt, max)
+      }
     )
     if (!response.ok) throw new Error(await readProviderError(response))
     if (!response.body) throw new Error('Provider returned an empty response body.')
 
     // Stream, forward deltas, and accumulate this round's content for the
     // assistant message we may need to send back with the tool results.
-    const reader = response.body.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ''
     const toolCallMap = new Map<number, AccumulatedToolCall>()
     const anthropicBlocks = new Map<number, AnthropicStreamBlock>()
+    const usageAcc: Partial<TokenUsage> = {}
     let roundText = ''
 
     const handleEvent = (event: string): void => {
@@ -548,6 +773,7 @@ export async function streamChatMessages(
         if (delta.content) roundText += delta.content
         onDelta(delta)
       }
+      collectUsage(event, usageAcc)
       if (apiType === 'anthropic') {
         extractAnthropicBlocks(event, anthropicBlocks)
       } else {
@@ -555,15 +781,8 @@ export async function streamChatMessages(
       }
     }
 
-    while (true) {
-      const { value, done } = await reader.read()
-      if (done) break
-      buffer += decoder.decode(value, { stream: true })
-      const events = buffer.split(SSE_EVENT_SEPARATOR)
-      buffer = events.pop() ?? ''
-      for (const event of events) handleEvent(event)
-    }
-    if (buffer.trim()) handleEvent(buffer)
+    await readSseStream(response.body, handleEvent)
+    emitUsage(usageAcc)
 
     const toolCalls: AccumulatedToolCall[] =
       apiType === 'anthropic'
@@ -584,9 +803,19 @@ export async function streamChatMessages(
           /(?:文件|file)\s*(?:已|has been)\s*(?:保存|更新|创建|saved|updated|created)/i,
           /```(?:diff|patch)\n[+-]/,
           /(?:Step|步骤)\s*\d+[.：:]\s*(?:✓|✅|Done|完成|已完成)/i,
+          // Model pasted file content with line-number arrows (read_file output
+          // format) into its text and pretended to be "writing code".
+          /\d+→.+\n\d+→/,
+          // Model says "I'm now writing/editing code" without a tool call.
+          /(?:我现在|开始|动手).*(?:编写|修改|创建|写入).*(?:代码|文件|code|file)/i,
+          /(?:now|let me|I'll|I will)\s+(?:write|edit|create|modify|implement)\s+(?:the|this)?\s*(?:code|file)/i,
         ]
         const looksHallucinated = hallucinationPatterns.some((p) => p.test(roundText))
-        if (looksHallucinated) {
+        // Cross-check against real executions: if a mutating tool actually ran
+        // this turn, the text is almost certainly a grounded wrap-up summary —
+        // warning there is a false positive that teaches users to ignore the
+        // guard. Fire only when the claimed work has no mutation backing it.
+        if (looksHallucinated && executedMutatingTools.size === 0) {
           const warn =
             options.roundLimitNotice?.includes('继续')
               ? '\n\n⚠️ 上述内容可能是计划描述而非实际执行结果。如需执行，请回复"执行"，我会用工具实际完成操作。'
@@ -635,23 +864,48 @@ export async function streamChatMessages(
     const toolResults: Array<{ id: string; content: string }> = []
     const execStart = Date.now()
     for (const tc of toolCalls) {
+      // Malformed arguments are returned to the model as an actionable tool
+      // result instead of silently running the tool with an empty object —
+      // the model fixes its own call in the next round.
       let args: Record<string, unknown> = {}
+      let parseError: string | null = null
       try {
-        args = JSON.parse(tc.arguments || '{}')
+        const parsed: unknown = JSON.parse(tc.arguments || '{}')
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          args = parsed as Record<string, unknown>
+        } else {
+          parseError = `arguments must be a JSON object, got ${Array.isArray(parsed) ? 'array' : typeof parsed}`
+        }
       } catch (e) {
-        console.warn('[tool-call] failed to parse arguments for', tc.name, ':', tc.arguments, e)
+        parseError = e instanceof Error ? e.message : String(e)
+      }
+      if (parseError) {
+        const raw = (tc.arguments || '').slice(0, 200)
+        toolResults.push({
+          id: tc.id,
+          content: `[tool: ${tc.name}(INVALID_ARGS) → error]\n[Invalid tool call: arguments for ${tc.name} is not a valid JSON object (${parseError}). Raw: ${JSON.stringify(raw)}. Re-issue the tool call with valid JSON arguments.]`
+        })
+        continue
       }
 
       try {
         onStatus?.(typeof args.query === 'string' ? args.query : tc.name, tc.name)
         const result = await onToolCall!(tc.name, args)
-        toolResults.push({ id: tc.id, content: result })
+        // Register real mutations (name-based so MCP write tools count too);
+        // a user-rejected call returned as text is not a mutation.
+        if (
+          /write|edit|create|delet|remove|run|exec|command|save|updat|patch|apply|move|rename|mkdir/i.test(tc.name) &&
+          !result.startsWith('[User rejected')
+        ) {
+          executedMutatingTools.add(tc.name)
+        }
+        toolResults.push({ id: tc.id, content: toolResultPrefix(tc.name, args, true) + result })
       } catch (error) {
         if (signal.aborted) throw error
         const msg = error instanceof Error ? error.message : String(error)
         onStatus?.(`⚠️ ${msg}`, tc.name)
         // Still send a tool result so the conversation can continue
-        toolResults.push({ id: tc.id, content: `[Search failed: ${msg}]` })
+        toolResults.push({ id: tc.id, content: toolResultPrefix(tc.name, args, false) + `[Tool failed: ${msg}]` })
       }
     }
     toolTimeMs += Date.now() - execStart

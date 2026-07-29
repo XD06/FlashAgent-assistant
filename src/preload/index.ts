@@ -69,6 +69,9 @@ const api = {
       ipcRenderer.invoke(IPC.AiTestModel, providerTemplateId),
     summarize: (text: string, model?: string): Promise<string> =>
       ipcRenderer.invoke(IPC.AiSummarize, { text, model }),
+    /** Best-effort topic title from the first round; '' when naming failed. */
+    nameTopic: (text: string, model?: string): Promise<string> =>
+      ipcRenderer.invoke(IPC.AiNameTopic, { text, model }),
     onChunk: (callback: (payload: AiChunkPayload) => void) => {
       const listener = (_event: Electron.IpcRendererEvent, payload: AiChunkPayload) => callback(payload)
       ipcRenderer.on(IPC.AiChunk, listener)

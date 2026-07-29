@@ -31,6 +31,7 @@
     "prepare:selection-hook": "node scripts/prepare-selection-hook.js",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
+    "e2e:compaction": "esbuild sandbox-e2e/run-e2e.ts --bundle --platform=node --format=cjs --outfile=sandbox-e2e/run-e2e.cjs --external:undici --log-level=warning && node sandbox-e2e/run-e2e.cjs",
     "dist:mac": "pnpm build && pnpm prepare:selection-hook && electron-builder --mac dmg zip --publish never",
     "dist:win": "pnpm build && pnpm prepare:selection-hook && node scripts/dist-win.cjs --win portable --x64 --publish never",
     "dist:win:full": "pnpm build && pnpm prepare:selection-hook && node scripts/dist-win.cjs --win nsis portable --x64 --publish never",

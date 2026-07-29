@@ -1,8 +1,8 @@
 <div align="center">
-  <img src="./docs/images/icon-readme-light.svg#gh-light-mode-only" alt="AIA划词助手图标" width="88" />
-  <img src="./docs/images/icon-readme-dark.svg#gh-dark-mode-only" alt="AIA划词助手图标" width="88" />
+  <img src="./docs/images/icon-readme-light.svg#gh-light-mode-only" alt="FlashAgent-assistant 图标" width="88" />
+  <img src="./docs/images/icon-readme-dark.svg#gh-dark-mode-only" alt="FlashAgent-assistant 图标" width="88" />
 
-  <h1>AIA划词助手</h1>
+  <h1>FlashAgent-assistant</h1>
 
   <p>划词、截图、问 AI——少切几次窗口，多省几次复制粘贴。</p>
 
@@ -18,12 +18,12 @@
   <p><a href="./README.en.md">English</a> | <strong>中文</strong></p>
 
   <p>
-    <a href="https://github.com/zcx960/AIA-selection-assistan/releases/latest"><img src="https://img.shields.io/github/v/release/zcx960/AIA-selection-assistan?style=for-the-badge&label=Latest%20Release&color=2f6fed" alt="Latest release" /></a>
-    <a href="https://github.com/zcx960/AIA-selection-assistan/releases"><img src="https://img.shields.io/github/downloads/zcx960/AIA-selection-assistan/total?style=for-the-badge&label=Downloads&color=c9a227" alt="Total downloads" /></a>
+    <a href="https://github.com/XD06/FlashAgent-assistant/releases/latest"><img src="https://img.shields.io/github/v/release/XD06/FlashAgent-assistant?style=for-the-badge&label=Latest%20Release&color=2f6fed" alt="Latest release" /></a>
+    <a href="https://github.com/XD06/FlashAgent-assistant/releases"><img src="https://img.shields.io/github/downloads/XD06/FlashAgent-assistant/total?style=for-the-badge&label=Downloads&color=c9a227" alt="Total downloads" /></a>
   </p>
 </div>
 
-AIA划词助手是一个常驻菜单栏 / 系统托盘的小工具。在任意应用里选中一段文字，旁边会浮出一条工具栏，点一下就能翻译、解释、总结、润色、搜索、复制或朗读；不想用工具栏，也可以走全局快捷键。工具栏动作可以新增、重命名、换图标、改提示词、排序或删除，也能给某个动作单独绑定模型、调整思考强度，或者配置快捷键后先弹出输入框再执行。
+FlashAgent-assistant 是一个常驻菜单栏 / 系统托盘的小工具。在任意应用里选中一段文字，旁边会浮出一条工具栏，点一下就能翻译、解释、总结、润色、搜索、复制或朗读；不想用工具栏，也可以走全局快捷键。工具栏动作可以新增、重命名、换图标、改提示词、排序或删除，也能给某个动作单独绑定模型、调整思考强度，或者配置快捷键后先弹出输入框再执行。
 
 除了划词，它还内置区域截图：拖拽框选一块屏幕，可以画线、画箭头标注，笔刷粗细随手拉滑杆调整。截完可以保存 PNG、复制到剪贴板、钉在桌面，或者直接交给 AI 识图。钉住的截图能滚轮缩放、拖拽搬位置、调整透明度，右键还能再次唤起 AI 识图。
 
@@ -32,27 +32,6 @@ AIA划词助手是一个常驻菜单栏 / 系统托盘的小工具。在任意�
 模型这边可接 **OpenAI-compatible**（自建 endpoint、OpenAI、DeepSeek、月之暗面、智谱、各类第三方代理都行）或 **Anthropic** 官方 API。多套模板可一键切换 endpoint / Key / 模型，每个动作也可以指定自己的模板；API Key 只存在本地。界面支持亮 / 暗 / 跟随系统主题，中英双语都有，结果窗口的默认尺寸、字体和字号也可以在设置里调整。
 
 目前支持 macOS 与 Windows。
-
-## 下载
-
-最新发布版本 **v0.6.2**，可点击直接下载对应平台的安装包：
-
-| 平台 | 包类型 | 下载 |
-| --- | --- | --- |
-| macOS (Apple Silicon) | `.dmg` | [AIA-Selection-Assistant-0.6.2-arm64.dmg](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.6.2/AIA-Selection-Assistant-0.6.2-arm64.dmg) |
-| macOS (Apple Silicon) | `.zip` | [AIA-Selection-Assistant-0.6.2-arm64-mac.zip](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.6.2/AIA-Selection-Assistant-0.6.2-arm64-mac.zip) |
-| Windows x64 | 安装版 | [AIA-Selection-Assistant-Setup-0.6.2.exe](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.6.2/AIA-Selection-Assistant-Setup-0.6.2.exe) |
-| Windows x64 | 便携版 | [AIA-Selection-Assistant-Portable-0.6.2.exe](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.6.2/AIA-Selection-Assistant-Portable-0.6.2.exe) |
-
-### v0.6.2 更新
-
-- 修复划词悬浮工具栏显示时可能抢占原应用文本焦点的问题，降低与鼠标手势、剪贴板增强等工具的冲突概率
-
-历史版本与全部产物：[GitHub Releases](https://github.com/zcx960/AIA-selection-assistan/releases)。
-
-> README 描述的是当前 `main` 分支能力；若直接下载 Release，请以对应版本的产物为准。
-
-> macOS 包未做代码签名，首次打开请到「系统设置 → 隐私与安全性」放行；Windows 包未做代码签名，SmartScreen 提示时选「仍要运行」即可。
 
 ## 项目概览
 
@@ -112,20 +91,27 @@ AIA划词助手是一个常驻菜单栏 / 系统托盘的小工具。在任意�
 ### AI 对话与追问
 
 - 独立的对话窗口，与悬浮工具栏的单次结果窗解耦
-- 多话题历史记录：本地持久化，可切换、删除，任意一条可导出为 Markdown（自动写入下载目录并定位文件）
-- 长对话自动压缩：较早消息由 LLM 压缩成结构化前情摘要，可单独指定压缩模型，压缩时界面有提示
+- 多话题历史记录：本地持久化，可切换、删除、重命名，任意一条可导出为 Markdown（自动写入下载目录并定位文件）；列表为紧凑样式，重命名 / 导出 / 删除收进右键菜单
+- 话题自动命名：首轮对话结束后由模型生成简短标题，手动重命名始终优先
+- 长对话自动压缩：按真实 token 用量触发（超过上下文预算的约 95% 时，会在发送下一条消息前先压缩较早历史再发送），较早消息由 LLM 压缩成五节「复工文档」（原始任务 / 关键结论 / 文件状态 / 已弃方案 / 下一步），路径与命令逐字保留，可单独指定压缩模型，界面有进度提示
+- 上下文占用有实时进度环，按 token 口径显示
+- 网络抖动自动重试：429 / 5xx / 瞬断按 1s→2s→4s 退避重试，长任务不因单次抖动中断
 - 流式输出，回答边生成边显示，可随时中断
 - Markdown 代码块支持一键复制，长代码行会自动换行
 - 窗口支持「钉住」常驻
 
 ### Agent 模式与扩展
 
-- Agent 模式下模型可调用内置工具：读写 / 编辑文件（支持批量替换）、执行命令、列目录等
+- Agent 模式下模型可调用内置工具：读写 / 编辑文件（支持批量替换）、执行命令、列目录等；开启后可为本次会话选择工作目录
+- 工具参数会先做校验：非法 JSON、缺字段、类型不符会直接回传可行动的错误让模型自纠，不会以空参数静默执行或弹出无效审批卡片
+- `edit_file` 匹配可容忍换行符（CRLF / LF）与行尾空白差异（缩进仍需完全一致），失败时给出行号级诊断；`read_file` 会标注文件换行符类型（CRLF / LF）
 - 每次工具调用需逐条确认，可在会话内选择「始终允许」
 - 命令三层风险分级：毁灭性命令（如 `rm -rf /`、`format c:`）无条件拦截；危险命令（如 `rm`、`git reset --hard`）任何模式下都要二次确认
 - 文件改动自动快照并落盘，应用重启后仍可一键回退
+- 工具输出终端化渲染：解析程序原生 ANSI 颜色，编辑 / 写入以标准 unified diff 展示（旧行红、新行绿），改动一眼可辨
+- Windows 无 Git Bash 时命令工具自动回退 PowerShell，工具描述随实际 shell 动态调整
 - 扩展面板：记忆（写入需确认）、Skills 技能、MCP 服务器（工具调用恒需确认）、权限模式（可开完全访问，危险拦截不受影响）
-- 功能模型：识图、压缩可分别绑定固定模型，动作也可单独覆盖模型名
+- 功能模型：识图、压缩可分别绑定固定模型，动作也可单独覆盖模型名；上下文窗口大小可在设置里按所用模型填写（默认 128000 tokens）
 
 ## 平台与权限说明
 
@@ -140,6 +126,7 @@ AIA划词助手是一个常驻菜单栏 / 系统托盘的小工具。在任意�
 - 支持系统托盘驻留
 - 关闭主窗口后会缩到托盘，不会直接退出
 - 划词监听效果可能会受目标应用、管理员权限或输入法状态影响
+- 未安装 Git Bash 时，Agent 的命令工具会自动改用 PowerShell
 
 ## 安装与本地开发
 
@@ -167,6 +154,8 @@ pnpm dev
 pnpm test
 pnpm typecheck
 ```
+
+可选：`pnpm e2e:compaction` 用本机已配置的真实 API 跑上下文压缩全链路回归（会发少量真实请求，详见 `sandbox-e2e/README.md`）。
 
 ### 构建
 
@@ -238,6 +227,7 @@ pnpm dist:win
 
 ## 🙏 Acknowledgments
 
+- 本项目基于 [zcx960/AIA-selection-assistan](https://github.com/zcx960/AIA-selection-assistan) 二次开发，感谢原作者的工作
 - [LINUX DO](https://linux.do/) — Community support and inspiration
 
 ## 安全

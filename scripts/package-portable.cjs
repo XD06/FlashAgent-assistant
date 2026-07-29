@@ -122,9 +122,9 @@ const packager = require("electron-packager");
       /^\/vitest\.config\.ts$/,
     ],
     win32metadata: {
-      ProductName: "AIA Selection Assistant",
+      ProductName: "FlashAgent-assistant",
       CompanyName: "AIA",
-      FileDescription: "AIA Selection Assistant",
+      FileDescription: "FlashAgent-assistant",
       OriginalFilename: "AIA-Selection-Assistant.exe",
     },
     afterCopy: [async (buildPath, _electronVersion, _platform, _arch, callback) => {

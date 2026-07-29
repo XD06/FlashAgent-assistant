@@ -241,6 +241,67 @@ describe('edit_file', () => {
     expect(readFileSync(file, 'utf8')).toBe('b\r\ny\r\nb\r\ny\r\n')
     expect(result).toContain('2 occurrences')
   })
+
+  it('matches when the file has trailing whitespace old_text lacks', async () => {
+    const file = join(workDir, 'edit-trail-file.txt')
+    writeFileSync(file, 'alpha  \nbeta\ngamma\n', 'utf8')
+    await executeAgentTool(
+      'edit_file',
+      { path: file, old_text: 'alpha\nbeta', new_text: 'one\ntwo' },
+      workDir
+    )
+    expect(readFileSync(file, 'utf8')).toBe('one\ntwo\ngamma\n')
+  })
+
+  it('matches when old_text has trailing whitespace the file lacks', async () => {
+    const file = join(workDir, 'edit-trail-old.txt')
+    writeFileSync(file, 'alpha\nbeta\n', 'utf8')
+    await executeAgentTool(
+      'edit_file',
+      { path: file, old_text: 'alpha \nbeta', new_text: 'done' },
+      workDir
+    )
+    expect(readFileSync(file, 'utf8')).toBe('done\n')
+  })
+
+  it('combines trailing-whitespace tolerance with CRLF preservation', async () => {
+    const file = join(workDir, 'edit-trail-crlf.txt')
+    writeFileSync(file, 'alpha  \r\nbeta\r\ngamma\r\n', 'utf8')
+    await executeAgentTool(
+      'edit_file',
+      { path: file, old_text: 'alpha\nbeta', new_text: 'one\ntwo' },
+      workDir
+    )
+    expect(readFileSync(file, 'utf8')).toBe('one\r\ntwo\r\ngamma\r\n')
+  })
+
+  it('does not relax leading indentation', async () => {
+    const file = join(workDir, 'edit-indent.txt')
+    writeFileSync(file, 'indented\nnext\n', 'utf8')
+    await expect(
+      executeAgentTool('edit_file', { path: file, old_text: '  indented\nnext', new_text: 'x' }, workDir)
+    ).rejects.toThrow(/not found/)
+  })
+
+  it('points at the first-line location when the rest of old_text diverges', async () => {
+    const file = join(workDir, 'edit-diverge.txt')
+    writeFileSync(file, 'alpha\nbeta-line\ngamma\n', 'utf8')
+    await expect(
+      executeAgentTool(
+        'edit_file',
+        { path: file, old_text: 'beta-line\nWRONG', new_text: 'x' },
+        workDir
+      )
+    ).rejects.toThrow(/line 2.*re-read lines 2-3/s)
+  })
+
+  it('reports line endings and file size when old_text is nowhere near', async () => {
+    const file = join(workDir, 'edit-nowhere.txt')
+    writeFileSync(file, 'alpha\r\nbeta\r\n', 'utf8')
+    await expect(
+      executeAgentTool('edit_file', { path: file, old_text: 'missing-entirely', new_text: 'x' }, workDir)
+    ).rejects.toThrow(/CRLF line endings/)
+  })
 })
 
 describe('write_file / read_file / list_dir', () => {
@@ -260,6 +321,16 @@ describe('write_file / read_file / list_dir', () => {
     const output = await executeAgentTool('read_file', { path: file, offset: 2, limit: 1 }, workDir)
     expect(output).toContain('2→two')
     expect(output).not.toContain('1→one')
+  })
+
+  it('tags the file line-ending style in the read_file header', async () => {
+    const crlfFile = join(workDir, 'read-crlf.txt')
+    writeFileSync(crlfFile, 'one\r\ntwo\r\n', 'utf8')
+    expect(await executeAgentTool('read_file', { path: crlfFile }, workDir)).toContain(', CRLF):')
+
+    const lfFile = join(workDir, 'read-lf.txt')
+    writeFileSync(lfFile, 'one\ntwo\n', 'utf8')
+    expect(await executeAgentTool('read_file', { path: lfFile }, workDir)).toContain(', LF):')
   })
 
   it('lists directory entries with a slash suffix for dirs', async () => {

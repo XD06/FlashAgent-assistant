@@ -97,7 +97,12 @@ export class ScreenshotService {
     ipcMain.handle(IPC.ScreenshotOverlayConfirm, (_event, payload: OverlayConfirmPayload) =>
       this.handleOverlayConfirm(payload)
     )
-    ipcMain.handle(IPC.ScreenshotOverlayCancel, () => this.closeOverlay())
+    // Cancel must also drop the capture: a full-screen NativeImage plus its
+    // data URL would otherwise sit in memory until the next screenshot.
+    ipcMain.handle(IPC.ScreenshotOverlayCancel, () => {
+      this.currentCapture = null
+      this.closeOverlay()
+    })
     ipcMain.handle(IPC.ScreenshotSave, (_event, dataUrl: string) => this.saveImage(dataUrl))
     ipcMain.handle(IPC.ScreenshotCopy, (_event, dataUrl: string) => this.copyImage(dataUrl))
     ipcMain.handle(IPC.ScreenshotPin, (_event, dataUrl: string) => this.pinImage(dataUrl))
@@ -118,6 +123,7 @@ export class ScreenshotService {
   }
 
   dispose(): void {
+    this.currentCapture = null
     this.closeOverlay()
     for (const win of this.pinWindows.keys()) {
       if (!win.isDestroyed()) win.close()

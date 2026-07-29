@@ -1,8 +1,8 @@
 <div align="center">
-  <img src="./docs/images/icon-readme-light.svg#gh-light-mode-only" alt="AIA Selection Assistant icon" width="88" />
-  <img src="./docs/images/icon-readme-dark.svg#gh-dark-mode-only" alt="AIA Selection Assistant icon" width="88" />
+  <img src="./docs/images/icon-readme-light.svg#gh-light-mode-only" alt="FlashAgent-assistant icon" width="88" />
+  <img src="./docs/images/icon-readme-dark.svg#gh-dark-mode-only" alt="FlashAgent-assistant icon" width="88" />
 
-  <h1>AIA Selection Assistant</h1>
+  <h1>FlashAgent-assistant</h1>
 
   <p>Highlight text, snap a screenshot, ask AI — skip a few window switches, skip a lot of copy-pasting.</p>
 
@@ -18,12 +18,12 @@
   <p><strong>English</strong> | <a href="./README.md">中文</a></p>
 
   <p>
-    <a href="https://github.com/zcx960/AIA-selection-assistan/releases/latest"><img src="https://img.shields.io/github/v/release/zcx960/AIA-selection-assistan?style=for-the-badge&label=Latest%20Release&color=2f6fed" alt="Latest release" /></a>
-    <a href="https://github.com/zcx960/AIA-selection-assistan/releases"><img src="https://img.shields.io/github/downloads/zcx960/AIA-selection-assistan/total?style=for-the-badge&label=Downloads&color=c9a227" alt="Total downloads" /></a>
+    <a href="https://github.com/XD06/FlashAgent-assistant/releases/latest"><img src="https://img.shields.io/github/v/release/XD06/FlashAgent-assistant?style=for-the-badge&label=Latest%20Release&color=2f6fed" alt="Latest release" /></a>
+    <a href="https://github.com/XD06/FlashAgent-assistant/releases"><img src="https://img.shields.io/github/downloads/XD06/FlashAgent-assistant/total?style=for-the-badge&label=Downloads&color=c9a227" alt="Total downloads" /></a>
   </p>
 </div>
 
-AIA Selection Assistant lives in your menu bar / system tray. Highlight some text in any app and a small toolbar slides in next to it — one click to translate, explain, summarize, rewrite, search, copy, or read aloud. Prefer the keyboard? A global shortcut works too. Toolbar actions can be added, renamed, re-iconed, reordered, edited, or deleted; each prompt action can also use its own model template, adjust reasoning intensity, or open a type-in window from its own shortcut.
+FlashAgent-assistant lives in your menu bar / system tray. Highlight some text in any app and a small toolbar slides in next to it — one click to translate, explain, summarize, rewrite, search, copy, or read aloud. Prefer the keyboard? A global shortcut works too. Toolbar actions can be added, renamed, re-iconed, reordered, edited, or deleted; each prompt action can also use its own model template, adjust reasoning intensity, or open a type-in window from its own shortcut.
 
 It also ships a built-in region screenshot tool: drag to select an area, annotate with pen or arrows (brush size is a quick slider away), then save as PNG, copy to clipboard, pin to the desktop, or hand the image straight to AI for vision-based analysis. Pinned screenshots support wheel zoom, drag-to-move, opacity tweaking, and a right-click menu to re-send them to AI.
 
@@ -32,27 +32,6 @@ The result window is its own conversation — keep asking follow-ups, AI sees th
 For models you can point it at either **OpenAI-compatible** endpoints (your own endpoint, OpenAI, DeepSeek, Moonshot, Zhipu, any third-party proxy) or the **Anthropic** API. Multiple templates let you swap endpoint / key / model in one click, and individual actions can bind to a specific template. API keys stay on disk. Light / dark / system theme modes are supported, the UI ships in English and Chinese, and the result window's default size, font family, and font size can be customized.
 
 Currently runs on macOS and Windows.
-
-## Download
-
-Latest published release **v0.6.2** - grab the installer for your platform:
-
-| Platform | Package | Link |
-| --- | --- | --- |
-| macOS (Apple Silicon) | `.dmg` | [AIA-Selection-Assistant-0.6.2-arm64.dmg](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.6.2/AIA-Selection-Assistant-0.6.2-arm64.dmg) |
-| macOS (Apple Silicon) | `.zip` | [AIA-Selection-Assistant-0.6.2-arm64-mac.zip](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.6.2/AIA-Selection-Assistant-0.6.2-arm64-mac.zip) |
-| Windows x64 | Installer | [AIA-Selection-Assistant-Setup-0.6.2.exe](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.6.2/AIA-Selection-Assistant-Setup-0.6.2.exe) |
-| Windows x64 | Portable | [AIA-Selection-Assistant-Portable-0.6.2.exe](https://github.com/zcx960/AIA-selection-assistan/releases/download/v0.6.2/AIA-Selection-Assistant-Portable-0.6.2.exe) |
-
-### v0.6.2 highlights
-
-- Fixes the floating selection toolbar so it no longer takes focus from the app that owns the selected text, reducing conflicts with mouse gesture and clipboard helper tools
-
-For older versions and full asset lists, see [GitHub Releases](https://github.com/zcx960/AIA-selection-assistan/releases).
-
-> This README describes the current `main` branch. If you download a Release build, use that version's actual binaries as the source of truth.
-
-> The macOS builds are not code-signed — on first launch allow them via *System Settings → Privacy & Security*. Windows builds are not signed either; if SmartScreen complains, choose “Run anyway”.
 
 ## Overview
 
@@ -112,20 +91,27 @@ For older versions and full asset lists, see [GitHub Releases](https://github.co
 ### AI Chat and Follow-up
 
 - Dedicated chat window, decoupled from the toolbar's one-shot result popup
-- Multi-topic history: persisted locally, switchable and deletable, and any topic can be exported to Markdown (written straight into Downloads and revealed in Explorer)
-- Automatic compaction: earlier turns are summarized by an LLM into a structured recap, with an optional dedicated compaction model and an on-screen progress hint
+- Multi-topic history: persisted locally; switch, delete, or rename topics, and export any topic to Markdown (written straight into Downloads and revealed in Explorer). The list is compact, with rename / export / delete tucked into a right-click menu
+- Auto-named topics: the model generates a short title after the first exchange; a manual rename always wins
+- Automatic compaction: triggered by real token usage (once usage passes ~95% of the context budget, older history is compacted before the next message is sent), earlier turns are summarized by an LLM into a five-section "rework document" (original task / key conclusions / file states / abandoned approaches / next steps), keeping paths and commands verbatim, with an optional dedicated compaction model and an on-screen progress hint
+- A live context-usage ring, shown in token terms
+- Automatic retry on network hiccups: 429 / 5xx / transient failures back off 1s→2s→4s, so long tasks don't die on a single blip
 - Streaming output, rendered as it arrives, with interrupt support at any time
 - Markdown code blocks include a copy button and wrap long lines
 - The window can be pinned on top
 
 ### Agent Mode and Extensions
 
-- In Agent mode the model can use built-in tools: read/write/edit files (with bulk replace), run commands, list directories, and more
+- In Agent mode the model can use built-in tools: read/write/edit files (with bulk replace), run commands, list directories, and more; once enabled you can pick a working directory for the session
+- Tool arguments are validated first: invalid JSON, missing fields, or wrong types come back as actionable errors for the model to self-correct, instead of silently executing with empty args or raising a useless approval prompt
+- `edit_file` matching tolerates line-ending (CRLF / LF) and trailing-whitespace differences (indentation must still match exactly) and reports line-level diagnostics on failure; `read_file` labels the file's line-ending type (CRLF / LF)
 - Every tool call pauses for approval; "always allow" can be granted per session
 - Three-tier command risk gating: catastrophic commands (e.g. `rm -rf /`, `format c:`) are blocked unconditionally; dangerous ones (e.g. `rm`, `git reset --hard`) always require confirmation in any mode
 - File mutations are snapshotted to disk, so a single tool edit can be reverted even after an app restart
+- Terminal-grade tool output: native ANSI colors are parsed, and edits/writes render as a standard unified diff (old lines red, new lines green) so changes are obvious at a glance
+- On Windows without Git Bash, the command tool falls back to PowerShell, and its description adapts to the actual shell
 - Extensions panel: memory (writes need confirmation), Skills, MCP servers (tool calls always need confirmation), and a permissions tab with an optional full-access mode that never bypasses the danger gates
-- Feature models: dedicated models for vision and compaction, plus per-action model overrides
+- Feature models: dedicated models for vision and compaction, plus per-action model overrides; the context window size can be set per model in settings (defaults to 128000 tokens)
 
 ## Platform Notes
 
@@ -140,6 +126,7 @@ For older versions and full asset lists, see [GitHub Releases](https://github.co
 - Supports staying resident in the system tray
 - Closing the main window minimizes it to the tray instead of quitting
 - Selection behavior can vary depending on the target app, elevation level, or IME state
+- Without Git Bash installed, the Agent's command tool automatically uses PowerShell
 
 ## Installation and Local Development
 
@@ -167,6 +154,8 @@ pnpm dev
 pnpm test
 pnpm typecheck
 ```
+
+Optional: `pnpm e2e:compaction` runs the full context-compaction regression against your locally configured real API (sends a few real requests; see `sandbox-e2e/README.md`).
 
 ### Build
 
@@ -238,6 +227,7 @@ Issues and pull requests are welcome. Please read [CONTRIBUTING.md](./CONTRIBUTI
 
 ## 🙏 Acknowledgments
 
+- Built on top of [zcx960/AIA-selection-assistan](https://github.com/zcx960/AIA-selection-assistan); thanks to the original author
 - [LINUX DO](https://linux.do/) — Community support and inspiration
 
 ## Security
