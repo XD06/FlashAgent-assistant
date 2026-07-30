@@ -7,12 +7,16 @@ import { ThinkingBlock } from './ThinkingBlock'
 import { ExtensionsPanel } from './ExtensionsPanel'
 import { renderTerminalText, highlightLineNumbers } from './ansi'
 import {
-  COMPACT_KEEP_RECENT,
   COMPACT_MIN_STALE_TURNS,
   COMPACT_TRIGGER_CHARS,
   compactTriggerTokens,
-  shouldCompact
+  computeKeepStart,
+  estimateEffectiveTokens,
+  estimateTokensFromChars,
+  shouldCompact,
+  truncateForSend
 } from './compaction'
+import { mergeRecapDoc } from '@shared/recapDoc'
 
 /** Ordered content of an assistant turn: text, thinking and tool runs
  * interleaved in the order they actually happened. */
@@ -89,36 +93,9 @@ const STORAGE_KEY = 'aia-chat-topics'
 const MODELS_CACHE_KEY = 'aia-models-cache'
 const MODELS_CACHE_TTL = 5 * 60 * 1000 // 5 minutes
 
-// Cap what gets sent to the model on long conversations: latest turns within
-// a message/char budget. Acts as the hard safety net under rolling
-// compression — the request payload is trimmed, with a short note so the
-// model knows. The full history stays visible locally.
-const MAX_SEND_MESSAGES = 24
-// Generous budget: the last ~2 rounds replay tool outputs at up to 12k per
-// call (toolRecap), and starving that replay costs more than it saves — the
-// model just re-reads everything. This is a runaway guard, not a diet.
-const MAX_SEND_CHARS = 120_000
-function truncateForSend(messages: AiMessageInput[], isZh: boolean): AiMessageInput[] {
-  const recent = messages.slice(-MAX_SEND_MESSAGES)
-  const kept: AiMessageInput[] = []
-  let total = 0
-  for (let i = recent.length - 1; i >= 0; i--) {
-    total += recent[i].text.length
-    // Always keep at least the latest message, however large it is.
-    if (kept.length > 0 && total > MAX_SEND_CHARS) break
-    kept.unshift(recent[i])
-  }
-  const omitted = messages.length - kept.length
-  if (omitted > 0) {
-    kept.unshift({
-      role: 'user',
-      text: isZh
-        ? `（提示：这是一段较长的对话，此前 ${omitted} 条消息已省略）`
-        : `(Note: long conversation — ${omitted} earlier messages omitted)`
-    })
-  }
-  return kept
-}
+// Send-payload hard caps (MAX_SEND_MESSAGES / MAX_SEND_CHARS) and
+// truncateForSend live in ./compaction — pure and unit-tested. The
+// cap-pressure gate in shouldCompact fires before the cap ever trims.
 
 // Compact display for the real context size reported by the provider.
 function formatTokens(n: number): string {
@@ -221,6 +198,42 @@ function toolRecap(turn: ChatTurn, isZh: boolean, withOutput = false): string {
     lines.push(isZh ? `（以上 ${overflow.length} 次为溢出摘要，输出已省略）` : `(${overflow.length} overflow calls above — outputs omitted)`)
   }
   return `\n\n${isZh ? RECAP_HEADINGS[0] : RECAP_HEADINGS[1]}\n${lines.join('\n')}\n${isZh ? RECAP_ENDINGS[0] : RECAP_ENDINGS[1]}`
+}
+
+// ---- Compression material sizing ----
+/** Hard cap on a single turn's contribution to the summarize material
+ * (head 70% + tail 25%; a giant paste must not blow up the request). */
+const COMPACT_TURN_MAX_CHARS = 20_000
+/** Char budget per summarize batch — keeps each request comfortably inside
+ * the compress model's window even with the previous doc attached. */
+const COMPACT_BATCH_MAX_CHARS = 48_000
+/** Flat token estimate per pasted image (vision inputs aren't char-based). */
+const IMAGE_TOKENS_ESTIMATE = 1_000
+
+// Cheap per-turn token estimate for sizing the recent-keep window. Mirrors
+// what the send path replays for a turn (text + inlined files + tool recap
+// with capped outputs) without building the strings — this runs over the
+// whole transcript on every send and on every context-ring render.
+function estimateTurnTokens(turn: ChatTurn): number {
+  let chars = turn.text?.length ?? 0
+  for (const f of turn.files ?? []) chars += f.name.length + f.text.length + 16
+  if (turn.role === 'assistant' && turn.blocks) {
+    for (const block of turn.blocks) {
+      if (block.kind === 'injected') {
+        chars += block.text.length
+        continue
+      }
+      if (block.kind !== 'tools') continue
+      for (const e of block.events) {
+        if (e.state !== 'done' && e.state !== 'error' && e.state !== 'rejected' && e.state !== 'reverted') continue
+        chars += e.toolName.length + e.summary.length + 16
+        if (e.result && (e.state === 'done' || e.state === 'error')) {
+          chars += Math.min(e.result.length, RECAP_OUTPUT_PER_CALL)
+        }
+      }
+    }
+  }
+  return estimateTokensFromChars(chars) + (turn.images?.length ?? 0) * IMAGE_TOKENS_ESTIMATE
 }
 
 // Rolling-compression policy (window constants + trigger math) lives in
@@ -692,6 +705,9 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
   // Mirror of contextUsage for the pre-send compaction check (avoids
   // re-subscribing callbacks on every usage report).
   const contextUsageRef = React.useRef<number | null>(null)
+  // Turn count at the moment of the last usage report — turns appended after
+  // it are context the provider hasn't measured yet (hybrid estimate input).
+  const usageTurnsRef = React.useRef(0)
   // In-flight pre-send phase (compaction + dispatch), before the real request
   // exists. stop() / new chat / topic switch cancel it via the gate object.
   const preSendRef = React.useRef<{ cancelled: boolean } | null>(null)
@@ -980,23 +996,46 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
   // model and fell back to the current chat model, whose window certainly
   // fits since we just talked to it).
   const compactIfNeeded = React.useCallback(
-    async (turns: ChatTurn[], session: number): Promise<void> => {
+    async (
+      turns: ChatTurn[],
+      session: number,
+      gate: { cancelled: boolean },
+      pendingChars: number
+    ): Promise<void> => {
       const covered = compactRef.current?.covered ?? 0
-      // keepStart: first index of the "always send full text" window.
-      const keepStart = Math.max(0, turns.length - COMPACT_KEEP_RECENT)
+      // keepStart: first index of the "always send full text" window —
+      // token-budgeted (20% of the attention window), not a fixed count.
+      const keepStart = computeKeepStart(turns.map(estimateTurnTokens), settings.contextWindowTokens)
       if (keepStart <= covered) return
       const stale = turns.slice(covered, keepStart)
       const staleChars = stale.reduce((n, turn) => n + (turn.text?.length ?? 0), 0)
-      if (!shouldCompact({ promptTokens: contextUsageRef.current, staleTurns: stale.length, staleChars }, settings.contextWindowTokens)) return
+      // Hybrid count: the provider's usage report lags one request behind —
+      // add a rough estimate for the turns it never saw plus the message
+      // about to be sent, so a huge paste can't slip past the trigger.
+      const trailingChars =
+        turns.slice(usageTurnsRef.current).reduce((n, turn) => n + buildSendText(turn).length, 0) + pendingChars
+      const promptTokens = estimateEffectiveTokens(contextUsageRef.current, trailingChars)
+      // Payload size if sent uncompressed: recap? + history entries +
+      // injected-note replays + the new message (pre-merge overcount —
+      // merging only shrinks it, so this errs toward compressing).
+      const injectedCount = turns.slice(covered).reduce((n, turn) => n + injectedNotes(turn).length, 0)
+      const sendMessages =
+        (compactRef.current?.summary ? 1 : 0) + (turns.length - covered) + injectedCount + 1
+      if (
+        !shouldCompact(
+          { promptTokens, staleTurns: stale.length, staleChars, sendMessages },
+          settings.contextWindowTokens
+        )
+      )
+        return
 
       const staleCount = stale.length
       clearCompactNotice()
       setCompactNotice(isZh ? '正在压缩较早的对话…' : 'Compressing earlier messages…')
-      const parts: string[] = []
-      if (compactRef.current?.summary) {
-        parts.push(`${isZh ? '【已有摘要】' : '[Existing recap]'}\n${compactRef.current.summary}`)
-      }
-      parts.push(isZh ? '【新增对话】' : '[New messages]')
+      // One entry per stale turn (plus mid-task notes); entries are later
+      // wrapped in <conversation> tags — data for the summarizer, never
+      // instructions (the main-process prompt declares the tag contract).
+      const entries: string[] = []
       for (const turn of stale) {
         const body = (turn.role === 'assistant' ? stripForgedRecap(turn.text ?? '') : (turn.text ?? '')).trim()
         // Keep the tool record in the recap too — "what was actually done"
@@ -1005,28 +1044,69 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
         // Mid-task notes ride inside the assistant turn's blocks — surface
         // them as user lines so compression keeps them.
         for (const note of injectedNotes(turn)) {
-          parts.push(`${isZh ? '用户（任务中追加）' : 'User (mid-task)'}：${note}`)
+          entries.push(`${isZh ? '用户（任务中追加）' : 'User (mid-task)'}：${note}`)
         }
         if (!body && !recap) continue
-        parts.push(`${turn.role === 'user' ? (isZh ? '用户' : 'User') : (isZh ? '助手' : 'Assistant')}：${body}${recap}`)
+        let entry = `${turn.role === 'user' ? (isZh ? '用户' : 'User') : (isZh ? '助手' : 'Assistant')}：${body}${recap}`
+        // A single giant turn (huge paste / file dump) must not blow up the
+        // summarize request: keep head + tail, drop the middle.
+        if (entry.length > COMPACT_TURN_MAX_CHARS) {
+          const head = entry.slice(0, Math.floor(COMPACT_TURN_MAX_CHARS * 0.7))
+          const tail = entry.slice(entry.length - Math.floor(COMPACT_TURN_MAX_CHARS * 0.25))
+          entry = `${head}\n${isZh ? '…（本轮中段过长已截断）…' : '…(middle of this turn truncated)…'}\n${tail}`
+        }
+        entries.push(entry)
       }
-      const payload = parts.join('\n\n')
-      if (!payload.trim()) {
+      if (!entries.length) {
         clearCompactNotice()
         return
       }
 
-      // Main process: prefer compressModel, retry, then fall back to chat model.
-      const summary = await window.assistantLite.ai.summarize(payload, selectedModel || undefined)
-      if (!summary?.trim()) {
-        throw new Error(isZh ? '压缩结果为空' : 'Empty compression result')
+      // Batch by char budget so the material always fits the compress
+      // model's window; each batch folds into the running doc before the
+      // next one goes out.
+      const batches: string[][] = []
+      let batch: string[] = []
+      let batchChars = 0
+      for (const entry of entries) {
+        if (batch.length && batchChars + entry.length > COMPACT_BATCH_MAX_CHARS) {
+          batches.push(batch)
+          batch = []
+          batchChars = 0
+        }
+        batch.push(entry)
+        batchChars += entry.length
       }
-      // Topic switched / new chat while summarizing — discard.
-      if (chatSessionRef.current !== session) return
+      if (batch.length) batches.push(batch)
+
+      // Sequential compress + merge per batch. compactRef only advances
+      // after *all* batches succeed — a mid-way failure or cancel leaves
+      // the last good state untouched (atomic).
+      let summary = compactRef.current?.summary ?? null
+      for (const part of batches) {
+        // Stopped / topic switched — abandon the whole run (compression is
+        // cancelled together with the request it precedes).
+        if (gate.cancelled || chatSessionRef.current !== session) return
+        const payload = [
+          ...(summary ? [`<previous-summary>\n${summary}\n</previous-summary>`] : []),
+          `<conversation>\n${part.join('\n\n')}\n</conversation>`
+        ].join('\n\n')
+        // Main process: prefer compressModel, retry, fall back to the chat
+        // model; the returned delta is already stripped + structure-checked.
+        const delta = await window.assistantLite.ai.summarize(payload, selectedModel || undefined)
+        if (!delta?.trim()) {
+          throw new Error(isZh ? '压缩结果为空' : 'Empty compression result')
+        }
+        if (gate.cancelled || chatSessionRef.current !== session) return
+        // Ledger sections append + dedupe, rewrite sections replace; an old
+        // pre-v2 summary falls back to the fresh doc (see recapDoc).
+        summary = mergeRecapDoc(summary, delta.trim())
+      }
+      if (!summary) return
 
       // Advance the covered frontier to keepStart *at compress time*. The
       // just-typed user turn is not in `turns` and stays in the recent zone.
-      compactRef.current = { summary: summary.trim(), covered: keepStart }
+      compactRef.current = { summary, covered: keepStart }
       persistTopic(turns, selectedModel)
       setCompactNotice(
         isZh
@@ -1114,6 +1194,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
         // Pure indicator update — doesn't touch the transcript, so no flush.
         if (typeof chunk.usage?.promptTokens === 'number') {
           contextUsageRef.current = chunk.usage.promptTokens
+          usageTurnsRef.current = chatRef.current.length
           setContextUsage(chunk.usage.promptTokens)
         }
         return
@@ -1269,7 +1350,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
     preSendRef.current = gate
     void (async () => {
       try {
-        await compactIfNeeded(history, session)
+        await compactIfNeeded(history, session, gate, buildSendText({ text, files }).length)
       } catch {
         if (gate.cancelled || chatSessionRef.current !== session) return
         preSendRef.current = null
@@ -1335,7 +1416,8 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
           if (m.images?.length) prev.images = [...(prev.images ?? []), ...m.images]
         } else mergedRaw.push({ ...m })
       }
-      const messages = truncateForSend(mergedRaw, isZh)
+      // Pin the recap head so the hard cap can never silently drop it.
+      const messages = truncateForSend(mergedRaw, isZh, !!compact?.summary)
       const requestId = crypto.randomUUID()
       activeRequestId.current = requestId
       void window.assistantLite.ai.stream({
@@ -1528,6 +1610,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
     chatSessionRef.current += 1
     clearCompactNotice()
     contextUsageRef.current = null
+    usageTurnsRef.current = 0
     setContextUsage(null)
     lastUserTextRef.current = ''
     messageHistoryRef.current = []
@@ -1558,6 +1641,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
     chatSessionRef.current += 1
     clearCompactNotice()
     contextUsageRef.current = null
+    usageTurnsRef.current = 0
     setContextUsage(null)
     lastUserTextRef.current = [...topic.turns].reverse().find((turn) => turn.role === 'user')?.text ?? ''
     stickToBottomRef.current = true
@@ -2167,7 +2251,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
             // shouldCompact: token-driven when usage is known, else the
             // stale-zone char/turn fallback gates.
             const covered = compactRef.current?.covered ?? 0
-            const keepStart = Math.max(0, chat.length - COMPACT_KEEP_RECENT)
+            const keepStart = computeKeepStart(chat.map(estimateTurnTokens), settings.contextWindowTokens)
             const stale = chat.slice(covered, Math.max(covered, keepStart))
             const staleChars = stale.reduce((n, turn) => n + (turn.text?.length ?? 0), 0)
             const charRatio = Math.min(1, staleChars / COMPACT_TRIGGER_CHARS)
