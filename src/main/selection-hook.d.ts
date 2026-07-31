@@ -27,7 +27,7 @@ declare module 'selection-hook' {
   }
 
   export interface SelectionHookInstance {
-    start(options?: { debug?: boolean }): boolean
+    start(options?: { debug?: boolean; enableClipboard?: boolean }): boolean
     stop(): void
     cleanup(): void
     on(event: string, callback: (...args: any[]) => void): void
@@ -35,6 +35,7 @@ declare module 'selection-hook' {
     getCurrentSelection(): TextSelectionData | null
     setSelectionPassiveMode(passive: boolean): void
     setGlobalFilterMode(mode: number, list: string[]): boolean
+    setClipboardMode(mode: number, programList?: string[]): boolean
     writeToClipboard(text: string): boolean
   }
 

@@ -23,6 +23,13 @@ const ACTION_WIDTH = 560
 const ACTION_HEIGHT = 420
 const ACTION_SHADOW_PADDING = 18
 
+// selection-hook ships a "clipboard fallback" that simulates Ctrl+Insert then
+// Ctrl+C when UIA/IAccessible can't read the selection. Simulated copies are
+// destructive: Ctrl+C kills CLIs in terminals, fires clipboard managers on
+// every double-click/long-press, and pollutes clipboard history. We disable
+// the fallback entirely and rely on the non-invasive accessibility APIs only;
+// the rare app exposing neither simply won't trigger the toolbar.
+
 export class SelectionService {
   private hookCtor: SelectionHookConstructor | null = null
   private hook: SelectionHookInstance | null = null
@@ -66,7 +73,14 @@ export class SelectionService {
 
     this.hook.on('text-selection', this.handleSelection)
 
-    if (!this.hook.start({ debug: !process.env.NODE_ENV || process.env.NODE_ENV === 'development' })) return false
+    if (
+      !this.hook.start({
+        debug: !process.env.NODE_ENV || process.env.NODE_ENV === 'development',
+        enableClipboard: false
+      })
+    ) {
+      return false
+    }
 
     this.started = true
     this.applySettings(this.getSettings())
