@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Changed
+
+- 项目对外名称、包名、安装包和发布产物统一为 `FlashAgent-assistant`；首次启动时会将旧 `selection-assistant-lite` 用户数据目录迁移到新目录，且绝不覆盖已有的新目录。
+- README、贡献指南、E2E 指引和文档索引已更新；历史方案文档已明确标记为归档材料，避免与当前实现混淆。
+
 ### Added
 
 - 跨轮历史原生工具消息回放：assistant 消息内嵌完整工具轨迹（调用参数 + 结果），发送历史时按协议展开为原生 `tool_calls`/`tool` 消息（OpenAI-compatible）或 `tool_use`/`tool_result` 块（Anthropic），对齐两家官方多轮工具调用标准；文字台账仅保留在压缩摘要内并继续防伪剥离。从根本上消除模型模仿文本台账伪造工具结果的叙述型幻觉。

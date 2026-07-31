@@ -5,7 +5,7 @@ const fs = require("fs");
 // 1. 确保没有残留进程锁定文件
 const { execSync } = require("child_process");
 try { execSync('taskkill /F /IM electron.exe', { stdio: 'ignore' }); } catch {}
-try { execSync('taskkill /F /IM "AIA-Selection-Assistant.exe"', { stdio: 'ignore' }); } catch {}
+try { execSync('taskkill /F /IM "FlashAgent-assistant.exe"', { stdio: 'ignore' }); } catch {}
 
 const root = path.resolve(__dirname, "..");
 // 每次用新目录名，彻底避免文件锁定问题
@@ -23,7 +23,7 @@ const packager = require("electron-packager");
   console.log("Starting packaging...");
   const appPaths = await packager({
     dir: root,
-    name: "AIA-Selection-Assistant",
+    name: "FlashAgent-assistant",
     platform: "win32",
     arch: "x64",
     out: outDir,
@@ -123,9 +123,9 @@ const packager = require("electron-packager");
     ],
     win32metadata: {
       ProductName: "FlashAgent-assistant",
-      CompanyName: "AIA",
+      CompanyName: "XD06",
       FileDescription: "FlashAgent-assistant",
-      OriginalFilename: "AIA-Selection-Assistant.exe",
+      OriginalFilename: "FlashAgent-assistant.exe",
     },
     afterCopy: [async (buildPath, _electronVersion, _platform, _arch, callback) => {
       console.log("Running afterCopy hook...");

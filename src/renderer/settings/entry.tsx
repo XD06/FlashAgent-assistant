@@ -8,7 +8,6 @@ import { useThemeMode } from '../useThemeMode'
 import { useAppearance } from '../useAppearance'
 import { getActionLabel, getTranslator } from '../i18n'
 import { ProviderNameInput } from './ProviderNameInput'
-import { APP_ICON_DATA_URL } from '@shared/brand'
 import type {
   ActionItem,
   AppLanguage,
@@ -38,11 +37,13 @@ type SettingRowProps = {
 function SettingsNav({
   sections,
   activeSection,
-  onChange
+  onChange,
+  tools
 }: {
   sections: SettingsSectionMeta[]
   activeSection: SettingsSectionId
   onChange: (section: SettingsSectionId) => void
+  tools?: React.ReactNode
 }) {
   return (
     <aside className="settings-sidebar" aria-label="Settings sections">
@@ -56,13 +57,14 @@ function SettingsNav({
           <span>{section.label}</span>
         </button>
       ))}
+      {tools && <div className="settings-sidebar-tools">{tools}</div>}
     </aside>
   )
 }
 
-function SettingSection({ title, children }: { title: string; children: React.ReactNode }) {
+function SettingSection({ title, className, children }: { title: string; className?: string; children: React.ReactNode }) {
   return (
-    <section className="setting-section">
+    <section className={className ? `setting-section ${className}` : 'setting-section'}>
       <h3>{title}</h3>
       <div className="setting-section-body">{children}</div>
     </section>
@@ -448,6 +450,7 @@ function SettingsApp() {
   const [activeSection, setActiveSection] = React.useState<SettingsSectionId>('api')
   const [modelsByTemplate, setModelsByTemplate] = React.useState<Record<string, string[]>>({})
   const [statusByTemplate, setStatusByTemplate] = React.useState<Record<string, string>>({})
+  const [visibleApiKeys, setVisibleApiKeys] = React.useState<Record<string, boolean>>({})
   const [busyTemplate, setBusyTemplate] = React.useState<{ id: string; kind: 'list' | 'test' } | null>(null)
   const [proxyTesting, setProxyTesting] = React.useState(false)
   const [proxyStatus, setProxyStatus] = React.useState<string | null>(null)
@@ -624,11 +627,13 @@ function SettingsApp() {
     dark: 'moon'
   }
 
+  const sidebarMasterToggle = <Toggle checked={settings.enabled} label={t('shortcutToggleAssistant')} onChange={() => void toggleAssistantEnabled()} />
+
   const renderSection = () => {
     if (activeSection === 'api') {
       return (
-        <div className="settings-stack">
-          <SettingSection title={t('providerTitle')}>
+        <div className="settings-stack settings-stack--api">
+          <SettingSection title={t('providerTitle')} className="provider-section">
             <div className="provider-list">
               {settings.providerTemplates.map((template) => {
                 const isDefault = template.id === settings.activeProviderTemplateId
@@ -681,7 +686,7 @@ function SettingsApp() {
                       {template.provider.apiType === 'anthropic' && (
                         <div className="model-status">{t('baseUrlAnthropicHint')}</div>
                       )}
-                      <label className="field field--wide">
+                      <label className="field field--wide field--model">
                         <div className="field-header">
                           <span>{t('model')}</span>
                           <div className="inline-actions">
@@ -708,6 +713,30 @@ function SettingsApp() {
                           onChange={(event) => updateTemplateProvider(template.id, 'model', event.target.value)}
                         />
                       </label>
+                      <div className="field field--wide field--api-key">
+                        <span>{t('apiKey')}</span>
+                        <div className="secret-field">
+                          <input
+                            aria-label={t('apiKey')}
+                            autoComplete="off"
+                            spellCheck={false}
+                            type={visibleApiKeys[template.id] ? 'text' : 'password'}
+                            value={template.provider.apiKey}
+                            onChange={(event) => updateTemplateProvider(template.id, 'apiKey', event.target.value)}
+                          />
+                          <button
+                            aria-label={visibleApiKeys[template.id] ? t('hideApiKey') : t('showApiKey')}
+                            aria-pressed={visibleApiKeys[template.id] ?? false}
+                            className="secret-field__toggle"
+                            title={visibleApiKeys[template.id] ? t('hideApiKey') : t('showApiKey')}
+                            type="button"
+                            onClick={() =>
+                              setVisibleApiKeys((current) => ({ ...current, [template.id]: !current[template.id] }))
+                            }>
+                            <Icon name={visibleApiKeys[template.id] ? 'eye-off' : 'eye'} size={15} />
+                          </button>
+                        </div>
+                      </div>
                       {models.length > 0 && (
                         <label className="field field--wide">
                           <span>{t('modelList')}</span>
@@ -727,14 +756,6 @@ function SettingsApp() {
                           </select>
                         </label>
                       )}
-                      <label className="field field--wide">
-                        <span>{t('apiKey')}</span>
-                        <input
-                          type="password"
-                          value={template.provider.apiKey}
-                          onChange={(event) => updateTemplateProvider(template.id, 'apiKey', event.target.value)}
-                        />
-                      </label>
                       {status && <div className="model-status">{status}</div>}
                     </div>
                   </div>
@@ -806,7 +827,7 @@ function SettingsApp() {
 
     if (activeSection === 'selection') {
       return (
-        <div className="settings-stack">
+        <div className="settings-stack settings-stack--selection">
           <SettingSection title={t('selectionTriggerGroup')}>
             <SettingRow title={t('triggerMode')}>
               <select value={settings.triggerMode} onChange={(event) => update({ triggerMode: event.target.value as TriggerMode })}>
@@ -924,7 +945,7 @@ function SettingsApp() {
     if (activeSection === 'window') {
       return (
         <div className="settings-stack">
-          <SettingSection title={t('actionWindowTitle')}>
+          <SettingSection title={t('actionWindowTitle')} className="window-behavior-section">
             <SettingRow title={t('followToolbar')}>
               <Toggle checked={settings.followToolbar} label={t('followToolbar')} onChange={(followToolbar) => update({ followToolbar })} />
             </SettingRow>
@@ -943,7 +964,7 @@ function SettingsApp() {
             </SettingRow>
           </SettingSection>
 
-          <SettingSection title={t('appearanceSizeGroup')}>
+          <SettingSection title={t('appearanceSizeGroup')} className="window-size-section">
             <SettingRow title={t('defaultWindowWidth')}>
               <NumberField
                 value={settings.actionWindowWidth}
@@ -972,6 +993,40 @@ function SettingsApp() {
             </SettingRow>
             <SettingRow title={t('fontSize')}>
               <NumberField value={settings.fontSize} min={10} max={28} onCommit={(fontSize) => update({ fontSize })} />
+            </SettingRow>
+          </SettingSection>
+
+          <SettingSection title={t('appPreferences')}>
+            <SettingRow title={t('language')}>
+              <div className="language-segment" role="group" aria-label={t('language')}>
+                <button
+                  type="button"
+                  className={settings.language === 'zh-CN' ? 'language-segment-button active' : 'language-segment-button'}
+                  aria-pressed={settings.language === 'zh-CN'}
+                  onClick={() => update({ language: 'zh-CN' as AppLanguage })}>
+                  CN
+                </button>
+                <button
+                  type="button"
+                  className={settings.language === 'en' ? 'language-segment-button active' : 'language-segment-button'}
+                  aria-pressed={settings.language === 'en'}
+                  onClick={() => update({ language: 'en' as AppLanguage })}>
+                  EN
+                </button>
+              </div>
+            </SettingRow>
+            <SettingRow title={t('theme')}>
+              <button
+                type="button"
+                className="theme-toggle"
+                title={t(`theme_${settings.theme}`)}
+                aria-label={t(`theme_${settings.theme}`)}
+                onClick={cycleTheme}>
+                <Icon name={themeIconName[settings.theme]} size={14} />
+              </button>
+            </SettingRow>
+            <SettingRow title={t('autoLaunch')}>
+              <Toggle checked={settings.autoLaunch} label={t('autoLaunch')} onChange={(autoLaunch) => update({ autoLaunch })} />
             </SettingRow>
           </SettingSection>
         </div>
@@ -1010,56 +1065,6 @@ function SettingsApp() {
   return (
     <main className="page settings-page">
       <div className="settings-shell">
-        <header className="settings-header">
-          <div className="settings-toolbar">
-            <div className="settings-brand">
-              <img src={APP_ICON_DATA_URL} alt="" />
-              <span>{t('appTitle')}</span>
-            </div>
-            <div className="settings-toolbar__tools">
-              <div className="language-segment" role="group" aria-label={t('language')}>
-              <button
-                type="button"
-                className={settings.language === 'zh-CN' ? 'language-segment-button active' : 'language-segment-button'}
-                aria-pressed={settings.language === 'zh-CN'}
-                onClick={() => update({ language: 'zh-CN' as AppLanguage })}>
-                CN
-              </button>
-              <button
-                type="button"
-                className={settings.language === 'en' ? 'language-segment-button active' : 'language-segment-button'}
-                aria-pressed={settings.language === 'en'}
-                onClick={() => update({ language: 'en' as AppLanguage })}>
-                EN
-              </button>
-            </div>
-            <div className="status-control">
-              <button
-                type="button"
-                className={settings.autoLaunch ? 'theme-toggle active' : 'theme-toggle'}
-                title={t('autoLaunch')}
-                aria-label={t('autoLaunch')}
-                aria-pressed={settings.autoLaunch}
-                onClick={() => update({ autoLaunch: !settings.autoLaunch })}>
-                <Icon name="power" size={14} />
-              </button>
-              <button
-                type="button"
-                className="theme-toggle"
-                title={t(`theme_${settings.theme}`)}
-                aria-label={t(`theme_${settings.theme}`)}
-                onClick={cycleTheme}>
-                <Icon name={themeIconName[settings.theme]} size={14} />
-              </button>
-              <span className={settings.enabled ? 'status-label enabled' : 'status-label'}>
-                {settings.enabled ? t('statusEnabled') : t('statusDisabled')}
-              </span>
-              <Toggle checked={settings.enabled} label={t('shortcutToggleAssistant')} onChange={() => void toggleAssistantEnabled()} />
-            </div>
-            </div>
-          </div>
-        </header>
-
         {!accessibilityTrusted && (
           <section className="accessibility-panel">
             <div>
@@ -1073,7 +1078,7 @@ function SettingsApp() {
         )}
 
         <div className="settings-layout">
-          <SettingsNav sections={sections} activeSection={activeSection} onChange={setActiveSection} />
+          <SettingsNav sections={sections} activeSection={activeSection} onChange={setActiveSection} tools={sidebarMasterToggle} />
 
           <section className="settings-content">
             {renderSection()}

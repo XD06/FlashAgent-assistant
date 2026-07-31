@@ -138,6 +138,26 @@ function Moon({ size = 16, strokeWidth = 2 }: IconProps) {
   )
 }
 
+function Eye({ size = 16, strokeWidth = 2 }: IconProps) {
+  return (
+    <svg {...baseProps(size)} strokeWidth={strokeWidth}>
+      <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" />
+      <circle cx="12" cy="12" r="2.5" />
+    </svg>
+  )
+}
+
+function EyeOff({ size = 16, strokeWidth = 2 }: IconProps) {
+  return (
+    <svg {...baseProps(size)} strokeWidth={strokeWidth}>
+      <path d="M9.9 4.4A10.9 10.9 0 0 1 12 4.2c6 0 9.5 5.8 9.5 5.8a17.2 17.2 0 0 1-3.1 3.7" />
+      <path d="M6.4 6.3A17.1 17.1 0 0 0 2.5 12S6 17.8 12 17.8c1.3 0 2.5-.3 3.5-.7" />
+      <path d="m3 3 18 18" />
+      <path d="M9.8 9.8a3 3 0 0 0 4.2 4.2" />
+    </svg>
+  )
+}
+
 function Pin({ size = 16, strokeWidth = 2 }: IconProps) {
   // Upright pushpin (lucide v2) — the old angled pin read as a paper plane.
   return (
@@ -397,6 +417,8 @@ const icons: Record<string, (props: IconProps) => React.JSX.Element> = {
   copy: CopyIcon,
   download: Download,
   'flask-conical': FlaskConical,
+  eye: Eye,
+  'eye-off': EyeOff,
   languages: Languages,
   laptop: Laptop,
   moon: Moon,

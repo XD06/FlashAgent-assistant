@@ -1,3 +1,4 @@
+import './appIdentity'
 import Store from 'electron-store'
 import { defaultSettings } from '@shared/defaults'
 import { mergeSettings, normalizeSettings } from '@shared/actions'

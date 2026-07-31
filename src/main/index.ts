@@ -105,8 +105,8 @@ function getTrayIcon(): Electron.NativeImage {
 
 function mainText(key: 'enable' | 'disable' | 'settings' | 'stopSpeech' | 'quit', language: string): string {
   const zh = {
-    enable: '启用AIA划词助手',
-    disable: '停用AIA划词助手',
+    enable: '启用 FlashAgent-assistant',
+    disable: '停用 FlashAgent-assistant',
     settings: '设置',
     stopSpeech: '停止朗读',
     quit: '退出'
@@ -149,13 +149,17 @@ function createSettingsWindow(): BrowserWindow {
   }
 
   settingsWindow = new BrowserWindow({
-    // Wide layout: left rail nav + content column (settings pages).
-    width: 720,
-    height: 600,
-    minWidth: 620,
-    minHeight: 480,
+    // The labelled navigation rail needs a wider canvas than the compact toolbar layout.
+    width: 840,
+    height: 640,
+    minWidth: 760,
+    minHeight: 540,
+    // Settings are form-centric; beyond this the work area gains empty space
+    // rather than useful density.
+    maxWidth: 1120,
+    maxHeight: 860,
     icon: appIcon,
-    title: 'AIA划词助手',
+    title: 'FlashAgent-assistant',
     autoHideMenuBar: true,
     webPreferences: {
       preload: preloadPath,
@@ -196,7 +200,7 @@ function openChatWindow(): void {
     minWidth: 360 + CHAT_SHADOW_PADDING * 2,
     minHeight: 360 + CHAT_SHADOW_PADDING * 2,
     icon: appIcon,
-    title: 'AIA划词助手',
+    title: 'FlashAgent-assistant',
     autoHideMenuBar: true,
     show: false,
     frame: false,
@@ -250,7 +254,7 @@ function openChatWindow(): void {
 
 function createTray(): void {
   tray = new Tray(getTrayIcon())
-  tray.setToolTip('AIA划词助手')
+  tray.setToolTip('FlashAgent-assistant')
   tray.on('click', () => createSettingsWindow())
   refreshTrayMenu()
 }
@@ -984,7 +988,7 @@ if (!app.requestSingleInstanceLock()) {
   app.quit()
 } else {
   void app.whenReady().then(() => {
-    app.setAppUserModelId('com.selectionassistant.lite')
+    app.setAppUserModelId('com.xd06.flashagentassistant')
     app.dock?.setIcon(appIcon)
     // Apply the proxy chain first so MCP connections go through it too.
     void applyProxy(getSettings().proxyUrl).finally(() => {

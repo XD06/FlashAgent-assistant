@@ -61,7 +61,7 @@ function Titlebar({
   extra?: React.ReactNode
 }) {
   return (
-    <div className="titlebar">
+    <div className="titlebar titlebar--left">
       <Icon name={icon} />
       <strong>{title}</strong>
       {extra}
@@ -272,6 +272,35 @@ function ChatTurns({
   isZh: boolean
   showThinking: boolean
 }) {
+  const [expandedImage, setExpandedImage] = React.useState<string | null>(null)
+  const closeExpandedImage = React.useCallback(() => setExpandedImage(null), [])
+  const imageAlt = isZh ? '发送的图片' : 'Sent image'
+  const viewImageLabel = isZh ? '放大查看原图' : 'View full image'
+  const closeImageLabel = isZh ? '关闭原图预览' : 'Close image preview'
+
+  React.useEffect(() => {
+    if (!expandedImage) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeExpandedImage()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [expandedImage, closeExpandedImage])
+
+  const renderImages = (images: string[]) =>
+    images.map((src, imageIndex) => (
+      <button
+        key={imageIndex}
+        type="button"
+        className="screenshot-preview__image-button"
+        title={viewImageLabel}
+        aria-label={viewImageLabel}
+        onClick={() => setExpandedImage(src)}
+      >
+        <img className="screenshot-preview__inline-img" src={src} alt={imageAlt} />
+      </button>
+    ))
+
   return (
     <>
       {chat.map((turn, index) => {
@@ -303,21 +332,40 @@ function ChatTurns({
           if (!turn.images?.length) return null
           return (
             <div key={index} className="screenshot-preview__user-msg screenshot-preview__user-msg--image-only">
-              {turn.images.map((src, imageIndex) => (
-                <img key={imageIndex} className="screenshot-preview__inline-img" src={src} alt="" />
-              ))}
+              {renderImages(turn.images)}
             </div>
           )
         }
         return (
           <div key={index} className="screenshot-preview__user-msg">
-            {turn.images?.map((src, imageIndex) => (
-              <img key={imageIndex} className="screenshot-preview__inline-img" src={src} alt="" />
-            ))}
+            {turn.images?.length ? renderImages(turn.images) : null}
             {turn.display ?? turn.text}
           </div>
         )
       })}
+      {expandedImage && (
+        <div
+          className="screenshot-preview__lightbox"
+          role="dialog"
+          aria-modal="true"
+          aria-label={viewImageLabel}
+          onClick={closeExpandedImage}
+        >
+          <div className="screenshot-preview__lightbox-content" onClick={(event) => event.stopPropagation()}>
+            <img src={expandedImage} alt={imageAlt} />
+            <button
+              type="button"
+              className="screenshot-preview__lightbox-close"
+              title={closeImageLabel}
+              aria-label={closeImageLabel}
+              autoFocus
+              onClick={closeExpandedImage}
+            >
+              <Icon name="x" />
+            </button>
+          </div>
+        </div>
+      )}
     </>
   )
 }

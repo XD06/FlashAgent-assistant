@@ -151,7 +151,7 @@ export class McpManager {
       // Route through cmd on Windows so .cmd shims (npx, uvx, ...) resolve.
       const [command, args] =
         process.platform === 'win32' ? ['cmd.exe', ['/c', ...tokens]] : [tokens[0], tokens.slice(1)]
-      const client = new sdk.Client({ name: 'aia-selection-assistant', version: '1.0.0' })
+      const client = new sdk.Client({ name: 'flashagent-assistant', version: '1.0.0' })
       await client.connect(
         new sdk.StdioClientTransport({
           command,
@@ -165,11 +165,11 @@ export class McpManager {
     const url = new URL(config.url ?? '')
     // Streamable HTTP is the current standard; fall back to legacy SSE.
     try {
-      const client = new sdk.Client({ name: 'aia-selection-assistant', version: '1.0.0' })
+      const client = new sdk.Client({ name: 'flashagent-assistant', version: '1.0.0' })
       await client.connect(new sdk.StreamableHTTPClientTransport(url))
       return client
     } catch {
-      const client = new sdk.Client({ name: 'aia-selection-assistant', version: '1.0.0' })
+      const client = new sdk.Client({ name: 'flashagent-assistant', version: '1.0.0' })
       await client.connect(new sdk.SSEClientTransport(url))
       return client
     }

@@ -33,7 +33,7 @@ import type { AiMessageInput, ProviderSettings } from '../src/shared/types'
 // ---------- 0. 读取用户真实配置（与 settingsStore 同一文件） ----------
 const settingsPath = path.join(
   process.env.APPDATA ?? '',
-  'selection-assistant-lite',
+  'flashagent-assistant',
   'settings.json'
 )
 const stored = JSON.parse(fs.readFileSync(settingsPath, 'utf8')).settings

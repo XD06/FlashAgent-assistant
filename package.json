@@ -1,25 +1,33 @@
 {
-  "name": "selection-assistant-lite",
+  "name": "flashagent-assistant",
   "version": "0.7.0",
-  "description": "轻量跨平台 AI 划词助手，支持 OpenAI-compatible 与 Anthropic API。",
+  "description": "FlashAgent-assistant: fast answers and lightweight Agent workflows｜快速划词问答、截图识图与轻量 Agent 工作流。",
   "main": "out/main/index.cjs",
-  "author": "selection-assistant-lite contributors",
+  "author": "XD06",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/zcx960/AIA-selection-assistan.git"
+    "url": "git+https://github.com/XD06/FlashAgent-assistant.git"
   },
   "bugs": {
-    "url": "https://github.com/zcx960/AIA-selection-assistan/issues"
+    "url": "https://github.com/XD06/FlashAgent-assistant/issues"
   },
-  "homepage": "https://github.com/zcx960/AIA-selection-assistan#readme",
+  "homepage": "https://github.com/XD06/FlashAgent-assistant#readme",
   "keywords": [
     "electron",
+    "ai-assistant",
     "selection",
+    "text-selection",
     "ai",
+    "quick-answer",
+    "agent",
+    "agent-workflow",
     "desktop-app",
+    "screenshot",
+    "vision-ai",
     "openai-compatible",
     "anthropic",
+    "mcp",
     "translation",
     "productivity"
   ],

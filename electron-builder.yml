@@ -1,5 +1,5 @@
-appId: com.selectionassistant.lite
-productName: AIA划词助手
+appId: com.xd06.flashagentassistant
+productName: FlashAgent-assistant
 icon: build/icon.png
 npmRebuild: false
 afterPack: scripts/after-pack.mjs
@@ -20,15 +20,15 @@ electronLanguages:
 mac:
   icon: build/icon.icns
   category: public.app-category.productivity
-  artifactName: AIA-Selection-Assistant-${version}-${arch}-mac.${ext}
+  artifactName: FlashAgent-assistant-${version}-${arch}-mac.${ext}
   target:
     - dmg
     - zip
   extendInfo:
-    NSAppleEventsUsageDescription: AIA划词助手 uses accessibility APIs to detect selected text.
-    NSSystemAdministrationUsageDescription: AIA划词助手 needs accessibility permission to detect selected text.
+    NSAppleEventsUsageDescription: FlashAgent-assistant uses accessibility APIs to detect selected text.
+    NSSystemAdministrationUsageDescription: FlashAgent-assistant needs accessibility permission to detect selected text.
 dmg:
-  artifactName: AIA-Selection-Assistant-${version}-${arch}.${ext}
+  artifactName: FlashAgent-assistant-${version}-${arch}.${ext}
 win:
   icon: build/icon.ico
   forceCodeSigning: false
@@ -42,6 +42,6 @@ win:
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
-  artifactName: AIA-Selection-Assistant-Setup-${version}.${ext}
+  artifactName: FlashAgent-assistant-Setup-${version}.${ext}
 portable:
-  artifactName: AIA-Selection-Assistant-Portable-${version}.${ext}
+  artifactName: FlashAgent-assistant-Portable-${version}.${ext}

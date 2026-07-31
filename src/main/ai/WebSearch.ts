@@ -140,7 +140,7 @@ export async function searchExa(
       params: {
         protocolVersion: '2025-03-26',
         capabilities: {},
-        clientInfo: { name: 'aia-selection-assistant', version: '0.2.0' }
+        clientInfo: { name: 'flashagent-assistant', version: '0.2.0' }
       }
     },
     signal,
