@@ -1,5 +1,6 @@
 import React from 'react'
 import type { AgentToolEvent, AiChunkPayload, AiMessageInput, AppSettings, ToolTraceEntry } from '@shared/types'
+import type { ContextMeasurement } from '@shared/contextMeter'
 import { MarkdownView } from '../Markdown'
 import { Icon } from '../icons'
 import { getTranslator } from '../i18n'
@@ -33,6 +34,8 @@ type TurnBlock =
 interface ChatTurn {
   /** Stable render key; absent on turns persisted before ids existed. */
   id?: string
+  /** One user task round spans its initiating user turn and assistant work. */
+  taskRoundId?: string
   role: 'user' | 'assistant'
   text: string
   /** Legacy single reasoning blob (older saved topics); new turns put
@@ -49,6 +52,9 @@ interface ChatTurn {
   images?: string[]
   /** Pasted text files — content is inlined into the sent text. */
   files?: FileAttachment[]
+  /** Content-free samples emitted before each model request in this user task
+   * round. Kept locally for later estimator calibration. */
+  contextMeasurements?: Array<ContextMeasurement & { taskRoundId?: string; modelRequestIndex: number }>
 }
 
 /** A text file pasted into the composer (name + full content). */
@@ -97,6 +103,7 @@ interface ChatTopic {
 
 const isMac = navigator.userAgent.includes('Mac OS X')
 const MAX_TOPICS = 10
+const MAX_CONTEXT_MEASUREMENTS_PER_TURN = 64
 const STORAGE_KEY = 'aia-chat-topics'
 const MODELS_CACHE_KEY = 'aia-models-cache'
 const MODELS_CACHE_TTL = 5 * 60 * 1000 // 5 minutes
@@ -1276,6 +1283,21 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
         }
         return
       }
+      if (chunk.type === 'context' && chunk.context) {
+        const contextMeasurement = chunk.context
+        setChat((current) => {
+          if (!current.length) return current
+          const next = [...current]
+          const last = { ...next[next.length - 1] }
+          if (last.role !== 'assistant') return current
+          last.contextMeasurements = [...(last.contextMeasurements ?? []), contextMeasurement].slice(
+            -MAX_CONTEXT_MEASUREMENTS_PER_TURN
+          )
+          next[next.length - 1] = last
+          return next
+        })
+        return
+      }
       // Non-text events must see buffered text applied first so tool blocks
       // land at the right position in the stream.
       flush()
@@ -1416,12 +1438,13 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
     }
     const history = chatRef.current
     const session = chatSessionRef.current
+    const taskRoundId = crypto.randomUUID()
     lastUserTextRef.current = text
     stickToBottomRef.current = true
     setChat([
       ...history,
-      { id: crypto.randomUUID(), role: 'user', text, ...(images.length ? { images } : {}), ...(files.length ? { files } : {}) },
-      { id: crypto.randomUUID(), role: 'assistant', text: '', pending: true }
+      { id: crypto.randomUUID(), taskRoundId, role: 'user', text, ...(images.length ? { images } : {}), ...(files.length ? { files } : {}) },
+      { id: crypto.randomUUID(), taskRoundId, role: 'assistant', text: '', pending: true }
     ])
     const gate = { cancelled: false }
     preSendRef.current = gate
@@ -1502,6 +1525,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
       activeRequestId.current = requestId
       void window.assistantLite.ai.stream({
         requestId,
+        taskRoundId,
         messages,
         ...(selectedModel ? { model: selectedModel } : {}),
         ...(searchEnabled ? { forceSearch: true } : {}),

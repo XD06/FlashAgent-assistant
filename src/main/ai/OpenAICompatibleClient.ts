@@ -1,4 +1,5 @@
 import type { AiMessageInput, ProviderApiType, ProviderSettings, ReasoningMode } from '@shared/types'
+import { measureContext, type ContextMeasurement } from '@shared/contextMeter'
 
 export class AiConfigurationError extends Error {}
 const ANTHROPIC_VERSION = '2023-06-01'
@@ -469,7 +470,7 @@ interface AccumulatedToolCall {
   arguments: string
 }
 
-interface ToolCallStreamOptions extends ProviderRequestOptions {
+export interface ToolCallStreamOptions extends ProviderRequestOptions {
   tools?: ToolDefinition[]
   onToolCall?: (name: string, args: Record<string, unknown>) => Promise<string>
   onStatus?: (text: string, toolName?: string) => void
@@ -496,6 +497,8 @@ interface ToolCallStreamOptions extends ProviderRequestOptions {
    * reports). Fired once per request; in the tool loop that means once per
    * round, each newer promptTokens superseding the last. */
   onUsage?: (usage: TokenUsage) => void
+  /** Content-free payload estimate emitted before each model request. */
+  onContextMeasured?: (measurement: ContextMeasurement & { modelRequestIndex: number }) => void
 }
 
 // In-loop context control, mirroring the renderer's "keep the last ~5 rounds
@@ -698,6 +701,16 @@ export async function streamChatMessages(
       options.onUsage({ promptTokens: acc.promptTokens, completionTokens: acc.completionTokens ?? 0 })
     }
   }
+  const emitContext = (nativeMessages: unknown[], nativeTools: unknown[], modelRequestIndex: number): void => {
+    try {
+      options.onContextMeasured?.({
+        ...measureContext({ systemPrompt, tools: nativeTools, messages: nativeMessages }),
+        modelRequestIndex
+      })
+    } catch {
+      // Diagnostics must never interrupt a provider request.
+    }
+  }
 
   // ---- Simple flow (no tools) — existing behaviour ----
   if (!useToolCalling) {
@@ -730,6 +743,7 @@ export async function streamChatMessages(
             ]
           }
     applyReasoning(body, provider.apiType, reasoning)
+    emitContext((body.messages as unknown[]) ?? [], [], 0)
 
     const response = await postChat(
       buildProviderUrl(provider, provider.apiType === 'anthropic' ? 'messages' : 'chat/completions'),
@@ -831,6 +845,7 @@ export async function streamChatMessages(
             tools: buildToolsBody(apiType, tools!)
           }
     applyReasoning(body, apiType, reasoning)
+    emitContext(apiMessages, buildToolsBody(apiType, tools!), round)
 
     const response = await postChat(
       buildProviderUrl(provider, apiType === 'anthropic' ? 'messages' : 'chat/completions'),

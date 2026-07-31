@@ -183,6 +183,8 @@ export interface AiMessageInput {
 
 export interface AiStreamRequest {
   requestId: string
+  /** Stable id for one user task round: from this user message until the next. */
+  taskRoundId?: string
   prompt?: string
   messages?: AiMessageInput[]
   systemPrompt?: string
@@ -229,7 +231,7 @@ export interface AiChunkPayload {
   requestId: string
   /** 'injected' confirms a queued user note was delivered into the running
    * tool loop — `text` carries the note verbatim. */
-  type: 'delta' | 'done' | 'error' | 'status' | 'reasoning' | 'tool' | 'injected' | 'usage'
+  type: 'delta' | 'done' | 'error' | 'status' | 'reasoning' | 'tool' | 'injected' | 'usage' | 'context'
   text?: string
   reasoning?: string
   error?: string
@@ -237,9 +239,12 @@ export interface AiChunkPayload {
   /** Real token usage reported by the provider for the latest model request
    * — promptTokens is the actual size of the context that was sent. */
   usage?: { promptTokens: number; completionTokens: number }
+  /** Content-free estimate emitted before each provider request. */
+  context?: ContextMeasurement & { taskRoundId?: string; modelRequestIndex: number }
 }
 
 export type SettingsPatch = Partial<Omit<AppSettings, 'provider' | 'shortcuts'>> & {
   provider?: Partial<ProviderSettings>
   shortcuts?: Partial<ShortcutSettings>
 }
+import type { ContextMeasurement } from './contextMeter'

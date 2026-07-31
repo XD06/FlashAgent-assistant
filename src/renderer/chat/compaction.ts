@@ -2,6 +2,9 @@
 // ChatMode and unit tests.
 //
 import type { AiMessageInput } from '@shared/types'
+import { CJK_TOKENS_PER_CHAR, estimateTokensFromChars, estimateTokensFromText } from '@shared/contextMeter'
+
+export { CJK_TOKENS_PER_CHAR, estimateTokensFromChars, estimateTokensFromText } from '@shared/contextMeter'
 //
 // The context window is a deliberately narrowed "attention budget", NOT the
 // model's physical limit (the models we target mostly support 500k+).
@@ -148,30 +151,8 @@ export const KEEP_MIN_TURNS = 4
 /** Never keep more verbatim turns than this (bounds per-send scan work). */
 export const KEEP_MAX_TURNS = 20
 
-/** The provider-agnostic rough estimate: ~4 chars per token. English-ish
- * assumption — prefer estimateTokensFromText when the text is available. */
-export function estimateTokensFromChars(chars: number): number {
-  return Math.ceil(Math.max(0, chars) / 4)
-}
-
-// CJK text tokenizes far denser than English: roughly 1–1.5 chars per token
-// across common tokenizers (vs ~4 for English). The old flat chars/4 rule
-// under-estimated Chinese by ~3× — the keep window held triple its token
-// budget and the pre-send trigger fired a whole round late on big Chinese
-// pastes. 0.7 tokens/char sits mid-field (GPT-4o ≈0.6–0.7, DeepSeek/Qwen
-// ≈0.55–0.65, cl100k ≥1) and errs slightly toward compressing earlier.
-export const CJK_TOKENS_PER_CHAR = 0.7
-// Han (incl. radicals/ExtA/compat), kana, hangul, fullwidth forms and CJK
-// punctuation — the scripts the 4-chars rule is wrong about.
-const CJK_RE = /[\u1100-\u11ff\u2e80-\u9fff\uac00-\ud7af\uf900-\ufaff\uff00-\uffef]/g
-
-/** Script-aware token estimate: CJK chars at CJK_TOKENS_PER_CHAR, the rest
- * at the ~4-chars-per-token English rule. */
-export function estimateTokensFromText(text: string): number {
-  if (!text) return 0
-  const cjk = text.match(CJK_RE)?.length ?? 0
-  return Math.ceil(cjk * CJK_TOKENS_PER_CHAR + (text.length - cjk) / 4)
-}
+// The token estimators are shared with the main-process context meter. They
+// remain re-exported here to preserve the existing renderer/test API.
 
 /** First index of the "always send full text" window. Walks from the newest
  * turn backwards accumulating per-turn token estimates until the keep budget

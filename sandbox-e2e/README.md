@@ -47,3 +47,23 @@ pnpm e2e:compaction
 
 首次实测记录（2026-07-28，全链路通过）见 `docs/AGENT-LOOP-IMPROVEMENT-PLAN.md` 的
 「真实 E2E 测试记录」节。
+
+## Agent 上下文测量回归
+
+```bash
+pnpm e2e:agent-context
+```
+
+它使用同一份本机 provider 配置，在被 Git 忽略的
+`sandbox-e2e/agent-context-workspace/escape-string-regexp` 公开仓库副本中，复用生产
+`streamChatMessages` 和 `AgentTools` 执行一次受限的真实 Agent 任务。结果只写入被
+Git 忽略的 `agent-context-result.json`：请求次数、各分段 token 估算、真实 usage（若网关
+返回）、耗时与通过状态；不会记录提示词、模型回复、工具输出、配置或密钥。
+驱动优先读取新应用目录；若桌面应用尚未执行更名迁移，则只读回退到旧目录，不会复制或修改
+任何用户设置。
+
+首次运行前手动创建该隔离副本，例如：
+
+```bash
+git clone --depth 1 https://github.com/sindresorhus/escape-string-regexp.git sandbox-e2e/agent-context-workspace/escape-string-regexp
+```

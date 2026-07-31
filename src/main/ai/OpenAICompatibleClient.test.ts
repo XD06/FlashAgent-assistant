@@ -390,6 +390,27 @@ describe('OpenAI-compatible stream parser', () => {
     expect(onUsage).toHaveBeenCalledWith({ promptTokens: 1234, completionTokens: 56 })
   })
 
+  it('emits content-free context measurements before a simple provider request', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(streamingTextResponse('OK'))
+    const onContextMeasured = vi.fn()
+
+    await streamChatMessages(
+      provider,
+      [{ role: 'user', text: 'inspect a file' }],
+      'system rules',
+      new AbortController().signal,
+      () => {},
+      'off',
+      { onContextMeasured }
+    )
+
+    expect(onContextMeasured).toHaveBeenCalledTimes(1)
+    const measurement = onContextMeasured.mock.calls[0][0] as Record<string, unknown>
+    expect(measurement.modelRequestIndex).toBe(0)
+    expect(measurement.estimatedPromptTokens).toEqual(expect.any(Number))
+    expect(Object.values(measurement).join(' ')).not.toContain('inspect a file')
+  })
+
   it('does not request include_usage when no onUsage listener is set', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(streamingTextResponse('OK'))
 

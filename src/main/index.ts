@@ -733,6 +733,7 @@ function registerIpc(): void {
           // Real context size per request — renderer shows it and P1-B will
           // trigger compression from it.
           onUsage: (usage) => sendChunk({ type: 'usage', usage }),
+          onContextMeasured: (context) => sendChunk({ type: 'context', context: { ...context, taskRoundId: request.taskRoundId } }),
           onToolCall: async (name: string, args: Record<string, unknown>) => {
             if (name === webSearchTool.name) {
               const query = typeof args.query === 'string' ? args.query : ''
