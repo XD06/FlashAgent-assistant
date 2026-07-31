@@ -213,7 +213,11 @@ label {
   --settings-success: #0f8f70;
   color: var(--settings-text);
   background: var(--settings-bg);
-  min-height: 100vh;
+  /* Fixed viewport shell: only the content column scrolls. */
+  height: 100vh;
+  min-height: 0;
+  overflow: hidden;
+  padding: 14px;
 }
 
 html[data-theme='dark'] .settings-page {
@@ -230,10 +234,14 @@ html[data-theme='dark'] .settings-page {
 }
 
 .settings-shell {
-  max-width: 420px;
+  /* Wide horizontal layout: header on top, left rail + content below. */
+  max-width: 860px;
+  height: 100%;
   margin: 0 auto;
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 12px;
+  min-height: 0;
 }
 
 .settings-body {
@@ -261,6 +269,37 @@ html[data-theme='dark'] .settings-page {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+}
+
+.settings-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.settings-brand img {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+
+.settings-brand span {
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  color: var(--settings-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.settings-toolbar__tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
 }
 
 .language-segment {
@@ -371,35 +410,38 @@ html[data-theme='dark'] .settings-page {
 }
 
 .settings-layout {
+  flex: 1 1 auto;
   min-height: 0;
   display: grid;
-  gap: 10px;
-  align-items: start;
+  grid-template-columns: 148px minmax(0, 1fr);
+  gap: 16px;
+  align-items: stretch;
 }
 
 .settings-sidebar {
-  display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: minmax(0, 1fr);
+  /* Vertical rail — icon + label per page, pinned while content scrolls. */
+  display: flex;
+  flex-direction: column;
+  align-self: start;
   gap: 2px;
-  padding: 3px;
+  padding: 4px;
   border: 0;
-  border-radius: 999px;
+  border-radius: 14px;
   background: color-mix(in srgb, var(--settings-surface) 88%, var(--settings-bg));
 }
 
 .settings-nav-button {
   width: 100%;
-  min-height: 30px;
+  min-height: 32px;
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 5px;
+  justify-content: flex-start;
+  gap: 7px;
   border: 0;
-  border-radius: 999px;
-  padding: 0 6px;
+  border-radius: 10px;
+  padding: 0 10px;
   overflow: hidden;
-  text-align: center;
+  text-align: left;
   background: transparent;
   color: var(--settings-faint);
 }
@@ -410,7 +452,7 @@ html[data-theme='dark'] .settings-page {
 
 .settings-nav-button span {
   color: var(--settings-muted);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 620;
   letter-spacing: 0.01em;
   white-space: nowrap;
@@ -437,24 +479,30 @@ html[data-theme='dark'] .settings-page {
 
 .settings-content {
   min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
   display: grid;
   gap: 0;
+  align-content: start;
+  /* Breathing room so card shadows aren't clipped by the scroll container. */
+  padding: 2px 2px 14px;
 }
 
 .settings-stack {
   display: grid;
-  gap: 10px;
+  gap: 16px;
 }
 
 .setting-section {
   display: grid;
-  gap: 5px;
+  gap: 6px;
 }
 
 .setting-section h3 {
   margin: 0;
+  padding-left: 4px;
   color: color-mix(in srgb, var(--settings-faint) 80%, var(--settings-muted));
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 640;
   letter-spacing: 0.06em;
   line-height: 1.2;
@@ -473,9 +521,15 @@ html[data-theme='dark'] .settings-page {
 
 .form-grid {
   display: grid;
-  grid-template-columns: 1fr;
-  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 12px;
   padding: 10px;
+}
+
+/* Long fields (model picker, API key, status lines) span the full row. */
+.form-grid .field--wide,
+.form-grid .model-status {
+  grid-column: 1 / -1;
 }
 
 .field span {
@@ -499,9 +553,9 @@ html[data-theme='dark'] .settings-page {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  min-height: 42px;
-  padding: 8px 10px;
+  gap: 14px;
+  min-height: 44px;
+  padding: 9px 14px;
   border-bottom: 1px solid var(--settings-line);
 }
 
@@ -542,7 +596,7 @@ html[data-theme='dark'] .settings-page {
 
 .setting-control {
   min-width: 0;
-  flex: 0 0 min(44%, 168px);
+  flex: 0 0 min(44%, 220px);
   display: flex;
   justify-content: flex-end;
   align-items: center;
@@ -862,7 +916,9 @@ html[data-theme='dark'] .inline-icon-button:hover {
 
 .action-meta {
   display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 12px;
+  align-items: start;
 }
 
 .icon-picker {
@@ -1474,23 +1530,27 @@ html[data-theme='dark'] .footer button:last-child {
   }
 
   .settings-layout {
+    /* Narrow window: collapse the rail to icon-only, keep it vertical. */
+    grid-template-columns: 44px minmax(0, 1fr);
     gap: 12px;
   }
 
-  .settings-sidebar {
-    display: grid;
-    grid-auto-flow: column;
-    grid-auto-columns: minmax(0, 1fr);
-    overflow: visible;
+  .settings-nav-button {
+    justify-content: center;
+    padding: 0;
   }
 
-  .settings-nav-button {
-    min-width: 0;
+  .settings-nav-button span {
+    display: none;
   }
 }
 
 @media (max-width: 640px) {
   .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .action-meta {
     grid-template-columns: 1fr;
   }
 

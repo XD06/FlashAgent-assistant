@@ -149,10 +149,11 @@ function createSettingsWindow(): BrowserWindow {
   }
 
   settingsWindow = new BrowserWindow({
-    width: 420,
-    height: 680,
-    minWidth: 380,
-    minHeight: 560,
+    // Wide layout: left rail nav + content column (settings pages).
+    width: 720,
+    height: 600,
+    minWidth: 620,
+    minHeight: 480,
     icon: appIcon,
     title: 'AIA划词助手',
     autoHideMenuBar: true,

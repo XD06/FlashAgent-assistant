@@ -8,6 +8,7 @@ import { useThemeMode } from '../useThemeMode'
 import { useAppearance } from '../useAppearance'
 import { getActionLabel, getTranslator } from '../i18n'
 import { ProviderNameInput } from './ProviderNameInput'
+import { APP_ICON_DATA_URL } from '@shared/brand'
 import type {
   ActionItem,
   AppLanguage,
@@ -51,7 +52,7 @@ function SettingsNav({
           className={section.id === activeSection ? 'settings-nav-button active' : 'settings-nav-button'}
           onClick={() => onChange(section.id)}
           type="button">
-          <Icon name={section.icon} size={13} />
+          <Icon name={section.icon} size={14} />
           <span>{section.label}</span>
         </button>
       ))}
@@ -680,7 +681,7 @@ function SettingsApp() {
                       {template.provider.apiType === 'anthropic' && (
                         <div className="model-status">{t('baseUrlAnthropicHint')}</div>
                       )}
-                      <label className="field">
+                      <label className="field field--wide">
                         <div className="field-header">
                           <span>{t('model')}</span>
                           <div className="inline-actions">
@@ -708,7 +709,7 @@ function SettingsApp() {
                         />
                       </label>
                       {models.length > 0 && (
-                        <label className="field">
+                        <label className="field field--wide">
                           <span>{t('modelList')}</span>
                           <select
                             value={template.provider.model}
@@ -726,7 +727,7 @@ function SettingsApp() {
                           </select>
                         </label>
                       )}
-                      <label className="field">
+                      <label className="field field--wide">
                         <span>{t('apiKey')}</span>
                         <input
                           type="password"
@@ -1011,7 +1012,12 @@ function SettingsApp() {
       <div className="settings-shell">
         <header className="settings-header">
           <div className="settings-toolbar">
-            <div className="language-segment" role="group" aria-label={t('language')}>
+            <div className="settings-brand">
+              <img src={APP_ICON_DATA_URL} alt="" />
+              <span>{t('appTitle')}</span>
+            </div>
+            <div className="settings-toolbar__tools">
+              <div className="language-segment" role="group" aria-label={t('language')}>
               <button
                 type="button"
                 className={settings.language === 'zh-CN' ? 'language-segment-button active' : 'language-segment-button'}
@@ -1049,6 +1055,7 @@ function SettingsApp() {
                 {settings.enabled ? t('statusEnabled') : t('statusDisabled')}
               </span>
               <Toggle checked={settings.enabled} label={t('shortcutToggleAssistant')} onChange={() => void toggleAssistantEnabled()} />
+            </div>
             </div>
           </div>
         </header>
