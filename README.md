@@ -37,6 +37,8 @@ FlashAgent-assistant 是面向快速问答与轻量 Agent 工作流的桌面 AI 
 
 ## 界面预览
 
+以下截图展示当前版本 FlashAgent-assistant 的设置界面。
+
 ### 设置
 
 <p>

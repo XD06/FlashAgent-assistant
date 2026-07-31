@@ -37,6 +37,8 @@ This project is a derivative of [zcx960/AIA-selection-assistan](https://github.c
 
 ## Screenshots
 
+The screenshots below show the current FlashAgent-assistant settings interface.
+
 ### Settings
 
 <p>
