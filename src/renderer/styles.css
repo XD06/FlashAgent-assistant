@@ -1125,8 +1125,21 @@ html[data-theme='dark'] .toolbar-button:hover {
   background: transparent;
 }
 
+/* Round hover pills — echoes the composer's circular controls. */
+.titlebar button.icon {
+  border-radius: 999px;
+  color: var(--muted);
+}
+
 .titlebar button:hover {
   background: var(--hover);
+  color: var(--text);
+}
+
+/* Close is the only destructive control up here — tint it on hover. */
+.titlebar button.icon--close:hover {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  color: var(--danger);
 }
 
 html[data-theme='dark'] .titlebar {

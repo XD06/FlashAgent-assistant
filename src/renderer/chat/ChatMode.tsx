@@ -1944,10 +1944,10 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
         {!isMac && (
           <>
             <button className="icon" title={t('minimize')} onClick={() => window.assistantLite.windowControls.minimize()}>
-              <span>-</span>
+              <Icon name="minus" size={15} />
             </button>
-            <button className="icon" title={t('close')} onClick={() => window.assistantLite.windowControls.close()}>
-              <Icon name="x" />
+            <button className="icon icon--close" title={t('close')} onClick={() => window.assistantLite.windowControls.close()}>
+              <Icon name="x" size={15} />
             </button>
           </>
         )}

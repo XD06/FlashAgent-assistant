@@ -58,10 +58,14 @@ function FileText({ size = 16, strokeWidth = 2 }: IconProps) {
 }
 
 function Blocks({ size = 16, strokeWidth = 2 }: IconProps) {
+  // Extensions: 2x2 grid of rounded tiles — cleaner at small sizes than the
+  // old interlocking-blocks outline.
   return (
     <svg {...baseProps(size)} strokeWidth={strokeWidth}>
-      <rect width="7" height="7" x="14" y="3" rx="1" />
-      <path d="M10 21V8a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-5a1 1 0 0 0-1-1H3" />
+      <rect width="7" height="7" x="3.5" y="3.5" rx="1.5" />
+      <rect width="7" height="7" x="13.5" y="3.5" rx="1.5" />
+      <rect width="7" height="7" x="3.5" y="13.5" rx="1.5" />
+      <rect width="7" height="7" x="13.5" y="13.5" rx="1.5" />
     </svg>
   )
 }
@@ -135,9 +139,11 @@ function Moon({ size = 16, strokeWidth = 2 }: IconProps) {
 }
 
 function Pin({ size = 16, strokeWidth = 2 }: IconProps) {
+  // Upright pushpin (lucide v2) — the old angled pin read as a paper plane.
   return (
     <svg {...baseProps(size)} strokeWidth={strokeWidth}>
-      <path d="m15 4 5 5-3 1-3 6-1.5-1.5-6 3 3-6L8 8l7-4Z" />
+      <path d="M12 17v5" />
+      <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1z" />
     </svg>
   )
 }
@@ -145,9 +151,10 @@ function Pin({ size = 16, strokeWidth = 2 }: IconProps) {
 function PinOff({ size = 16, strokeWidth = 2 }: IconProps) {
   return (
     <svg {...baseProps(size)} strokeWidth={strokeWidth}>
-      <path d="m15 4 5 5-3 1-1.2 2.3" />
-      <path d="m11.7 12.3-1.2 2.2L8 8l7-4" />
-      <path d="m3 21 6-6" />
+      <path d="M12 17v5" />
+      <path d="M15 9.34V6h1a2 2 0 0 0 0-4H7.89" />
+      <path d="m2 2 20 20" />
+      <path d="M9 9v1.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h11" />
     </svg>
   )
 }
@@ -176,11 +183,13 @@ function SearchIcon({ size = 16, strokeWidth = 2 }: IconProps) {
 }
 
 function Sparkles({ size = 16, strokeWidth = 2 }: IconProps) {
+  // Curved four-point star (lucide v2) — far more polished at small sizes
+  // than the old three straight-edged diamonds.
   return (
     <svg {...baseProps(size)} strokeWidth={strokeWidth}>
-      <path d="m12 3 1.4 3.6L17 8l-3.6 1.4L12 13l-1.4-3.6L7 8l3.6-1.4L12 3Z" />
-      <path d="m5 14 .8 2.2L8 17l-2.2.8L5 20l-.8-2.2L2 17l2.2-.8L5 14Z" />
-      <path d="m19 13 .5 1.3L21 15l-1.5.7L19 17l-.5-1.3L17 15l1.5-.7L19 13Z" />
+      <path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z" />
+      <path d="M20 3v4" />
+      <path d="M22 5h-4" />
     </svg>
   )
 }
@@ -333,11 +342,12 @@ function Plus({ size = 16, strokeWidth = 2 }: IconProps) {
 }
 
 function History({ size = 16, strokeWidth = 2 }: IconProps) {
+  // Left side panel — matches the slide-in history drawer; the old
+  // arrow-around-clock was illegible at 15px.
   return (
     <svg {...baseProps(size)} strokeWidth={strokeWidth}>
-      <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
-      <path d="M3 3v5h5" />
-      <path d="M12 7v5l3 3" />
+      <rect x="3.5" y="4" width="17" height="16" rx="2.5" />
+      <path d="M9.5 4v16" />
     </svg>
   )
 }
@@ -356,6 +366,14 @@ function Clock({ size = 16, strokeWidth = 2 }: IconProps) {
     <svg {...baseProps(size)} strokeWidth={strokeWidth}>
       <circle cx="12" cy="12" r="10" />
       <path d="M12 6v6l4 2" />
+    </svg>
+  )
+}
+
+function Minus({ size = 16, strokeWidth = 2 }: IconProps) {
+  return (
+    <svg {...baseProps(size)} strokeWidth={strokeWidth}>
+      <path d="M5 12h14" />
     </svg>
   )
 }
@@ -395,10 +413,13 @@ const icons: Record<string, (props: IconProps) => React.JSX.Element> = {
   'refresh-cw': RefreshCw,
   'chevron-right': ChevronRight,
   'corner-down-right': CornerDownRight,
-  clock: Clock
+  clock: Clock,
+  minus: Minus
 }
 
 export function Icon({ name, size = 16 }: { name: string; size?: number }) {
   const Component = icons[name] ?? Sparkles
-  return <Component size={size} strokeWidth={2} />
+  // 1.75 stroke on the 24px grid: lighter, more refined at the 12–16px
+  // sizes the app actually renders (2.0 looked chunky).
+  return <Component size={size} strokeWidth={1.75} />
 }
