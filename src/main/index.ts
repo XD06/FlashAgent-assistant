@@ -10,7 +10,7 @@ import { APP_ICON_DATA_URL, APP_TRAY_DATA_URL } from '@shared/brand'
 import type { AgentToolEvent, AiStreamRequest, SettingsPatch } from '@shared/types'
 import { listModels, streamChatMessages, testModel, type ProviderFetch } from './ai/OpenAICompatibleClient'
 import { formatSearchContext, searchWithFallback, webSearchTool } from './ai/WebSearch'
-import { agentToolDefinitions, assessCommandRisk, executeAgentTool, requiresApproval, restoreSnapshot, snapshotForMutation, summarizeToolCall } from './agent/AgentTools'
+import { agentToolDefinitionsForShell, assessCommandRisk, executeAgentTool, requiresApproval, resolveCommandShell, restoreSnapshot, shellSyntaxLabel, snapshotForMutation, summarizeToolCall } from './agent/AgentTools'
 import { validateAgentToolArgs } from './agent/validateToolArgs'
 import { deleteSnapshot, loadSnapshot, saveSnapshot } from './agent/SnapshotStore'
 import { cancelApprovalsForRequest, resolveApproval, waitForApproval } from './agent/AgentSession'
@@ -531,7 +531,7 @@ function registerIpc(): void {
       const mcpTools = useExtensions ? mcpManager.getToolDefinitions() : []
       const tools = [
         ...(enableSearch ? [webSearchTool] : []),
-        ...(agentEnabled ? agentToolDefinitions : []),
+        ...(agentEnabled ? agentToolDefinitionsForShell(settings.commandShell) : []),
         ...mcpTools
       ]
       let effectiveSystemPrompt = agentEnabled
@@ -539,7 +539,7 @@ function registerIpc(): void {
           // Core grounding rule — placed FIRST so it anchors model behavior.
           `IMPORTANT: You MUST use tool calls to perform actions. Describing an action in text does NOT execute it. ` +
           `Only a tool_use/function_call returned in the API response counts as real work.\n\n` +
-          `You can operate on the user’s real file system with the tools read_file, write_file, edit_file, list_dir, search_files and run_command (${process.platform === 'win32' ? 'Git Bash syntax on Windows' : 'bash'}). Working directory: ${workingDir}. ` +
+          `You can operate on the user’s real file system with the tools read_file, write_file, edit_file, list_dir, search_files and run_command (shell: ${shellSyntaxLabel(resolveCommandShell(settings.commandShell))}). Working directory: ${workingDir}. ` +
           `Prefer search_files to locate code instead of listing and reading files one by one. Read files before editing them, prefer edit_file for small changes, and keep commands non-interactive. ` +
           `Write/edit/command calls require user approval and may be rejected — if rejected, ask or adjust your approach instead of retrying the same call.\n\n` +
           `Grounding rules:\n` +
@@ -622,7 +622,8 @@ function registerIpc(): void {
             args,
             workingDir,
             controller.signal,
-            name === 'run_command' ? pushLiveOutput : undefined
+            name === 'run_command' ? pushLiveOutput : undefined,
+            settings.commandShell
           )
           if (snapshot) void saveSnapshot(callId, snapshot)
           // Mirror the in-turn 12k cap (head + tail) so cross-turn replay via

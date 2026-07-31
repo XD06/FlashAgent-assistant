@@ -1,5 +1,5 @@
 import React from 'react'
-import type { AppSettings, McpServerConfig, McpServerStatus, McpTransport, SkillInfo } from '@shared/types'
+import type { AppSettings, CommandShell, McpServerConfig, McpServerStatus, McpTransport, SkillInfo } from '@shared/types'
 import { parseMcpJson } from '@shared/mcpJson'
 import type { ParsedMcpServer } from '@shared/mcpJson'
 import { Icon } from '../icons'
@@ -12,6 +12,9 @@ interface ExtensionsPanelProps {
 }
 
 type PanelTab = 'memory' | 'skills' | 'mcp' | 'perms'
+
+// Shell picker only makes sense on Windows — macOS/Linux always run bash.
+const IS_WINDOWS_UI = navigator.platform.toLowerCase().includes('win')
 
 const STATE_COLORS: Record<McpServerStatus['state'], string> = {
   connected: '#3fb950',
@@ -263,6 +266,33 @@ export function ExtensionsPanel({ settings, isZh, workingDir, onClose }: Extensi
               ? '开启后文件读写与普通命令自动放行；删除等危险命令仍会暂停等待确认，格式化磁盘等毁灭性命令始终直接拦截；MCP 工具调用不受影响，仍需确认。'
               : 'When on, file edits and ordinary commands run automatically. Destructive commands (e.g. deletions) still pause for confirmation, catastrophic ones (e.g. formatting a drive) are always blocked, and MCP tool calls still require approval.'}
           </div>
+          {IS_WINDOWS_UI && (
+            <>
+              <div className="ext-panel__item">
+                <span className="ext-panel__item-name">{isZh ? '命令执行环境' : 'Command shell'}</span>
+                <span className="ext-panel__item-desc">
+                  {isZh ? 'run_command 工具使用的终端' : 'Shell used by the run_command tool'}
+                </span>
+                <select
+                  className="ext-panel__select"
+                  value={settings.commandShell}
+                  onChange={(e) =>
+                    void window.assistantLite.settings.update({ commandShell: e.target.value as CommandShell })
+                  }
+                >
+                  <option value="auto">{isZh ? '自动（Git Bash 优先）' : 'Auto (prefer Git Bash)'}</option>
+                  <option value="gitbash">Git Bash</option>
+                  <option value="powershell">PowerShell</option>
+                  <option value="cmd">CMD</option>
+                </select>
+              </div>
+              <div className="ext-panel__hint">
+                {isZh
+                  ? '选定后会在工具描述和系统提示词中明确告知 AI 当前终端及语法要求，减少 bash / PowerShell 语法混用错误；选 Git Bash 但未安装时自动回退 PowerShell。'
+                  : 'The chosen shell (and its syntax rules) is stated explicitly in the tool description and system prompt, reducing bash/PowerShell syntax mix-ups. Git Bash falls back to PowerShell when not installed.'}
+              </div>
+            </>
+          )}
         </div>
       )}
 

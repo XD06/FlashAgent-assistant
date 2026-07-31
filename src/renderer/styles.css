@@ -3229,6 +3229,22 @@ border-radius: 999px;
   flex: 0 0 auto;
 }
 .ext-panel__form { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+/* Inline dropdown inside an ext-panel row (e.g. the command-shell picker).
+   Must undo the global `select { width: 100%; min-height: 34px }` or the
+   flex row overflows the panel horizontally. */
+.ext-panel__select {
+  width: auto;
+  max-width: 170px;
+  min-height: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  padding: 3px 6px;
+  font-size: 12px;
+  font-family: inherit;
+  flex-shrink: 0;
+}
 .ext-panel__form input,
 .ext-panel__form select,
 .ext-panel__form textarea {

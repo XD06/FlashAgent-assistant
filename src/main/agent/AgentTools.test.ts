@@ -3,12 +3,15 @@ import { tmpdir, homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import {
+  agentToolDefinitionsForShell,
   assessCommandRisk,
   executeAgentTool,
   isForbiddenCommand,
   isSensitivePath,
   requiresApproval,
   resolveAgentPath,
+  resolveCommandShell,
+  shellSyntaxLabel,
   summarizeToolCall
 } from './AgentTools'
 
@@ -36,6 +39,44 @@ describe('resolveAgentPath', () => {
   it('rejects empty paths', () => {
     expect(() => resolveAgentPath(workDir, '')).toThrow()
     expect(() => resolveAgentPath(workDir, '   ')).toThrow()
+  })
+})
+
+describe('command shell selection', () => {
+  const isWin = process.platform === 'win32'
+
+  it('labels every shell kind with an explicit syntax contract', () => {
+    expect(shellSyntaxLabel('gitbash')).toContain('bash syntax')
+    expect(shellSyntaxLabel('powershell')).toContain('PowerShell syntax')
+    expect(shellSyntaxLabel('cmd')).toContain('CMD syntax')
+    expect(shellSyntaxLabel('bash')).toBe('bash')
+  })
+
+  it('honors explicit powershell/cmd preferences on Windows, always bash elsewhere', () => {
+    if (isWin) {
+      expect(resolveCommandShell('powershell')).toBe('powershell')
+      expect(resolveCommandShell('cmd')).toBe('cmd')
+      // auto/gitbash resolve by environment; both may only yield gitbash or powershell
+      expect(['gitbash', 'powershell']).toContain(resolveCommandShell('auto'))
+      expect(['gitbash', 'powershell']).toContain(resolveCommandShell('gitbash'))
+    } else {
+      expect(resolveCommandShell('powershell')).toBe('bash')
+      expect(resolveCommandShell('cmd')).toBe('bash')
+      expect(resolveCommandShell('auto')).toBe('bash')
+    }
+  })
+
+  it('rewrites only the run_command description for the configured shell', () => {
+    const defs = agentToolDefinitionsForShell(isWin ? 'cmd' : 'auto')
+    const runCommand = defs.find((def) => def.name === 'run_command')
+    expect(runCommand?.description).toContain(shellSyntaxLabel(resolveCommandShell(isWin ? 'cmd' : 'auto')))
+    if (isWin) expect(runCommand?.description).toContain('CMD syntax')
+    // every other definition passes through untouched (same reference)
+    for (const def of defs) {
+      if (def.name !== 'run_command') {
+        expect(def.description).not.toContain('CMD syntax')
+      }
+    }
   })
 })
 

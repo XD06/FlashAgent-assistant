@@ -4,6 +4,7 @@ import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, relative, resolve } from 'node:path'
 import { isWin } from '../platform'
 import type { ToolDefinition } from '../ai/OpenAICompatibleClient'
+import type { CommandShell } from '@shared/types'
 
 const MAX_READ_LINES = 2000
 // Reading loads the whole file into a string first — cap the size so the
@@ -59,7 +60,7 @@ export function resolveAgentPath(workingDir: string, inputPath: string): string 
 
 let cachedBashPath: string | null | undefined
 /** Locate Git Bash on Windows; returns null when unavailable (fallback: pwsh). */
-function findGitBash(): string | null {
+export function findGitBash(): string | null {
   if (cachedBashPath !== undefined) return cachedBashPath
   const candidates = [
     process.env.ProgramFiles ? resolve(process.env.ProgramFiles, 'Git', 'bin', 'bash.exe') : '',
@@ -73,6 +74,38 @@ function findGitBash(): string | null {
   ].filter(Boolean)
   cachedBashPath = candidates.find((candidate) => existsSync(candidate)) ?? null
   return cachedBashPath
+}
+
+export type ResolvedShellKind = 'gitbash' | 'powershell' | 'cmd' | 'bash'
+
+/** Map the user's shell preference to what will actually run. 'auto' and an
+ * unavailable Git Bash both degrade to PowerShell (always present on Windows),
+ * so the label shown to the model never lies about the real executor. */
+export function resolveCommandShell(pref: CommandShell = 'auto'): ResolvedShellKind {
+  if (!isWin) return 'bash'
+  if (pref === 'powershell') return 'powershell'
+  if (pref === 'cmd') return 'cmd'
+  return findGitBash() ? 'gitbash' : 'powershell'
+}
+
+/** Shell name + syntax contract, injected verbatim into the run_command tool
+ * description and the agent system prompt so the model stops mixing bash
+ * pipes into PowerShell (and vice versa). */
+export function shellSyntaxLabel(kind: ResolvedShellKind): string {
+  switch (kind) {
+    case 'gitbash':
+      return 'Git Bash on Windows — use bash syntax'
+    case 'powershell':
+      return 'Windows PowerShell — use PowerShell syntax (chain with `;`, Select-String instead of grep), NOT bash'
+    case 'cmd':
+      return 'Windows CMD (cmd.exe) — use CMD syntax (dir, findstr, chain with &), NOT bash or PowerShell'
+    case 'bash':
+      return 'bash'
+  }
+}
+
+function runCommandDescription(kind: ResolvedShellKind): string {
+  return `Run a shell command in the working directory (${shellSyntaxLabel(kind)}). Returns stdout+stderr, truncated to 10KB. Not interactive.`
 }
 
 export const agentToolDefinitions: ToolDefinition[] = [
@@ -145,12 +178,9 @@ export const agentToolDefinitions: ToolDefinition[] = [
   },
   {
     name: 'run_command',
-    // Tell the model which shell it actually gets: Git Bash when installed,
-    // PowerShell otherwise (bash syntax like `grep`/`&&` would fail there).
-    description:
-      `Run a shell command in the working directory (${
-        isWin ? (findGitBash() ? 'Git Bash' : 'PowerShell — use PowerShell syntax, not bash') : 'bash'
-      }). Returns stdout+stderr, truncated to 10KB. Not interactive.`,
+    // Baseline description assumes 'auto'; agentToolDefinitionsForShell()
+    // rewrites it per the user's configured shell before each request.
+    description: runCommandDescription(resolveCommandShell('auto')),
     parameters: {
       type: 'object',
       properties: {
@@ -320,7 +350,8 @@ function runCommandTool(
   workingDir: string,
   args: Record<string, unknown>,
   signal?: AbortSignal,
-  onOutput?: (chunk: string) => void
+  onOutput?: (chunk: string) => void,
+  shellPref: CommandShell = 'auto'
 ): Promise<string> {
   const command = asString(args.command).trim()
   if (!command) return Promise.reject(new Error('command must not be empty'))
@@ -332,16 +363,16 @@ function runCommandTool(
 
   let shell: string | undefined
   let execCommand = command
-  if (isWin) {
-    const bash = findGitBash()
-    if (bash) {
-      shell = undefined
-      // exec quoting for bash -c is fragile on Windows; pass through cmd with the
-      // bash binary quoted and the command single-argument escaped.
-      execCommand = `"${bash}" -c "${command.replace(/(["\\$`])/g, '\\$1')}"`
-    } else {
-      shell = 'powershell.exe'
-    }
+  const resolved = resolveCommandShell(shellPref)
+  if (resolved === 'gitbash') {
+    shell = undefined
+    // exec quoting for bash -c is fragile on Windows; pass through cmd with the
+    // bash binary quoted and the command single-argument escaped.
+    execCommand = `"${findGitBash()}" -c "${command.replace(/(["\\$`])/g, '\\$1')}"`
+  } else if (resolved === 'powershell') {
+    shell = 'powershell.exe'
+  } else if (resolved === 'cmd') {
+    shell = 'cmd.exe'
   } else {
     shell = '/bin/bash'
   }
@@ -568,7 +599,8 @@ export async function executeAgentTool(
   args: Record<string, unknown>,
   workingDir: string,
   signal?: AbortSignal,
-  onOutput?: (chunk: string) => void
+  onOutput?: (chunk: string) => void,
+  shellPref?: CommandShell
 ): Promise<string> {
   switch (name) {
     case 'read_file':
@@ -582,8 +614,18 @@ export async function executeAgentTool(
     case 'list_dir':
       return listDirTool(workingDir, args)
     case 'run_command':
-      return runCommandTool(workingDir, args, signal, onOutput)
+      return runCommandTool(workingDir, args, signal, onOutput, shellPref)
     default:
       throw new Error(`Unknown agent tool: ${name}`)
   }
+}
+
+/** Tool definitions with the run_command contract rewritten for the user's
+ * configured shell — evaluated per request so a settings change (or Git Bash
+ * appearing/disappearing) is reflected without restart. */
+export function agentToolDefinitionsForShell(pref: CommandShell): ToolDefinition[] {
+  const kind = resolveCommandShell(pref)
+  return agentToolDefinitions.map((def) =>
+    def.name === 'run_command' ? { ...def, description: runCommandDescription(kind) } : def
+  )
 }

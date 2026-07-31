@@ -4,6 +4,7 @@ import type {
   ActionType,
   AppLanguage,
   AppSettings,
+  CommandShell,
   FilterMode,
   McpServerConfig,
   ProviderApiType,
@@ -106,6 +107,7 @@ export function mergeSettings(current: AppSettings, patch: SettingsPatch): AppSe
     theme: normalizeThemeMode(rest.theme ?? current.theme),
     triggerMode: normalizeTriggerMode(rest.triggerMode ?? current.triggerMode),
     filterMode: normalizeFilterMode(rest.filterMode ?? current.filterMode),
+    commandShell: normalizeCommandShell(rest.commandShell ?? current.commandShell),
     filterList: normalizeStringArray(rest.filterList ?? current.filterList),
     mcpServers: normalizeMcpServers(rest.mcpServers ?? current.mcpServers),
     disabledSkills: normalizeStringArray(rest.disabledSkills ?? current.disabledSkills),
@@ -146,6 +148,10 @@ function normalizeThemeMode(mode: unknown): ThemeMode {
 
 function normalizeFilterMode(mode: unknown): FilterMode {
   return mode === 'whitelist' || mode === 'blacklist' ? mode : 'default'
+}
+
+function normalizeCommandShell(shell: unknown): CommandShell {
+  return shell === 'gitbash' || shell === 'powershell' || shell === 'cmd' ? shell : 'auto'
 }
 
 function normalizeStringArray(value: unknown): string[] {

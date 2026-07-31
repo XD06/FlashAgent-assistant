@@ -1,5 +1,7 @@
 export type TriggerMode = 'selected' | 'shortcut'
 export type FilterMode = 'default' | 'whitelist' | 'blacklist'
+/** Windows shell for agent run_command: auto = Git Bash if installed, else PowerShell. */
+export type CommandShell = 'auto' | 'gitbash' | 'powershell' | 'cmd'
 export type ActionType = 'copy' | 'search' | 'prompt' | 'speak'
 export type AppLanguage = 'zh-CN' | 'en'
 export type ThemeMode = 'system' | 'light' | 'dark'
@@ -122,6 +124,9 @@ export interface AppSettings {
   /** Full-access mode: agent tools run without per-call approval; dangerous
    * commands still pause for confirmation and forbidden ones are blocked. */
   agentFullAccess: boolean
+  /** Shell used by the agent's run_command tool on Windows. 'auto' prefers
+   * Git Bash and falls back to PowerShell; ignored on macOS/Linux (bash). */
+  commandShell: CommandShell
   shortcuts: ShortcutSettings
   actions: ActionItem[]
   mcpServers: McpServerConfig[]

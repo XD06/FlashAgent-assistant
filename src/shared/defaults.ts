@@ -100,6 +100,7 @@ export const defaultSettings: AppSettings = {
   contextWindowTokens: 128_000,
   visionModel: '',
   agentFullAccess: false,
+  commandShell: 'auto',
   shortcuts: {
     toggleAssistant: 'CommandOrControl+Shift+Space',
     processSelection: 'CommandOrControl+Shift+S',
