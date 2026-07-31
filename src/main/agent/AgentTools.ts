@@ -76,16 +76,36 @@ export function findGitBash(): string | null {
   return cachedBashPath
 }
 
-export type ResolvedShellKind = 'gitbash' | 'powershell' | 'cmd' | 'bash'
+let cachedPwshPath: string | null | undefined
+/** Locate PowerShell 7+ (pwsh.exe) on Windows — a separate install from the
+ * built-in Windows PowerShell 5 (powershell.exe); returns null when absent. */
+export function findPwsh(): string | null {
+  if (cachedPwshPath !== undefined) return cachedPwshPath
+  const candidates = [
+    process.env.ProgramFiles ? resolve(process.env.ProgramFiles, 'PowerShell', '7', 'pwsh.exe') : '',
+    ...(process.env.PATH ?? '')
+      .split(';')
+      .map((entry) => entry.trim())
+      .filter(Boolean)
+      .map((entry) => resolve(entry, 'pwsh.exe'))
+  ].filter(Boolean)
+  cachedPwshPath = candidates.find((candidate) => existsSync(candidate)) ?? null
+  return cachedPwshPath
+}
 
-/** Map the user's shell preference to what will actually run. 'auto' and an
- * unavailable Git Bash both degrade to PowerShell (always present on Windows),
- * so the label shown to the model never lies about the real executor. */
+export type ResolvedShellKind = 'gitbash' | 'pwsh' | 'powershell' | 'cmd' | 'bash'
+
+/** Map the user's shell preference to what will actually run. 'auto' prefers
+ * Git Bash, then pwsh, then Windows PowerShell 5 (always present), and an
+ * unavailable explicit choice degrades the same way — so the label shown to
+ * the model never lies about the real executor. */
 export function resolveCommandShell(pref: CommandShell = 'auto'): ResolvedShellKind {
   if (!isWin) return 'bash'
   if (pref === 'powershell') return 'powershell'
   if (pref === 'cmd') return 'cmd'
-  return findGitBash() ? 'gitbash' : 'powershell'
+  if (pref === 'pwsh') return findPwsh() ? 'pwsh' : 'powershell'
+  if (findGitBash()) return 'gitbash'
+  return findPwsh() ? 'pwsh' : 'powershell'
 }
 
 /** Shell name + syntax contract, injected verbatim into the run_command tool
@@ -95,8 +115,10 @@ export function shellSyntaxLabel(kind: ResolvedShellKind): string {
   switch (kind) {
     case 'gitbash':
       return 'Git Bash on Windows — use bash syntax'
+    case 'pwsh':
+      return 'PowerShell 7 (pwsh) — use PowerShell syntax (chain with `;`, Select-String instead of grep), NOT bash'
     case 'powershell':
-      return 'Windows PowerShell — use PowerShell syntax (chain with `;`, Select-String instead of grep), NOT bash'
+      return 'Windows PowerShell 5 — use PowerShell syntax (chain with `;`, Select-String instead of grep), NOT bash'
     case 'cmd':
       return 'Windows CMD (cmd.exe) — use CMD syntax (dir, findstr, chain with &), NOT bash or PowerShell'
     case 'bash':
@@ -369,6 +391,8 @@ function runCommandTool(
     // exec quoting for bash -c is fragile on Windows; pass through cmd with the
     // bash binary quoted and the command single-argument escaped.
     execCommand = `"${findGitBash()}" -c "${command.replace(/(["\\$`])/g, '\\$1')}"`
+  } else if (resolved === 'pwsh') {
+    shell = findPwsh() ?? 'powershell.exe'
   } else if (resolved === 'powershell') {
     shell = 'powershell.exe'
   } else if (resolved === 'cmd') {

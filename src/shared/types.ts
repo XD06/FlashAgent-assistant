@@ -1,7 +1,8 @@
 export type TriggerMode = 'selected' | 'shortcut'
 export type FilterMode = 'default' | 'whitelist' | 'blacklist'
-/** Windows shell for agent run_command: auto = Git Bash if installed, else PowerShell. */
-export type CommandShell = 'auto' | 'gitbash' | 'powershell' | 'cmd'
+/** Windows shell for agent run_command: auto = Git Bash if installed, else PowerShell.
+ * 'pwsh' = PowerShell 7+ (separate pwsh.exe); 'powershell' = built-in Windows PowerShell 5. */
+export type CommandShell = 'auto' | 'gitbash' | 'pwsh' | 'powershell' | 'cmd'
 export type ActionType = 'copy' | 'search' | 'prompt' | 'speak'
 export type AppLanguage = 'zh-CN' | 'en'
 export type ThemeMode = 'system' | 'light' | 'dark'

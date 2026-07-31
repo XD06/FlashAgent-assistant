@@ -47,6 +47,9 @@ describe('command shell selection', () => {
 
   it('labels every shell kind with an explicit syntax contract', () => {
     expect(shellSyntaxLabel('gitbash')).toContain('bash syntax')
+    expect(shellSyntaxLabel('pwsh')).toContain('PowerShell 7')
+    expect(shellSyntaxLabel('pwsh')).toContain('PowerShell syntax')
+    expect(shellSyntaxLabel('powershell')).toContain('Windows PowerShell 5')
     expect(shellSyntaxLabel('powershell')).toContain('PowerShell syntax')
     expect(shellSyntaxLabel('cmd')).toContain('CMD syntax')
     expect(shellSyntaxLabel('bash')).toBe('bash')
@@ -56,11 +59,13 @@ describe('command shell selection', () => {
     if (isWin) {
       expect(resolveCommandShell('powershell')).toBe('powershell')
       expect(resolveCommandShell('cmd')).toBe('cmd')
-      // auto/gitbash resolve by environment; both may only yield gitbash or powershell
-      expect(['gitbash', 'powershell']).toContain(resolveCommandShell('auto'))
-      expect(['gitbash', 'powershell']).toContain(resolveCommandShell('gitbash'))
+      // environment-dependent choices may only degrade toward PowerShell 5
+      expect(['pwsh', 'powershell']).toContain(resolveCommandShell('pwsh'))
+      expect(['gitbash', 'pwsh', 'powershell']).toContain(resolveCommandShell('auto'))
+      expect(['gitbash', 'pwsh', 'powershell']).toContain(resolveCommandShell('gitbash'))
     } else {
       expect(resolveCommandShell('powershell')).toBe('bash')
+      expect(resolveCommandShell('pwsh')).toBe('bash')
       expect(resolveCommandShell('cmd')).toBe('bash')
       expect(resolveCommandShell('auto')).toBe('bash')
     }

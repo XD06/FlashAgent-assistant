@@ -22,7 +22,7 @@
 - 任务中追加的消息改为就地显示：气泡出现在工具循环实际收到它的位置（思考/工具/正文块之间），不再跳到整个回复最上方；回放、压缩、导出均同步保留追加内容。
 - 修复扩展面板小图标按钮（MCP 删除、Skills 取消链接、刷新/关闭）被全局 button 样式挤压导致 SVG 不可见的问题；破坏性图标按钮 hover 变红以示区分。
 - 思考过程折叠/展开使用同一标签（箭头已表达状态），去掉「（已折叠）」后缀噪音。
-- 命令执行环境可选（Windows）：扩展面板→权限页新增「命令执行环境」下拉项（自动 / Git Bash / PowerShell / CMD）；选定后 `run_command` 工具描述与系统提示词会明确告知模型当前终端及语法要求（如 PowerShell 用 `;` 串联、Select-String 代替 grep），减少 bash / PowerShell 语法混用错误；选 Git Bash 但未安装时自动回退 PowerShell，描述永远如实反映实际执行器。
+- 命令执行环境可选（Windows）：扩展面板→权限页新增「命令执行环境」下拉项（自动 / Git Bash / PowerShell 7 (pwsh) / Windows PowerShell 5 / CMD）；选定后 `run_command` 工具描述与系统提示词会明确告知模型当前终端及语法要求（如 PowerShell 用 `;` 串联、Select-String 代替 grep），减少 bash / PowerShell 语法混用错误；所选终端未安装时自动回退（Git Bash / pwsh → Windows PowerShell 5），描述永远如实反映实际执行器。
 
 ### Fixed
 

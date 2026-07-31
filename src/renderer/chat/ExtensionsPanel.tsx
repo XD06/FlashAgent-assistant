@@ -282,14 +282,15 @@ export function ExtensionsPanel({ settings, isZh, workingDir, onClose }: Extensi
                 >
                   <option value="auto">{isZh ? '自动（Git Bash 优先）' : 'Auto (prefer Git Bash)'}</option>
                   <option value="gitbash">Git Bash</option>
-                  <option value="powershell">PowerShell</option>
+                  <option value="pwsh">PowerShell 7 (pwsh)</option>
+                  <option value="powershell">Windows PowerShell 5</option>
                   <option value="cmd">CMD</option>
                 </select>
               </div>
               <div className="ext-panel__hint">
                 {isZh
-                  ? '选定后会在工具描述和系统提示词中明确告知 AI 当前终端及语法要求，减少 bash / PowerShell 语法混用错误；选 Git Bash 但未安装时自动回退 PowerShell。'
-                  : 'The chosen shell (and its syntax rules) is stated explicitly in the tool description and system prompt, reducing bash/PowerShell syntax mix-ups. Git Bash falls back to PowerShell when not installed.'}
+                  ? '选定后会在工具描述和系统提示词中明确告知 AI 当前终端及语法要求，减少 bash / PowerShell 语法混用错误；所选终端未安装时自动回退（Git Bash / pwsh → Windows PowerShell 5）。'
+                  : 'The chosen shell (and its syntax rules) is stated explicitly in the tool description and system prompt, reducing bash/PowerShell syntax mix-ups. Missing shells fall back automatically (Git Bash / pwsh → Windows PowerShell 5).'}
               </div>
             </>
           )}

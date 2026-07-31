@@ -151,7 +151,7 @@ function normalizeFilterMode(mode: unknown): FilterMode {
 }
 
 function normalizeCommandShell(shell: unknown): CommandShell {
-  return shell === 'gitbash' || shell === 'powershell' || shell === 'cmd' ? shell : 'auto'
+  return shell === 'gitbash' || shell === 'pwsh' || shell === 'powershell' || shell === 'cmd' ? shell : 'auto'
 }
 
 function normalizeStringArray(value: unknown): string[] {
