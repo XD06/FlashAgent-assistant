@@ -1912,14 +1912,18 @@ html[data-theme='dark'] .toolbar-button.toolbar-button--primary:hover {
   background: var(--hover);
   border-color: var(--accent-soft);
 }
+/* Composer: floating two-row card — textarea on top, controls bar below
+   (tools left, round send button right), Grok/ChatGPT style. */
 .chat-input {
 display: flex;
-flex-wrap: wrap;
-align-items: flex-end;
-gap: 6px;
-padding: 8px 10px;
-border-top: 1px solid var(--divider);
-background: transparent;
+flex-direction: column;
+gap: 4px;
+margin: 4px 10px 10px;
+padding: 9px 10px 8px;
+border: 1px solid var(--floating-border);
+border-radius: 16px;
+background: var(--panel-solid);
+box-shadow: var(--shadow);
 }
 /* Queued mid-request messages: full-width chip row above the composer. */
 .chat-queue {
@@ -2052,18 +2056,26 @@ background: transparent;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.chat-input__bar {
+display: flex;
+align-items: center;
+gap: 2px;
+}
+.chat-input__spacer {
+flex: 1 1 auto;
+}
 .chat-input__toolbar {
 display: flex;
 align-items: center;
 gap: 2px;
 flex: 0 0 auto;
-padding-bottom: 2px;
+min-width: 0;
 }
 .chat-input__tool {
 width: 28px;
 height: 28px;
 border: 0;
-border-radius: 6px;
+border-radius: 999px;
 background: transparent;
 color: var(--muted);
 cursor: pointer;
@@ -2408,15 +2420,14 @@ background: color-mix(in srgb, #4C8DF6 22%, transparent);
   overflow-wrap: anywhere;
 }
 .chat-input textarea {
-  /* Basis 0 + min-width 0: with the wrapping composer (queue chips take a
-     full row) an auto basis would size to the placeholder text and push
-     the send/stop buttons onto their own line. */
-  flex: 1 1 0;
+  /* Full-width top row of the composer card. */
+  width: 100%;
+  flex: 0 0 auto;
   min-width: 0;
   resize: none;
-  min-height: 28px;
+  min-height: 24px;
   max-height: 140px;
-  padding: 5px 10px;
+  padding: 2px 4px;
   border-radius: 8px;
   border: 0;
   background: transparent;
@@ -2440,7 +2451,7 @@ background: color-mix(in srgb, #4C8DF6 22%, transparent);
   width: 28px;
   height: 28px;
   border: 0;
-  border-radius: 6px;
+  border-radius: 999px;
   background: transparent;
   color: var(--muted);
   cursor: pointer;
@@ -2456,8 +2467,27 @@ background: color-mix(in srgb, #4C8DF6 22%, transparent);
   opacity: 0.3;
   cursor: not-allowed;
 }
+.chat-input__btn--send {
+  background: var(--accent);
+  color: var(--panel-solid);
+  transition: opacity .15s, background .15s, color .15s;
+}
+.chat-input__btn--send:hover:not(:disabled) {
+  color: var(--panel-solid);
+  opacity: 0.85;
+}
+.chat-input__btn--send:disabled {
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+  color: var(--muted-soft);
+  opacity: 1;
+}
 .chat-input__btn--stop {
-  color: var(--text-soft);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  color: var(--danger);
+}
+.chat-input__btn--stop:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger) 20%, transparent);
+  color: var(--danger);
 }
 
 .search-status {

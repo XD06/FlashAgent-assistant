@@ -2295,7 +2295,57 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
             ))}
           </div>
         )}
-        <div className="chat-input__toolbar">
+        <textarea
+          ref={inputRef}
+          rows={1}
+          value={input}
+          placeholder={
+            loading
+              ? (isZh ? '排队发送…(不打断请求送达)' : 'Queue a message… (delivered at the next gap, no interrupt)')
+              : (isZh ? 'Enter 发送，Shift+Enter 换行' : 'Message… (Enter to send, Shift+Enter for newline)')
+          }
+          onChange={(e) => setInput(e.target.value)}
+          onPaste={handlePaste}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+              e.preventDefault()
+              // Mid-stream Enter queues instead of stopping — interrupting is
+              // the stop button's job.
+              submit()
+            }
+            // Arrow Up to navigate message history (only when input is empty or already navigating)
+            if (e.key === 'ArrowUp' && !e.shiftKey && !e.nativeEvent.isComposing) {
+              const hist = messageHistoryRef.current
+              if (hist.length === 0) return
+              const curIdx = historyNavIndexRef.current
+              // Start navigating only if input is empty or we're already in history mode
+              if (curIdx === -1 && input.trim()) return
+              const newIdx = curIdx === -1 ? hist.length - 1 : Math.max(0, curIdx - 1)
+              if (newIdx !== curIdx) {
+                e.preventDefault()
+                historyNavIndexRef.current = newIdx
+                setInput(hist[newIdx])
+              }
+            }
+            // Arrow Down to navigate forward in message history
+            if (e.key === 'ArrowDown' && !e.shiftKey && !e.nativeEvent.isComposing) {
+              const curIdx = historyNavIndexRef.current
+              if (curIdx === -1) return
+              const hist = messageHistoryRef.current
+              const newIdx = curIdx + 1
+              e.preventDefault()
+              if (newIdx >= hist.length) {
+                historyNavIndexRef.current = -1
+                setInput('')
+              } else {
+                historyNavIndexRef.current = newIdx
+                setInput(hist[newIdx])
+              }
+            }
+          }}
+        />
+        <div className="chat-input__bar">
+          <div className="chat-input__toolbar">
           <button
             className={`chat-input__tool${searchEnabled ? ' chat-input__tool--active' : ''}`}
             title={isZh ? (searchEnabled ? '联网搜索已开启' : '联网搜索已关闭') : (searchEnabled ? 'Web search on' : 'Web search off')}
@@ -2376,77 +2426,30 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
             )
           })()}
         </div>
-        <textarea
-          ref={inputRef}
-          rows={1}
-          value={input}
-          placeholder={
-            loading
-              ? (isZh ? '排队发送…(不打断请求送达)' : 'Queue a message… (delivered at the next gap, no interrupt)')
-              : (isZh ? 'Enter 发送，Shift+Enter 换行' : 'Message… (Enter to send, Shift+Enter for newline)')
-          }
-          onChange={(e) => setInput(e.target.value)}
-          onPaste={handlePaste}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-              e.preventDefault()
-              // Mid-stream Enter queues instead of stopping — interrupting is
-              // the stop button's job.
-              submit()
-            }
-            // Arrow Up to navigate message history (only when input is empty or already navigating)
-            if (e.key === 'ArrowUp' && !e.shiftKey && !e.nativeEvent.isComposing) {
-              const hist = messageHistoryRef.current
-              if (hist.length === 0) return
-              const curIdx = historyNavIndexRef.current
-              // Start navigating only if input is empty or we're already in history mode
-              if (curIdx === -1 && input.trim()) return
-              const newIdx = curIdx === -1 ? hist.length - 1 : Math.max(0, curIdx - 1)
-              if (newIdx !== curIdx) {
-                e.preventDefault()
-                historyNavIndexRef.current = newIdx
-                setInput(hist[newIdx])
-              }
-            }
-            // Arrow Down to navigate forward in message history
-            if (e.key === 'ArrowDown' && !e.shiftKey && !e.nativeEvent.isComposing) {
-              const curIdx = historyNavIndexRef.current
-              if (curIdx === -1) return
-              const hist = messageHistoryRef.current
-              const newIdx = curIdx + 1
-              e.preventDefault()
-              if (newIdx >= hist.length) {
-                historyNavIndexRef.current = -1
-                setInput('')
-              } else {
-                historyNavIndexRef.current = newIdx
-                setInput(hist[newIdx])
-              }
-            }
-          }}
-        />
-        {loading ? (
-          <>
-            <button className="chat-input__btn chat-input__btn--stop" onClick={stop} title={t('stop')}>
-              <Icon name="square" size={18} />
-            </button>
+          <div className="chat-input__spacer" />
+          {loading ? (
+            <>
+              <button className="chat-input__btn chat-input__btn--stop" onClick={stop} title={t('stop')}>
+                <Icon name="square" size={16} />
+              </button>
+              <button
+                className="chat-input__btn chat-input__btn--send"
+                onClick={submit}
+                disabled={!input.trim()}
+                title={isZh ? '加入队列（不打断当前任务）' : 'Queue (no interrupt)'}>
+                <Icon name="arrow-up" size={16} />
+              </button>
+            </>
+          ) : (
             <button
-              className="chat-input__btn"
+              className="chat-input__btn chat-input__btn--send"
               onClick={submit}
-              disabled={!input.trim()}
-              title={isZh ? '加入队列（不打断当前任务）' : 'Queue (no interrupt)'}>
-              <Icon name="arrow-up" size={18} />
+              disabled={!input.trim() && !pendingImages.length && !pendingFiles.length}
+              title={isZh ? '发送' : 'Send'}>
+              <Icon name="arrow-up" size={16} />
             </button>
-          </>
-        ) : (
-          <button
-            className="chat-input__btn"
-            onClick={submit}
-            disabled={!input.trim() && !pendingImages.length && !pendingFiles.length}
-            title={isZh ? '发送' : 'Send'}>
-            <Icon name="arrow-up" size={18} />
-          </button>
-        )}
+          )}
+        </div>
       </div>
       {compactNotice && (
         <div className="chat-compact-notice">
