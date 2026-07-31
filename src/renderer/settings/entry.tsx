@@ -24,6 +24,7 @@ type SettingsSectionId = 'api' | 'actions' | 'selection' | 'window'
 type SettingsSectionMeta = {
   id: SettingsSectionId
   label: string
+  icon: string
 }
 
 type SettingRowProps = {
@@ -50,6 +51,7 @@ function SettingsNav({
           className={section.id === activeSection ? 'settings-nav-button active' : 'settings-nav-button'}
           onClick={() => onChange(section.id)}
           type="button">
+          <Icon name={section.icon} size={13} />
           <span>{section.label}</span>
         </button>
       ))}
@@ -302,7 +304,7 @@ function ActionEditor({
         </span>
         <div className="action-row-tools">
           <button className="inline-icon-button" type="button" title={t('moveUp')} onClick={() => onMove(-1)} disabled={index === 0}>
-            <span>↑</span>
+            <Icon name="arrow-up" size={13} />
           </button>
           <button
             className="inline-icon-button"
@@ -310,7 +312,7 @@ function ActionEditor({
             title={t('moveDown')}
             onClick={() => onMove(1)}
             disabled={index === count - 1}>
-            <span>↓</span>
+            <Icon name="arrow-down" size={13} />
           </button>
           <button className="prompt-edit-button" type="button" onClick={() => setExpanded((value) => !value)}>
             {expanded ? t('hidePrompt') : t('editPrompt')}
@@ -587,10 +589,10 @@ function SettingsApp() {
   }
 
   const sections: SettingsSectionMeta[] = [
-    { id: 'api', label: t('sectionApi') },
-    { id: 'actions', label: t('sectionActions') },
-    { id: 'selection', label: t('sectionSelection') },
-    { id: 'window', label: t('sectionWindow') }
+    { id: 'api', label: t('sectionApi'), icon: 'link' },
+    { id: 'actions', label: t('sectionActions'), icon: 'mouse-pointer' },
+    { id: 'selection', label: t('sectionSelection'), icon: 'scan-text' },
+    { id: 'window', label: t('sectionWindow'), icon: 'laptop' }
   ]
   const defaultActionById = new Map(defaultActions.map((action) => [action.id, action]))
   const filterText = settings.filterList.join('\n')
@@ -738,7 +740,8 @@ function SettingsApp() {
                 )
               })}
               <button type="button" className="add-row-button" onClick={addProviderTemplate}>
-                + {t('addProvider')}
+                <Icon name="plus" size={14} />
+                {t('addProvider')}
               </button>
             </div>
           </SettingSection>
@@ -995,7 +998,8 @@ function SettingsApp() {
             ))}
           </div>
           <button type="button" className="add-row-button" onClick={addAction}>
-            + {t('addAction')}
+            <Icon name="plus" size={14} />
+            {t('addAction')}
           </button>
         </SettingSection>
       </div>

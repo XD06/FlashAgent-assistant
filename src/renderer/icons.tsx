@@ -258,6 +258,15 @@ function ArrowUp({ size = 16, strokeWidth = 2 }: IconProps) {
   )
 }
 
+function ArrowDown({ size = 16, strokeWidth = 2 }: IconProps) {
+  return (
+    <svg {...baseProps(size)} strokeWidth={strokeWidth}>
+      <path d="M12 5v14" />
+      <path d="m6 13 6 6 6-6" />
+    </svg>
+  )
+}
+
 function Pencil({ size = 16, strokeWidth = 2 }: IconProps) {
   return (
     <svg {...baseProps(size)} strokeWidth={strokeWidth}>
@@ -381,6 +390,7 @@ function Minus({ size = 16, strokeWidth = 2 }: IconProps) {
 const icons: Record<string, (props: IconProps) => React.JSX.Element> = {
   'circle-help': CircleHelp,
   'arrow-up': ArrowUp,
+  'arrow-down': ArrowDown,
   'arrow-up-right': ArrowUpRight,
   'book-open': BookOpen,
   power: Power,
