@@ -2537,32 +2537,18 @@ background: color-mix(in srgb, #4C8DF6 22%, transparent);
   cursor: not-allowed;
 }
 
-/* ===== Thin scrollbars (global) =====
-   Universal on purpose. The old per-selector whitelist kept leaking: every
-   new scrollable block (tool results, diffs, menus) fell back to the fat
-   default bar. `*` is zero-specificity, so class rules that opt out with
-   `scrollbar-width: none` (toolbar, textareas) still win. */
+/* ===== Hidden scrollbars (global) =====
+   Universal on purpose: scrolling still works (wheel / trackpad / keyboard /
+   drag), only the bar itself is never painted. Firefox-style fallback via
+   `scrollbar-width: none`; WebKit via zero-size + display:none. */
 * {
-scrollbar-width: thin;
-scrollbar-color: color-mix(in srgb, var(--muted-soft) 45%, transparent) transparent;
+scrollbar-width: none;
 }
 
 *::-webkit-scrollbar {
-width: 2px;
-height: 2px;
-}
-
-*::-webkit-scrollbar-track {
-background: transparent;
-}
-
-*::-webkit-scrollbar-thumb {
-background: color-mix(in srgb, var(--muted-soft) 45%, transparent);
-border-radius: 999px;
-}
-
-*::-webkit-scrollbar-thumb:hover {
-background: var(--muted);
+width: 0;
+height: 0;
+display: none;
 }
 
 *::-webkit-scrollbar-corner {
@@ -2929,17 +2915,6 @@ letter-spacing: 0.01em;
 flex: 1 1 auto;
 overflow: auto;
 padding: 4px;
-scrollbar-width: thin;
-scrollbar-color: color-mix(in srgb, var(--muted-soft) 50%, transparent) transparent;
-}
-
-.chat-history-panel__list::-webkit-scrollbar {
-width: 3px;
-}
-
-.chat-history-panel__list::-webkit-scrollbar-thumb {
-background: color-mix(in srgb, var(--muted-soft) 50%, transparent);
-border-radius: 999px;
 }
 
 .chat-history-panel__empty {
