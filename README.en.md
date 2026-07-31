@@ -33,6 +33,36 @@ For models you can point it at either **OpenAI-compatible** endpoints (your own 
 
 Currently runs on macOS and Windows.
 
+## ✨ Key Optimizations & Innovations
+
+This project started as a fork of [zcx960/AIA-selection-assistan](https://github.com/zcx960/AIA-selection-assistan), but it has grown far beyond selection-and-translate. Everything below is new or rewritten in this repository — it is what sets this project apart:
+
+### 🧠 Industrial-grade context engineering
+
+- **Token-driven auto-compaction**: triggered by real API usage (`prompt_tokens`) rather than character counts; once usage passes ~95% of the context budget, older history is compacted before the next message is sent. Providers that report no usage fall back to an estimation gate — no blind spots
+- **Five-section "rework document" compaction output**: older history is summarized by an LLM into "original task / key conclusions / file states / abandoned approaches / next steps", with paths and commands kept verbatim; the main process validates the structure programmatically with a retry/fallback chain, so the model picks the task right back up after compaction
+- **CJK-aware token estimation**: Chinese/Japanese/Korean characters count at ~0.7 token/char (the common `chars/4` rule underestimates Chinese by nearly 3×), so CJK-heavy sessions no longer blow the window due to estimation drift
+- **Pre-send hard-cap protection**: when old messages are about to be silently dropped, the app compacts first instead; the recap head is pinned and can never be trimmed away
+
+### 🛡️ Anti-hallucination grounding (aligned with OpenAI / Anthropic official standards)
+
+- **Native tool-message replay across turns**: historical tool calls are not flattened into text — they are expanded into native `tool_calls`/`tool` messages (OpenAI) or `tool_use`/`tool_result` blocks (Anthropic), eliminating at the root the narrative hallucination where the model mimics a text ledger and fabricates tool results
+- **Forged-ledger stripping**: fake `[tool: ...]` lines written by the model itself are detected and stripped, so they never pollute later context
+- **Layered grounding rules**: the system prompt tells the model exactly which tool results are genuine replays and which are summarized retellings, and forbids fabricating tool results that never ran
+
+### 🤖 Agent reliability engineering
+
+- **Three-tier command risk gating**: catastrophic commands are blocked unconditionally; dangerous ones always require a second confirmation — even full-access mode cannot bypass the safety gates
+- **File-mutation snapshots on disk**: any single tool edit can be reverted in one click, even across app restarts
+- **Up-front tool-argument validation + self-correction**: invalid JSON / missing fields / wrong types come back as actionable errors for the model to fix itself, instead of raising useless approval prompts
+- **Automatic retry on network hiccups**: 429/5xx/transient failures back off 1s→2s→4s, so long tasks don't die on a single blip
+- **Terminal-grade tool output**: native ANSI colors are parsed and edits render as standard unified diffs, so changes are obvious at a glance
+
+### 🧪 Engineering quality
+
+- **279 unit tests** covering compaction triggers, native replay expansion, argument validation, risk gating, ANSI rendering, and other core paths
+- **A real-API E2E regression tool** (`pnpm e2e:compaction`): drives the production code path to verify the full usage-collection → compaction-trigger → rework-document → post-compaction-continuity flow
+
 ## Overview
 
 - Electron desktop app for macOS and Windows
@@ -103,6 +133,7 @@ Currently runs on macOS and Windows.
 ### Agent Mode and Extensions
 
 - In Agent mode the model can use built-in tools: read/write/edit files (with bulk replace), run commands, list directories, and more; once enabled you can pick a working directory for the session
+- Tool calls from earlier turns are replayed as native protocol messages (OpenAI `tool_calls`/`tool`, Anthropic `tool_use`/`tool_result`), combined with forged-ledger stripping, so the model doesn't degrade into narrative hallucination after many turns
 - Tool arguments are validated first: invalid JSON, missing fields, or wrong types come back as actionable errors for the model to self-correct, instead of silently executing with empty args or raising a useless approval prompt
 - `edit_file` matching tolerates line-ending (CRLF / LF) and trailing-whitespace differences (indentation must still match exactly) and reports line-level diagnostics on failure; `read_file` labels the file's line-ending type (CRLF / LF)
 - Every tool call pauses for approval; "always allow" can be granted per session

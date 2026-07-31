@@ -295,6 +295,90 @@ function buildAnthropicContent(message: AiMessageInput): unknown {
   return parts
 }
 
+// ---- Cross-turn tool-trace replay ----
+//
+// History assistant turns can carry a toolTrace: the calls that actually
+// executed in that turn. Replaying them as native tool-call/tool-result
+// messages keeps the model's view of history structurally identical to a
+// live tool session — text-narrated tool records taught models to imitate
+// narration instead of issuing real calls (the hallucination anti-pattern).
+
+/** Requests without a tools param cannot carry native tool messages (strict
+ * providers reject them) — fold the trace into the assistant text instead. */
+export function flattenToolTrace(message: AiMessageInput): AiMessageInput {
+  if (!message.toolTrace?.length) return message
+  const lines = message.toolTrace.map((t) => t.result).join('\n')
+  const { toolTrace: _omit, ...rest } = message
+  return { ...rest, text: [message.text, lines].filter(Boolean).join('\n\n') }
+}
+
+/** OpenAI shape: assistant(tool_calls) → tool results → assistant(text).
+ * Mirrors the real round order (calls ran, results returned, model wrote
+ * its reply), and every tool message stays paired with its call id. */
+export function expandOpenAIHistory(messages: AiMessageInput[]): unknown[] {
+  const out: unknown[] = []
+  for (const m of messages) {
+    if (m.role !== 'assistant' || !m.toolTrace?.length) {
+      out.push({ role: m.role, content: buildOpenAIContent(m) })
+      continue
+    }
+    out.push({
+      role: 'assistant',
+      content: null,
+      tool_calls: m.toolTrace.map((t) => ({
+        id: t.id,
+        type: 'function',
+        function: { name: t.name, arguments: t.argsJson }
+      }))
+    })
+    for (const t of m.toolTrace) out.push({ role: 'tool', tool_call_id: t.id, content: t.result })
+    if (m.text) out.push({ role: 'assistant', content: m.text })
+  }
+  return out
+}
+
+/** Anthropic shape: assistant [tool_use…] → user [tool_result…] → assistant
+ * [text]. Anthropic requires strictly alternating roles, so consecutive
+ * same-role messages produced by the expansion (e.g. a result block followed
+ * by the next real user turn) are merged into one block-array message. */
+export function expandAnthropicHistory(messages: AiMessageInput[]): unknown[] {
+  const toBlocks = (content: unknown): unknown[] =>
+    typeof content === 'string' ? (content ? [{ type: 'text', text: content }] : []) : (content as unknown[])
+  const out: Array<{ role: string; content: unknown }> = []
+  const push = (role: string, content: unknown): void => {
+    const prev = out[out.length - 1]
+    if (prev && prev.role === role) {
+      prev.content = [...toBlocks(prev.content), ...toBlocks(content)]
+      return
+    }
+    out.push({ role, content })
+  }
+  const parseInput = (argsJson: string): Record<string, unknown> => {
+    try {
+      const parsed: unknown = JSON.parse(argsJson)
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {}
+    } catch {
+      return {}
+    }
+  }
+  for (const m of messages) {
+    if (m.role !== 'assistant' || !m.toolTrace?.length) {
+      push(m.role, buildAnthropicContent(m))
+      continue
+    }
+    push(
+      'assistant',
+      m.toolTrace.map((t) => ({ type: 'tool_use', id: t.id, name: t.name, input: parseInput(t.argsJson) }))
+    )
+    push(
+      'user',
+      m.toolTrace.map((t) => ({ type: 'tool_result', tool_use_id: t.id, content: t.result }))
+    )
+    if (m.text) push('assistant', [{ type: 'text', text: m.text }])
+  }
+  return out
+}
+
 // SSE events are separated by a blank line; some providers emit CRLF line endings.
 const SSE_EVENT_SEPARATOR = /\r?\n\r?\n/
 
@@ -617,6 +701,9 @@ export async function streamChatMessages(
 
   // ---- Simple flow (no tools) — existing behaviour ----
   if (!useToolCalling) {
+    // Native tool messages need a tools param to be accepted — degrade any
+    // replayed traces to text for tool-less requests.
+    const flat = messages.map(flattenToolTrace)
     const body: Record<string, unknown> =
       provider.apiType === 'anthropic'
         ? {
@@ -625,7 +712,7 @@ export async function streamChatMessages(
             max_tokens: defaultMaxTokens(reasoning),
             stream: true,
             system: systemPrompt,
-            messages: messages.map((message) => ({
+            messages: flat.map((message) => ({
               role: message.role,
               content: buildAnthropicContent(message)
             }))
@@ -636,7 +723,7 @@ export async function streamChatMessages(
             stream: true,
             messages: [
               { role: 'system', content: systemPrompt },
-              ...messages.map((message) => ({
+              ...flat.map((message) => ({
                 role: message.role,
                 content: buildOpenAIContent(message)
               }))
@@ -681,15 +768,13 @@ export async function streamChatMessages(
   // with zero mutations backing it is fabrication.
   const executedMutatingTools = new Set<string>()
 
-  // Build initial API messages array
+  // Build initial API messages array — replayed tool traces from earlier
+  // turns expand into native tool-call/tool-result messages here.
   let apiMessages: unknown[]
   if (apiType === 'anthropic') {
-    apiMessages = messages.map((m) => ({ role: m.role, content: buildAnthropicContent(m) }))
+    apiMessages = expandAnthropicHistory(messages)
   } else {
-    apiMessages = [
-      { role: 'system', content: systemPrompt },
-      ...messages.map((m) => ({ role: m.role, content: buildOpenAIContent(m) }))
-    ]
+    apiMessages = [{ role: 'system', content: systemPrompt }, ...expandOpenAIHistory(messages)]
   }
 
   // True when the loop ends with the model still asking for tool calls.

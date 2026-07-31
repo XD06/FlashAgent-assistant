@@ -33,7 +33,9 @@ export function ThinkingBlock({
         title={collapsed ? t('expandThinking') : t('collapseThinking')}
       >
         <Icon name="sparkles" size={13} />
-        <span>{collapsed ? t('thinkingCollapsed') : t('thinking')}</span>
+        {/* Same label collapsed or expanded — the chevron already signals the
+            state, a "(collapsed)" suffix is just noise. */}
+        <span>{t('thinking')}</span>
         {pending && <span className="thinking-block__dot" />}
         <svg
           width="12"

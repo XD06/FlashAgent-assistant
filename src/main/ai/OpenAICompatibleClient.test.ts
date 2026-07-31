@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  expandAnthropicHistory,
+  expandOpenAIHistory,
   extractAnthropicBlocks,
+  flattenToolTrace,
   listModels,
   normalizeBaseUrl,
   parseAnthropicStreamEvent,
@@ -10,7 +13,7 @@ import {
   testModel,
   type AnthropicStreamBlock
 } from './OpenAICompatibleClient'
-import type { ProviderSettings } from '@shared/types'
+import type { AiMessageInput, ProviderSettings } from '@shared/types'
 
 const provider: ProviderSettings = {
   apiType: 'openai',
@@ -649,5 +652,95 @@ describe('extractAnthropicBlocks', () => {
 
     expect(map.get(0)).toMatchObject({ type: 'text', text: 'Let me search.' })
     expect(map.get(1)).toMatchObject({ type: 'tool_use', id: 't1' })
+  })
+})
+
+// ---- Cross-turn tool-trace replay ----
+
+const tracedHistory: AiMessageInput[] = [
+  { role: 'user', text: 'fix the bug' },
+  {
+    role: 'assistant',
+    text: 'Fixed it.',
+    toolTrace: [
+      { id: 'c1', name: 'read_file', argsJson: '{"path":"a.ts"}', result: '[tool: read_file a.ts → ok]\ncontents' },
+      { id: 'c2', name: 'edit_file', argsJson: '{"path":"a.ts"}', result: '[tool: edit_file a.ts → ok]\nedited' }
+    ]
+  },
+  { role: 'user', text: 'now add a test' }
+]
+
+describe('expandOpenAIHistory', () => {
+  it('expands a traced assistant turn into tool_calls + tool results + text', () => {
+    const out = expandOpenAIHistory(tracedHistory) as Array<Record<string, unknown>>
+    expect(out.map((m) => m.role)).toEqual(['user', 'assistant', 'tool', 'tool', 'assistant', 'user'])
+    const call = out[1] as { content: unknown; tool_calls: Array<{ id: string; function: { name: string; arguments: string } }> }
+    expect(call.content).toBe(null)
+    expect(call.tool_calls[0]).toMatchObject({ id: 'c1', type: 'function', function: { name: 'read_file', arguments: '{"path":"a.ts"}' } })
+    // Every tool message stays paired with its call id.
+    expect(out[2]).toMatchObject({ role: 'tool', tool_call_id: 'c1' })
+    expect(out[3]).toMatchObject({ role: 'tool', tool_call_id: 'c2' })
+    expect(out[4]).toMatchObject({ role: 'assistant', content: 'Fixed it.' })
+  })
+
+  it('passes untraced messages through unchanged', () => {
+    const out = expandOpenAIHistory([{ role: 'user', text: 'hi' }, { role: 'assistant', text: 'hello' }])
+    expect(out).toEqual([
+      { role: 'user', content: 'hi' },
+      { role: 'assistant', content: 'hello' }
+    ])
+  })
+
+  it('omits the trailing text message when the turn had no text', () => {
+    const out = expandOpenAIHistory([
+      { role: 'assistant', text: '', toolTrace: [{ id: 'c1', name: 'run', argsJson: '{}', result: 'r' }] }
+    ]) as Array<Record<string, unknown>>
+    expect(out.map((m) => m.role)).toEqual(['assistant', 'tool'])
+  })
+})
+
+describe('expandAnthropicHistory', () => {
+  it('expands into tool_use + tool_result blocks with alternating roles', () => {
+    const out = expandAnthropicHistory(tracedHistory) as Array<{ role: string; content: unknown }>
+    expect(out.map((m) => m.role)).toEqual(['user', 'assistant', 'user', 'assistant', 'user'])
+    const uses = out[1].content as Array<Record<string, unknown>>
+    expect(uses[0]).toMatchObject({ type: 'tool_use', id: 'c1', name: 'read_file', input: { path: 'a.ts' } })
+    const results = out[2].content as Array<Record<string, unknown>>
+    expect(results[0]).toMatchObject({ type: 'tool_result', tool_use_id: 'c1' })
+    expect(out[3].content).toEqual([{ type: 'text', text: 'Fixed it.' }])
+  })
+
+  it('merges the result block with a following real user turn (strict alternation)', () => {
+    const out = expandAnthropicHistory([
+      { role: 'assistant', text: '', toolTrace: [{ id: 'c1', name: 'run', argsJson: '{}', result: 'r' }] },
+      { role: 'user', text: 'next question' }
+    ]) as Array<{ role: string; content: unknown }>
+    expect(out.map((m) => m.role)).toEqual(['assistant', 'user'])
+    const blocks = out[1].content as Array<Record<string, unknown>>
+    // tool_result blocks must lead the user message; the text follows.
+    expect(blocks[0]).toMatchObject({ type: 'tool_result', tool_use_id: 'c1' })
+    expect(blocks[1]).toMatchObject({ type: 'text', text: 'next question' })
+  })
+
+  it('degrades unparseable argsJson to an empty input object', () => {
+    const out = expandAnthropicHistory([
+      { role: 'assistant', text: 'x', toolTrace: [{ id: 'c1', name: 'run', argsJson: 'not-json', result: 'r' }] }
+    ]) as Array<{ role: string; content: unknown }>
+    const uses = out[0].content as Array<Record<string, unknown>>
+    expect(uses[0]).toMatchObject({ type: 'tool_use', input: {} })
+  })
+})
+
+describe('flattenToolTrace', () => {
+  it('folds the trace into text for tool-less requests', () => {
+    const flat = flattenToolTrace(tracedHistory[1])
+    expect(flat.toolTrace).toBeUndefined()
+    expect(flat.text).toContain('Fixed it.')
+    expect(flat.text).toContain('[tool: read_file a.ts → ok]')
+  })
+
+  it('returns untraced messages as-is', () => {
+    const m: AiMessageInput = { role: 'user', text: 'hi' }
+    expect(flattenToolTrace(m)).toBe(m)
   })
 })

@@ -53,6 +53,10 @@ export interface CompactSignal {
    * consecutive-user merging — a conservative overcount. Optional: callers
    * without a payload preview omit it and rely on the other gates. */
   sendMessages?: number
+  /** Characters the request body would contain if sent right now (recap +
+   * replayed turn texts with tool records + the new message). Optional —
+   * same contract as sendMessages. */
+  sendChars?: number
 }
 
 /** Pre-send trigger: token-driven when usage is available (95% of the
@@ -66,8 +70,11 @@ export function shouldCompact(signal: CompactSignal, windowTokens?: number): boo
   // Send-cap pressure: without compression truncateForSend would silently
   // drop the oldest messages with no recap — an unrecoverable accuracy hole
   // for chatty (low-token, many-turn) conversations. Compress them instead,
-  // regardless of how far the token count is from the trigger line.
+  // regardless of how far the token count is from the trigger line. Both cap
+  // dimensions gate here: message count AND body chars (a few huge replayed
+  // turns can bust the char budget long before the count cap).
   if ((signal.sendMessages ?? 0) > MAX_SEND_MESSAGES) return true
+  if ((signal.sendChars ?? 0) > MAX_SEND_CHARS) return true
   if (signal.promptTokens !== null) return signal.promptTokens >= compactTriggerTokens(windowTokens)
   return signal.staleTurns >= COMPACT_MIN_STALE_TURNS && signal.staleChars >= COMPACT_TRIGGER_CHARS
 }
@@ -78,11 +85,26 @@ export function shouldCompact(signal: CompactSignal, windowTokens?: number): boo
 // a message/char budget. Sits *under* rolling compression — the cap-pressure
 // gate above fires first, so by the time this trims anything the stale zone
 // is already folded into the recap. The full history stays visible locally.
-export const MAX_SEND_MESSAGES = 24
+// 48 entries ≈ 24 rounds. Must sit well above what a fresh compression
+// leaves behind (recap + KEEP_MAX_TURNS turns + new message ≈ 22), or the
+// cap-pressure gate re-fires every other round and every send blocks on a
+// summarize request (thrash).
+export const MAX_SEND_MESSAGES = 48
 // Generous budget: the last ~2 rounds replay tool outputs at up to 12k per
 // call (toolRecap), and starving that replay costs more than it saves — the
 // model just re-reads everything.
 export const MAX_SEND_CHARS = 120_000
+
+/** Chars a message contributes to the wire payload. An embedded tool trace
+ * expands into real tool-call/tool-result messages at the protocol layer,
+ * so its args and results count like text (+~24 chars/entry envelope).
+ * Keeping the trace inside its message makes truncation atomic — a call can
+ * never be dropped separately from its result. */
+export function messagePayloadChars(m: AiMessageInput): number {
+  let total = m.text.length
+  for (const t of m.toolTrace ?? []) total += t.name.length + t.argsJson.length + t.result.length + 24
+  return total
+}
 
 export function truncateForSend(messages: AiMessageInput[], isZh: boolean, pinFirst = false): AiMessageInput[] {
   // pinFirst: the leading message is the recap — it must survive truncation
@@ -92,9 +114,9 @@ export function truncateForSend(messages: AiMessageInput[], isZh: boolean, pinFi
   const rest = head ? messages.slice(1) : messages
   const recent = rest.slice(-(MAX_SEND_MESSAGES - (head ? 1 : 0)))
   const kept: AiMessageInput[] = []
-  let total = head ? head.text.length : 0
+  let total = head ? messagePayloadChars(head) : 0
   for (let i = recent.length - 1; i >= 0; i--) {
-    total += recent[i].text.length
+    total += messagePayloadChars(recent[i])
     // Always keep at least the latest message, however large it is.
     if (kept.length > 0 && total > MAX_SEND_CHARS) break
     kept.unshift(recent[i])
@@ -126,9 +148,29 @@ export const KEEP_MIN_TURNS = 4
 /** Never keep more verbatim turns than this (bounds per-send scan work). */
 export const KEEP_MAX_TURNS = 20
 
-/** The provider-agnostic rough estimate: ~4 chars per token. */
+/** The provider-agnostic rough estimate: ~4 chars per token. English-ish
+ * assumption — prefer estimateTokensFromText when the text is available. */
 export function estimateTokensFromChars(chars: number): number {
   return Math.ceil(Math.max(0, chars) / 4)
+}
+
+// CJK text tokenizes far denser than English: roughly 1–1.5 chars per token
+// across common tokenizers (vs ~4 for English). The old flat chars/4 rule
+// under-estimated Chinese by ~3× — the keep window held triple its token
+// budget and the pre-send trigger fired a whole round late on big Chinese
+// pastes. 0.7 tokens/char sits mid-field (GPT-4o ≈0.6–0.7, DeepSeek/Qwen
+// ≈0.55–0.65, cl100k ≥1) and errs slightly toward compressing earlier.
+export const CJK_TOKENS_PER_CHAR = 0.7
+// Han (incl. radicals/ExtA/compat), kana, hangul, fullwidth forms and CJK
+// punctuation — the scripts the 4-chars rule is wrong about.
+const CJK_RE = /[\u1100-\u11ff\u2e80-\u9fff\uac00-\ud7af\uf900-\ufaff\uff00-\uffef]/g
+
+/** Script-aware token estimate: CJK chars at CJK_TOKENS_PER_CHAR, the rest
+ * at the ~4-chars-per-token English rule. */
+export function estimateTokensFromText(text: string): number {
+  if (!text) return 0
+  const cjk = text.match(CJK_RE)?.length ?? 0
+  return Math.ceil(cjk * CJK_TOKENS_PER_CHAR + (text.length - cjk) / 4)
 }
 
 /** First index of the "always send full text" window. Walks from the newest
@@ -156,10 +198,11 @@ export function computeKeepStart(turnTokenEstimates: number[], windowTokens?: nu
 
 /** Hybrid context size: the provider's last real usage report plus a rough
  * estimate of everything it has not seen yet (turns appended after the
- * report and the message about to be sent). Fixes the one-round lag where a
- * huge paste slipped past the trigger because usage was a request behind.
+ * report and the message about to be sent, pre-estimated by the caller —
+ * script-aware, see estimateTokensFromText). Fixes the one-round lag where
+ * a huge paste slipped past the trigger because usage was a request behind.
  * Null usage stays null — the char-gate fallback applies instead. */
-export function estimateEffectiveTokens(usageTokens: number | null, trailingChars: number): number | null {
+export function estimateEffectiveTokens(usageTokens: number | null, trailingTokens: number): number | null {
   if (usageTokens === null) return null
-  return usageTokens + estimateTokensFromChars(trailingChars)
+  return usageTokens + Math.max(0, trailingTokens)
 }

@@ -1,5 +1,5 @@
 import React from 'react'
-import type { AgentToolEvent, AiChunkPayload, AiMessageInput, AppSettings } from '@shared/types'
+import type { AgentToolEvent, AiChunkPayload, AiMessageInput, AppSettings, ToolTraceEntry } from '@shared/types'
 import { MarkdownView } from '../Markdown'
 import { Icon } from '../icons'
 import { getTranslator } from '../i18n'
@@ -13,6 +13,8 @@ import {
   computeKeepStart,
   estimateEffectiveTokens,
   estimateTokensFromChars,
+  estimateTokensFromText,
+  messagePayloadChars,
   shouldCompact,
   truncateForSend
 } from './compaction'
@@ -85,6 +87,12 @@ interface ChatTopic {
   updatedAt: number
   compact?: ChatCompact
   session?: TopicSession
+  /** Last provider-reported context size (promptTokens) and the transcript
+   * length when it was reported. Persisted so reopening a topic restores the
+   * token indicator and keeps the compaction trigger on the accurate
+   * token-driven path instead of the coarse turn/char fallback (which used
+   * to misfire on long chatty topics right after reopen). */
+  usage?: { tokens: number; atTurns: number }
 }
 
 const isMac = navigator.userAgent.includes('Mac OS X')
@@ -102,10 +110,11 @@ function formatTokens(n: number): string {
   return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n)
 }
 
-// Cross-turn grounding: history is replayed to the model as plain text, so
-// assistant turns get a terse appended record of the tool calls that actually
-// ran. Without it the next turn only knows what the assistant *said*, not
-// what it *did*, which invites "I already edited that file" misremembering.
+// Cross-turn grounding: assistant turns replay the tool calls that actually
+// ran. The send path ships them as a structured toolTrace (expanded into
+// native tool-call/tool-result messages at the protocol layer — history
+// looks like real tool use, not narration); toolRecap below renders the
+// text form, still used when serializing stale turns for the summarizer.
 const RECAP_MAX_CALLS = 20
 const RECAP_HEADINGS = ['【本轮实际执行的工具调用】', '[Tool calls actually executed this turn]']
 const RECAP_ENDINGS = ['【工具记录结束】', '[End of tool record]']
@@ -200,6 +209,40 @@ function toolRecap(turn: ChatTurn, isZh: boolean, withOutput = false): string {
   return `\n\n${isZh ? RECAP_HEADINGS[0] : RECAP_HEADINGS[1]}\n${lines.join('\n')}\n${isZh ? RECAP_ENDINGS[0] : RECAP_ENDINGS[1]}`
 }
 
+/** Settled tool events of an assistant turn, in display order. */
+function settledToolEvents(turn: ChatTurn): AgentToolEvent[] {
+  if (turn.role !== 'assistant' || !turn.blocks) return []
+  return turn.blocks
+    .flatMap((b) => (b.kind === 'tools' ? b.events : []))
+    .filter((e) => e.state === 'done' || e.state === 'error' || e.state === 'rejected' || e.state === 'reverted')
+}
+
+// Structured cross-turn replay — the native counterpart of toolRecap. Every
+// settled call ships (protocol pairing: each replayed call needs a result);
+// recent turns carry capped outputs, older ones and overflow calls beyond
+// RECAP_MAX_CALLS keep the one-line identity record only. The result text
+// keeps the `[tool: … → status]` first line so stubs stay self-identifying.
+function buildToolTrace(turn: ChatTurn, isZh: boolean, withOutput: boolean): ToolTraceEntry[] {
+  return settledToolEvents(turn).map((e, idx) => {
+    const mark = e.state === 'done' ? 'ok' : e.state
+    let result = `[tool: ${e.toolName} ${e.summary} → ${mark}]`
+    if (e.state === 'done' || e.state === 'error') {
+      if (withOutput && idx < RECAP_MAX_CALLS && e.result) {
+        const body = e.result.slice(0, RECAP_OUTPUT_PER_CALL)
+        const truncated = body.length < e.result.length ? (isZh ? '\n（输出已截断）' : '\n(output truncated)') : ''
+        result += `\n${body}${truncated}`
+      } else {
+        result += isZh
+          ? '\n（较早轮次，输出已省略 — 如需内容请重新调用工具）'
+          : '\n(older turn — output omitted; call the tool again if needed)'
+      }
+    }
+    // Topics saved before argsJson existed fall back to a summary-shaped
+    // object — still valid JSON, still identifies the call.
+    return { id: e.callId, name: e.toolName, argsJson: e.argsJson ?? JSON.stringify({ summary: e.summary }), result }
+  })
+}
+
 // ---- Compression material sizing ----
 /** Hard cap on a single turn's contribution to the summarize material
  * (head 70% + tail 25%; a giant paste must not blow up the request). */
@@ -212,28 +255,39 @@ const IMAGE_TOKENS_ESTIMATE = 1_000
 
 // Cheap per-turn token estimate for sizing the recent-keep window. Mirrors
 // what the send path replays for a turn (text + inlined files + tool recap
-// with capped outputs) without building the strings — this runs over the
-// whole transcript on every send and on every context-ring render.
+// with capped outputs) without building the replay strings. Script-aware
+// (CJK tokenizes ~3× denser than the flat chars/4 rule assumed), so each
+// text piece is scanned — the WeakMap memoises per turn object, and turns
+// are immutable-updated, so re-renders and re-sends only scan changed turns.
+const turnTokensCache = new WeakMap<ChatTurn, number>()
 function estimateTurnTokens(turn: ChatTurn): number {
-  let chars = turn.text?.length ?? 0
-  for (const f of turn.files ?? []) chars += f.name.length + f.text.length + 16
+  const cached = turnTokensCache.get(turn)
+  if (cached !== undefined) return cached
+  let tokens = estimateTokensFromText(turn.text ?? '')
+  for (const f of turn.files ?? []) {
+    tokens += estimateTokensFromText(f.name) + estimateTokensFromText(f.text) + 4
+  }
   if (turn.role === 'assistant' && turn.blocks) {
     for (const block of turn.blocks) {
       if (block.kind === 'injected') {
-        chars += block.text.length
+        tokens += estimateTokensFromText(block.text)
         continue
       }
       if (block.kind !== 'tools') continue
       for (const e of block.events) {
         if (e.state !== 'done' && e.state !== 'error' && e.state !== 'rejected' && e.state !== 'reverted') continue
-        chars += e.toolName.length + e.summary.length + 16
+        tokens += estimateTokensFromText(e.summary) + estimateTokensFromChars(e.toolName.length + 16)
         if (e.result && (e.state === 'done' || e.state === 'error')) {
-          chars += Math.min(e.result.length, RECAP_OUTPUT_PER_CALL)
+          tokens += estimateTokensFromText(
+            e.result.length > RECAP_OUTPUT_PER_CALL ? e.result.slice(0, RECAP_OUTPUT_PER_CALL) : e.result
+          )
         }
       }
     }
   }
-  return estimateTokensFromChars(chars) + (turn.images?.length ?? 0) * IMAGE_TOKENS_ESTIMATE
+  tokens += (turn.images?.length ?? 0) * IMAGE_TOKENS_ESTIMATE
+  turnTokensCache.set(turn, tokens)
+  return tokens
 }
 
 // Rolling-compression policy (window constants + trigger math) lives in
@@ -577,9 +631,10 @@ function AgentToolRow({
   )
 }
 
-/** A run of consecutive tool calls. Expanded while it is the tail of the
- * streaming turn (so even instant calls show up open), auto-collapses to a
- * one-line summary once the turn moves on or every call has settled. */
+/** A run of consecutive tool calls. Stays expanded — which commands ran,
+ * what was edited/read is part of the transcript and must remain visible
+ * (each row's *output* is what collapses, inside AgentToolRow). The header
+ * still toggles manually for users who want the one-line summary. */
 function AgentToolGroup({
   events,
   live,
@@ -596,12 +651,9 @@ function AgentToolGroup({
 }) {
   const active = events.some((ev) => ev.state === 'pending-approval' || ev.state === 'running')
   const [manual, setManual] = React.useState<boolean | null>(null)
-  // Each newly started call clears the manual toggle so the group re-expands
-  // while work is in flight, then auto-collapses once everything settles.
-  React.useEffect(() => {
-    if (active || current) setManual(null)
-  }, [active, current, events.length])
-  const open = manual ?? (active || current)
+  // Open by default and after settling — no auto-collapse. Only an explicit
+  // header click folds the group to its one-line summary.
+  const open = manual ?? true
   const failed = events.filter((ev) => ev.state === 'error' || ev.state === 'rejected').length
   return (
     <div className={`agent-tool-group${open ? ' agent-tool-group--open' : ''}`}>
@@ -901,6 +953,11 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
         model,
         updatedAt: Date.now(),
         compact: compactRef.current ?? undefined,
+        // Snapshot the usage indicator with the topic — reopening must not
+        // reset the context gauge (and the compact trigger) to the fallback.
+        ...(contextUsageRef.current !== null
+          ? { usage: { tokens: contextUsageRef.current, atTurns: usageTurnsRef.current } }
+          : {}),
         session: { ...sessionSnapshotRef.current }
       }
       const exists = prev.findIndex((tp) => tp.id === id)
@@ -1000,7 +1057,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
       turns: ChatTurn[],
       session: number,
       gate: { cancelled: boolean },
-      pendingChars: number
+      pendingText: string
     ): Promise<void> => {
       const covered = compactRef.current?.covered ?? 0
       // keepStart: first index of the "always send full text" window —
@@ -1010,20 +1067,40 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
       const stale = turns.slice(covered, keepStart)
       const staleChars = stale.reduce((n, turn) => n + (turn.text?.length ?? 0), 0)
       // Hybrid count: the provider's usage report lags one request behind —
-      // add a rough estimate for the turns it never saw plus the message
-      // about to be sent, so a huge paste can't slip past the trigger.
-      const trailingChars =
-        turns.slice(usageTurnsRef.current).reduce((n, turn) => n + buildSendText(turn).length, 0) + pendingChars
-      const promptTokens = estimateEffectiveTokens(contextUsageRef.current, trailingChars)
+      // add a script-aware estimate for the turns it never saw plus the
+      // message about to be sent, so a huge paste can't slip past the trigger.
+      const trailingTokens =
+        turns.slice(usageTurnsRef.current).reduce((n, turn) => n + estimateTokensFromText(buildSendText(turn)), 0) +
+        estimateTokensFromText(pendingText)
+      const promptTokens = estimateEffectiveTokens(contextUsageRef.current, trailingTokens)
       // Payload size if sent uncompressed: recap? + history entries +
       // injected-note replays + the new message (pre-merge overcount —
       // merging only shrinks it, so this errs toward compressing).
       const injectedCount = turns.slice(covered).reduce((n, turn) => n + injectedNotes(turn).length, 0)
       const sendMessages =
         (compactRef.current?.summary ? 1 : 0) + (turns.length - covered) + injectedCount + 1
+      // Body chars of the same would-be payload — mirrors the send path
+      // (buildSendText / stripForgedRecap + structured toolTrace with the
+      // recency window). Catches the case where few but huge replayed turns
+      // bust MAX_SEND_CHARS while the count cap and token line are still far:
+      // without this gate truncateForSend would silently drop history.
+      const recentZone = turns.slice(covered)
+      let sendChars = (compactRef.current?.summary?.length ?? 0) + pendingText.length
+      recentZone.forEach((turn, i) => {
+        if (turn.role !== 'assistant') {
+          sendChars += buildSendText(turn).length
+          return
+        }
+        sendChars += messagePayloadChars({
+          role: 'assistant',
+          text: stripForgedRecap(turn.text),
+          toolTrace: buildToolTrace(turn, isZh, i >= recentZone.length - RECAP_OUTPUT_TURNS)
+        })
+        for (const note of injectedNotes(turn)) sendChars += note.length
+      })
       if (
         !shouldCompact(
-          { promptTokens, staleTurns: stale.length, staleChars, sendMessages },
+          { promptTokens, staleTurns: stale.length, staleChars, sendMessages, sendChars },
           settings.contextWindowTokens
         )
       )
@@ -1350,7 +1427,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
     preSendRef.current = gate
     void (async () => {
       try {
-        await compactIfNeeded(history, session, gate, buildSendText({ text, files }).length)
+        await compactIfNeeded(history, session, gate, buildSendText({ text, files }))
       } catch {
         if (gate.cancelled || chatSessionRef.current !== session) return
         preSendRef.current = null
@@ -1376,18 +1453,21 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
       // so the model sees a short context while the user sees everything.
       const recent = compact ? history.slice(compact.covered) : history
       const raw: AiMessageInput[] = [
-        // Assistant turns carry their tool-call record so later turns stay
-        // grounded in what actually executed; the most recent turns also
-        // replay capped outputs (cheaper than the model re-reading files).
-        // User turns re-send their images (standard for vision chats) and
-        // inline pasted-file contents so the model keeps seeing them.
+        // Assistant turns carry their executed tool calls as a structured
+        // trace — the protocol layer replays them as native tool messages so
+        // history reads as real tool use, not narration; the most recent
+        // turns also replay capped outputs (cheaper than the model re-reading
+        // files). User turns re-send their images (standard for vision
+        // chats) and inline pasted-file contents so the model keeps seeing them.
         ...recent.flatMap((turn, i): AiMessageInput[] => {
           if (turn.role !== 'assistant') {
             return [{ role: turn.role, text: buildSendText(turn), ...(turn.images?.length ? { images: turn.images } : {}) }]
           }
+          const trace = buildToolTrace(turn, isZh, i >= recent.length - RECAP_OUTPUT_TURNS)
           const assistantMsg: AiMessageInput = {
             role: turn.role,
-            text: `${stripForgedRecap(turn.text)}${toolRecap(turn, isZh, i >= recent.length - RECAP_OUTPUT_TURNS)}`
+            text: stripForgedRecap(turn.text),
+            ...(trace.length ? { toolTrace: trace } : {})
           }
           // Mid-task notes live as blocks inside the assistant turn (display
           // position), but replay as user messages before the reply — same
@@ -1640,9 +1720,12 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
     compactRef.current = topic.compact ?? null
     chatSessionRef.current += 1
     clearCompactNotice()
-    contextUsageRef.current = null
-    usageTurnsRef.current = 0
-    setContextUsage(null)
+    // Restore the persisted usage snapshot — the token gauge and the
+    // compaction trigger pick up where the topic left off instead of
+    // falling back to turn counting until the next usage report arrives.
+    contextUsageRef.current = topic.usage?.tokens ?? null
+    usageTurnsRef.current = Math.min(topic.usage?.atTurns ?? 0, topic.turns.length)
+    setContextUsage(topic.usage?.tokens ?? null)
     lastUserTextRef.current = [...topic.turns].reverse().find((turn) => turn.role === 'user')?.text ?? ''
     stickToBottomRef.current = true
     queuedRef.current = []

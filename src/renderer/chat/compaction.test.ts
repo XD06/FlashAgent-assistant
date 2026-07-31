@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { AiMessageInput } from '@shared/types'
 import {
+  CJK_TOKENS_PER_CHAR,
   COMPACT_MIN_STALE_TURNS,
   COMPACT_TRIGGER_CHARS,
   COMPACT_TRIGGER_TOKENS,
@@ -13,6 +14,8 @@ import {
   computeKeepStart,
   estimateEffectiveTokens,
   estimateTokensFromChars,
+  estimateTokensFromText,
+  messagePayloadChars,
   shouldCompact,
   truncateForSend
 } from './compaction'
@@ -82,6 +85,24 @@ describe('shouldCompact', () => {
       shouldCompact({ promptTokens: 1_000, staleTurns: 0, staleChars: 0, sendMessages: MAX_SEND_MESSAGES * 2 })
     ).toBe(false)
   })
+
+  it('char-cap pressure: fires when the body would exceed the char cap, tokens cold', () => {
+    expect(
+      shouldCompact({ promptTokens: 1_000, staleTurns: 2, staleChars: 100, sendMessages: 10, sendChars: MAX_SEND_CHARS + 1 })
+    ).toBe(true)
+  })
+
+  it('char-cap pressure: quiet at exactly the char cap', () => {
+    expect(
+      shouldCompact({ promptTokens: 1_000, staleTurns: 2, staleChars: 100, sendMessages: 10, sendChars: MAX_SEND_CHARS })
+    ).toBe(false)
+  })
+
+  it('char-cap pressure: still requires a non-empty stale zone', () => {
+    expect(
+      shouldCompact({ promptTokens: 1_000, staleTurns: 0, staleChars: 0, sendChars: MAX_SEND_CHARS * 2 })
+    ).toBe(false)
+  })
 })
 
 describe('truncateForSend', () => {
@@ -97,11 +118,11 @@ describe('truncateForSend', () => {
   })
 
   it('drops the oldest beyond the message cap and prepends the omitted note', () => {
-    const out = truncateForSend(many(30), false)
+    const out = truncateForSend(many(MAX_SEND_MESSAGES + 6), false)
     expect(out).toHaveLength(MAX_SEND_MESSAGES + 1)
     expect(out[0].text).toContain('6 earlier messages omitted')
     expect(out[1].text).toBe('m6')
-    expect(out[out.length - 1].text).toBe('m29')
+    expect(out[out.length - 1].text).toBe(`m${MAX_SEND_MESSAGES + 5}`)
   })
 
   it('char budget: trims older messages but always keeps the latest', () => {
@@ -119,12 +140,12 @@ describe('truncateForSend', () => {
 
   it('pinFirst: the recap head survives even when the cap trims history', () => {
     const recap: AiMessageInput = { role: 'user', text: 'RECAP' }
-    const out = truncateForSend([recap, ...many(40)], false, true)
+    const out = truncateForSend([recap, ...many(MAX_SEND_MESSAGES + 16)], false, true)
     expect(out[0].text).toBe('RECAP')
     // Head takes one slot: recap + note + (cap - 1) kept messages.
     expect(out.filter((m) => m.text.startsWith('m'))).toHaveLength(MAX_SEND_MESSAGES - 1)
     expect(out[1].text).toContain('omitted')
-    expect(out[out.length - 1].text).toBe('m39')
+    expect(out[out.length - 1].text).toBe(`m${MAX_SEND_MESSAGES + 15}`)
   })
 
   it('pinFirst: recap chars count toward the char budget', () => {
@@ -136,6 +157,40 @@ describe('truncateForSend', () => {
     expect(out[out.length - 1].text).toBe('m1')
     expect(out.filter((m) => m.text.startsWith('m'))).toHaveLength(1)
   })
+
+  it('embedded tool traces count toward the char budget and never split', () => {
+    const trace = {
+      id: 'c1',
+      name: 'read_file',
+      argsJson: '{"path":"a.ts"}',
+      result: 'y'.repeat(MAX_SEND_CHARS)
+    }
+    const input: AiMessageInput[] = [
+      { role: 'user', text: 'q0' },
+      { role: 'assistant', text: 'done', toolTrace: [trace] },
+      { role: 'user', text: 'q1' }
+    ]
+    const out = truncateForSend(input, false)
+    // The trace-bearing message busts the budget — dropped whole (call and
+    // result together), never shipped partially.
+    expect(out.some((m) => m.toolTrace)).toBe(false)
+    expect(out[out.length - 1].text).toBe('q1')
+  })
+})
+
+describe('messagePayloadChars', () => {
+  it('counts text only when no trace is attached', () => {
+    expect(messagePayloadChars({ role: 'user', text: 'abcd' })).toBe(4)
+  })
+
+  it('adds trace name/args/result plus per-entry envelope', () => {
+    const m: AiMessageInput = {
+      role: 'assistant',
+      text: 'ok',
+      toolTrace: [{ id: 'c1', name: 'run', argsJson: '{}', result: 'out' }]
+    }
+    expect(messagePayloadChars(m)).toBe(2 + 3 + 2 + 3 + 24)
+  })
 })
 
 describe('estimateTokensFromChars', () => {
@@ -145,6 +200,33 @@ describe('estimateTokensFromChars', () => {
     expect(estimateTokensFromChars(4)).toBe(1)
     expect(estimateTokensFromChars(5)).toBe(2)
     expect(estimateTokensFromChars(-10)).toBe(0)
+  })
+})
+
+describe('estimateTokensFromText', () => {
+  it('matches the chars/4 rule for pure ASCII', () => {
+    expect(estimateTokensFromText('a'.repeat(400))).toBe(100)
+    expect(estimateTokensFromText('')).toBe(0)
+  })
+
+  it('counts CJK chars at the dense per-char rate', () => {
+    expect(estimateTokensFromText('中'.repeat(100))).toBe(Math.ceil(100 * CJK_TOKENS_PER_CHAR))
+  })
+
+  it('CJK punctuation and fullwidth forms count as CJK', () => {
+    // 。 (U+3002) and ， (U+FF0C) tokenize like han chars, not ASCII.
+    expect(estimateTokensFromText('。，')).toBe(Math.ceil(2 * CJK_TOKENS_PER_CHAR))
+  })
+
+  it('mixed text sums both rates', () => {
+    const text = '汉'.repeat(100) + 'a'.repeat(400)
+    expect(estimateTokensFromText(text)).toBe(Math.ceil(100 * CJK_TOKENS_PER_CHAR + 100))
+  })
+
+  it('is dramatically higher than the flat rule on Chinese text', () => {
+    const zh = '上下文压缩机制'.repeat(50)
+    // The old chars/4 rule under-counted Chinese ~3× — guard the ratio.
+    expect(estimateTokensFromText(zh)).toBeGreaterThan(estimateTokensFromChars(zh.length) * 2)
   })
 })
 
@@ -193,11 +275,11 @@ describe('estimateEffectiveTokens', () => {
     expect(estimateEffectiveTokens(null, 999_999)).toBe(null)
   })
 
-  it('adds the trailing rough estimate on top of real usage', () => {
-    expect(estimateEffectiveTokens(100_000, 8_000)).toBe(102_000)
+  it('adds the trailing token estimate on top of real usage', () => {
+    expect(estimateEffectiveTokens(100_000, 8_000)).toBe(108_000)
   })
 
-  it('zero trailing chars leaves usage untouched', () => {
+  it('zero trailing tokens leaves usage untouched', () => {
     expect(estimateEffectiveTokens(42, 0)).toBe(42)
   })
 })

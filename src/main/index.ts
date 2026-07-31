@@ -370,6 +370,29 @@ function capResultForEvent(output: string): string {
   return `${head}\n[... ${output.length - head.length - tail.length} chars truncated ...]\n${tail}`
 }
 
+// Full args JSON attached to tool events so later turns can replay the call
+// natively (tool_calls in history need real arguments, not a summary). Bulk
+// string values (file contents, edit payloads) are elided in place — the
+// JSON stays valid; identity keys like path/command are short and survive.
+const ARGS_VALUE_MAX = 500
+function argsJsonForEvent(args: Record<string, unknown>): string {
+  const slim = Object.fromEntries(
+    Object.entries(args).map(([key, value]) =>
+      typeof value === 'string' && value.length > ARGS_VALUE_MAX
+        ? [key, `${value.slice(0, ARGS_VALUE_MAX)}…[+${value.length - ARGS_VALUE_MAX} chars elided]`]
+        : [key, value]
+    )
+  )
+  try {
+    const json = JSON.stringify(slim)
+    // Deeply nested MCP args can still be huge after top-level eliding —
+    // degrade to a stub instead of shipping kilobytes per event.
+    return json.length > 6_000 ? JSON.stringify({ _elided: `args too large (${json.length} chars)` }) : json
+  } catch {
+    return '{}'
+  }
+}
+
 function registerIpc(): void {
   selectionService.registerIpc()
   screenshotService.registerIpc()
@@ -521,7 +544,7 @@ function registerIpc(): void {
           `Write/edit/command calls require user approval and may be rejected — if rejected, ask or adjust your approach instead of retrying the same call.\n\n` +
           `Grounding rules:\n` +
           `- Talk is not work. Nothing counts as done unless the tool call ran and returned success.\n` +
-          `- Earlier assistant messages may end with a block titled 【本轮实际执行的工具调用】. The app generates it from execution logs; it is authoritative. Trust it. NEVER write such a block yourself.\n` +
+          `- Tool calls from earlier turns are replayed by the app as real tool messages in this conversation (and older summaries may contain a 【本轮实际执行的工具调用】 block). Both are generated from execution logs and are authoritative. NEVER fabricate tool results or write \`[tool: ...]\` lines in your own text.\n` +
           `- Never claim you created, edited, or verified anything without the matching tool result. Never invent outputs.\n` +
           `- If you cannot perform an action, say so. Do not pretend it succeeded.`
         : systemPrompt
@@ -544,6 +567,7 @@ function registerIpc(): void {
       const runAgentTool = async (name: string, args: Record<string, unknown>): Promise<string> => {
         const callId = randomUUID()
         const summary = summarizeToolCall(name, args, workingDir)
+        const argsJson = argsJsonForEvent(args)
         // For write/edit ship the proposed content so the renderer can show a diff.
         const diff: Partial<AgentToolEvent> =
           name === 'edit_file'
@@ -552,7 +576,7 @@ function registerIpc(): void {
               ? { newText: String(args.content ?? '').slice(0, 4000) }
               : {}
         const sendTool = (patch: Partial<AgentToolEvent>): void => {
-          sendChunk({ type: 'tool', tool: { callId, toolName: name, summary, ...diff, ...patch } })
+          sendChunk({ type: 'tool', tool: { callId, toolName: name, summary, argsJson, ...diff, ...patch } })
         }
         // Schema-validate before anything else: a malformed call must not
         // reach the approval card or snapshotting — return an actionable
@@ -619,8 +643,9 @@ function registerIpc(): void {
       const runMcpTool = async (name: string, args: Record<string, unknown>): Promise<string> => {
         const callId = randomUUID()
         const summary = `${mcpManager.describeTool(name)} · ${JSON.stringify(args).slice(0, 160)}`
+        const argsJson = argsJsonForEvent(args)
         const sendTool = (patch: Partial<AgentToolEvent>): void => {
-          sendChunk({ type: 'tool', tool: { callId, toolName: name, summary, ...patch } })
+          sendChunk({ type: 'tool', tool: { callId, toolName: name, summary, argsJson, ...patch } })
         }
         if (!alwaysAllow) {
           sendTool({ state: 'pending-approval' })

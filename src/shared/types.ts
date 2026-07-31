@@ -147,10 +147,32 @@ export interface ActionPayload {
   images?: string[]
 }
 
+/** One settled tool call from an earlier turn, replayed cross-turn. Kept
+ * embedded in its assistant AiMessageInput (instead of separate messages)
+ * so truncation and merging can never split a call from its result — the
+ * protocol client expands the trace into native tool-call/tool-result
+ * messages per API type. */
+export interface ToolTraceEntry {
+  /** Renderer-side call id — stable and unique across requests (provider
+   * ids like "call_0" can collide between separate model requests). */
+  id: string
+  name: string
+  /** Full arguments JSON as executed (bulk string values elided at source,
+   * JSON stays valid). */
+  argsJson: string
+  /** Result text with the `[tool: … → status]` identity first line — capped
+   * output, error message, or a rejection/omission note. */
+  result: string
+}
+
 export interface AiMessageInput {
   role: 'user' | 'assistant'
   text: string
   images?: string[]
+  /** Assistant only: tool calls that actually executed in that turn. The
+   * protocol client replays them as native tool messages (grounded history
+   * that looks like real tool use, not narration). */
+  toolTrace?: ToolTraceEntry[]
 }
 
 export interface AiStreamRequest {
@@ -184,6 +206,9 @@ export interface AgentToolEvent {
   toolName: string
   /** Short human-readable summary of the arguments (path, command, ...). */
   summary: string
+  /** Full arguments JSON (bulk string values elided) — persisted so later
+   * sends can replay the call natively via ToolTraceEntry. */
+  argsJson?: string
   state: AgentToolState
   /** Truncated result or error text once the call finished. */
   result?: string
