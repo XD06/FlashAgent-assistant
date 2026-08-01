@@ -62,6 +62,23 @@ Git 忽略的 `agent-context-result.json`：请求次数、各分段 token 估�
 驱动优先读取新应用目录；若桌面应用尚未执行更名迁移，则只读回退到旧目录，不会复制或修改
 任何用户设置。
 
+可在命令后传入一个场景名，逐项校准不同 payload 的估算误差：
+
+```bash
+pnpm e2e:agent-context -- cjk
+pnpm e2e:agent-context -- large-output
+pnpm e2e:agent-context -- image
+```
+
+| 场景 | 覆盖范围 |
+| --- | --- |
+| `baseline`（默认） | 英文 Agent 指令与常规文件、命令工具循环。 |
+| `cjk` | 中文系统提示与中文用户任务。 |
+| `large-output` | 受控的约 24 KB `read_file` 工具结果；驱动同时断言模型确实调用该工具。 |
+| `image` | 实际发送一张无内容的 1×1 PNG，同时执行常规 Agent 工作流。 |
+
+结果仍只保存场景、计数、工具结果字符数、分项估算、真实 usage（若网关返回）和通过状态；不会保存提示词、图像字节、模型输出、工具输出、配置或密钥。每次运行都会先删除本场景上一次的标记文件，避免旧结果造成假通过。
+
 首次运行前手动创建该隔离副本，例如：
 
 ```bash
