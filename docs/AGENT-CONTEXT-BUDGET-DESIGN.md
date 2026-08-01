@@ -204,6 +204,7 @@ projectedNextPrompt = lastMeasuredPrompt + newlyAppendedModelAndToolMaterial
 - `src/main/ai/OpenAICompatibleClient.ts`：模型工具循环、usage 采集、工具结果上限与较早结果降级。
 - `src/main/index.ts`：Agent 系统提示、工具装配、审批、MCP、记忆和当前固定工具迭代上限。
 - `src/shared/recapDoc.ts`：五节复工文档的验证、合并和大小上限。
+- `src/shared/contextMeter.ts` / `src/shared/contextBudget.ts`：内容无关的分项计量与影子预算决策。
 
 ## 11. 首次真实 Agent 计量记录
 
@@ -228,10 +229,18 @@ projectedNextPrompt = lastMeasuredPrompt + newlyAppendedModelAndToolMaterial
 结论：
 
 1. 分项计量已能在每次实际模型请求前生成内容无关的 `system / tool schema / message / image`
-   占用数据，并可与真实 usage 配对。
+   占用数据，并可与真实 usage 配对；影子层额外输出 `B - R - M`、95% 压缩线和固定工具结果
+   窗口的对照判断，但目前不会改变请求。
 2. 本样本的估算持续低于服务商计数，最大低估约为 1.33 倍。因此当前估算只能用于影子模式和
    观测；尚不足以直接作为 `projectedPromptTokens <= I` 的硬准入条件。
 3. 后续应按 `provider + model` 收集更多不同任务、CJK 输入、图片和 MCP schema 样本，用真实值
    校准估算系数，并以高分位低估误差设置安全余量 `M`。单一样本不得反推出通用固定系数。
 
 复现入口为 `pnpm e2e:agent-context`。其隔离工作区和结果 JSON 均被 `.gitignore` 排除。
+
+**影子复测（同一工作区、同一任务，第二次运行）**：4 次模型请求、5 次工具调用、0 次工具错误、
+约 16.5 秒完成，4 次均返回真实 usage。估算输入分别为 1,062 / 1,205 / 1,922 / 2,014 token，
+服务商分别报告 1,235 / 1,446 / 2,527 / 2,667 token，低估约为 14.0% / 16.7% / 23.9% /
+24.5%。影子层在全部请求上给出：`B=128000`、`R=4096`、`M=0`、输入预算 `123904`、压缩线
+`121600`，未触发压缩、输入边界或固定 25 次工具结果降级。该结果证明影子判断已贯穿真实工具
+循环，但不代表当前估算已经足够安全；仍需更多 provider/model 与任务类型样本后再校准 `M`。

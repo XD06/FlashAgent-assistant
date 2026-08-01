@@ -13,6 +13,7 @@ export interface ContextMeasurement {
   messageCount: number
   toolCount: number
   imageCount: number
+  shadow?: ContextBudgetShadowDecision
 }
 
 export interface ContextMeterInput {
@@ -142,3 +143,4 @@ export function measureContext(input: ContextMeterInput): ContextMeasurement {
     imageCount: acc.imageCount
   }
 }
+import type { ContextBudgetShadowDecision } from './contextBudget'

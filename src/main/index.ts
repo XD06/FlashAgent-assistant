@@ -734,6 +734,7 @@ function registerIpc(): void {
           // trigger compression from it.
           onUsage: (usage) => sendChunk({ type: 'usage', usage }),
           onContextMeasured: (context) => sendChunk({ type: 'context', context: { ...context, taskRoundId: request.taskRoundId } }),
+          shadowBudget: { contextWindowTokens: settings.contextWindowTokens },
           onToolCall: async (name: string, args: Record<string, unknown>) => {
             if (name === webSearchTool.name) {
               const query = typeof args.query === 'string' ? args.query : ''

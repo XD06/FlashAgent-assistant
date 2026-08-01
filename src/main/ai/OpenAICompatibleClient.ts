@@ -1,5 +1,6 @@
 import type { AiMessageInput, ProviderApiType, ProviderSettings, ReasoningMode } from '@shared/types'
 import { measureContext, type ContextMeasurement } from '@shared/contextMeter'
+import { evaluateContextBudget } from '@shared/contextBudget'
 
 export class AiConfigurationError extends Error {}
 const ANTHROPIC_VERSION = '2023-06-01'
@@ -499,6 +500,8 @@ export interface ToolCallStreamOptions extends ProviderRequestOptions {
   onUsage?: (usage: TokenUsage) => void
   /** Content-free payload estimate emitted before each model request. */
   onContextMeasured?: (measurement: ContextMeasurement & { modelRequestIndex: number }) => void
+  /** Optional shadow-only budget configuration. It never blocks or edits a request. */
+  shadowBudget?: { contextWindowTokens: number; safetyMarginTokens?: number }
 }
 
 // In-loop context control, mirroring the renderer's "keep the last ~5 rounds
@@ -703,8 +706,19 @@ export async function streamChatMessages(
   }
   const emitContext = (nativeMessages: unknown[], nativeTools: unknown[], modelRequestIndex: number): void => {
     try {
+      const measurement = measureContext({ systemPrompt, tools: nativeTools, messages: nativeMessages })
+      const shadow = options.shadowBudget
+        ? evaluateContextBudget({
+            ...options.shadowBudget,
+            outputReserveTokens: defaultMaxTokens(reasoning),
+            estimatedPromptTokens: measurement.estimatedPromptTokens,
+            modelRequestIndex,
+            fixedToolKeepRecentRounds: TOOL_KEEP_RECENT_ROUNDS
+          })
+        : undefined
       options.onContextMeasured?.({
-        ...measureContext({ systemPrompt, tools: nativeTools, messages: nativeMessages }),
+        ...measurement,
+        ...(shadow ? { shadow } : {}),
         modelRequestIndex
       })
     } catch {

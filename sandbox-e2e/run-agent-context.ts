@@ -112,6 +112,7 @@ async function main(): Promise<void> {
         onContextMeasured: (measurement) => {
           requests.push({ ...measurement, reportedPromptTokens: null, reportedCompletionTokens: null })
         },
+        shadowBudget: { contextWindowTokens: settings.contextWindowTokens },
         onUsage: (usage) => {
           const target = requests[requests.length - 1]
           if (target) {
