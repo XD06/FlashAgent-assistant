@@ -8,13 +8,13 @@ import { ThinkingBlock } from './ThinkingBlock'
 import { ExtensionsPanel } from './ExtensionsPanel'
 import { renderTerminalText, highlightLineNumbers } from './ansi'
 import {
-  COMPACT_MIN_STALE_TURNS,
   COMPACT_TRIGGER_CHARS,
   compactTriggerTokens,
-  computeKeepStart,
+  computeTaskRoundKeepStart,
   estimateEffectiveTokens,
   estimateTokensFromChars,
   estimateTokensFromText,
+  MAX_SEND_MESSAGES,
   messagePayloadChars,
   shouldCompact,
   truncateForSend
@@ -127,12 +127,8 @@ function formatTokens(n: number): string {
 const RECAP_MAX_CALLS = 20
 const RECAP_HEADINGS = ['【本轮实际执行的工具调用】', '[Tool calls actually executed this turn]']
 const RECAP_ENDINGS = ['【工具记录结束】', '[End of tool record]']
-// Recency window for cross-turn tool *outputs*: the last N history entries
-// (≈ 4 rounds) replay their outputs so the model can keep working without
-// re-reading everything; older turns keep the one-line record only. Per-call
-// ceiling matches the in-turn 12k cap — no per-turn total budget (splitting
-// a shared pool across many reads starved every file down to a stub).
-const RECAP_OUTPUT_TURNS = 12
+// Per-call ceiling matches the in-turn 12k cap. Which completed task rounds
+// keep their output is decided by the shared task-round budget below.
 const RECAP_OUTPUT_PER_CALL = 12_000
 
 // The model sees the machine-appended recap block in replayed history and
@@ -297,6 +293,17 @@ function estimateTurnTokens(turn: ChatTurn): number {
   tokens += (turn.images?.length ?? 0) * IMAGE_TOKENS_ESTIMATE
   turnTokensCache.set(turn, tokens)
   return tokens
+}
+
+/** Keep full evidence for complete recent user task rounds. The message cap
+ * is a transport safety limit, not a normal "keep N turns" policy: it only
+ * reserves room for the recap head and the user message being sent. */
+function computeChatTaskRoundKeepStart(turns: ChatTurn[], windowTokens: number): number {
+  return computeTaskRoundKeepStart(
+    turns.map((turn) => ({ role: turn.role, taskRoundId: turn.taskRoundId, tokens: estimateTurnTokens(turn) })),
+    windowTokens,
+    MAX_SEND_MESSAGES - 2
+  )
 }
 
 // Rolling-compression policy (window constants + trigger math) lives in
@@ -1069,9 +1076,9 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
       pendingText: string
     ): Promise<void> => {
       const covered = compactRef.current?.covered ?? 0
-      // keepStart: first index of the "always send full text" window —
-      // token-budgeted (20% of the attention window), not a fixed count.
-      const keepStart = computeKeepStart(turns.map(estimateTurnTokens), settings.contextWindowTokens)
+      // keepStart is always a user-task boundary. It is token-budgeted, not
+      // a fixed turn count, so a request/tool/result sequence stays intact.
+      const keepStart = computeChatTaskRoundKeepStart(turns, settings.contextWindowTokens)
       if (keepStart <= covered) return
       const stale = turns.slice(covered, keepStart)
       const staleChars = stale.reduce((n, turn) => n + (turn.text?.length ?? 0), 0)
@@ -1103,13 +1110,13 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
         sendChars += messagePayloadChars({
           role: 'assistant',
           text: stripForgedRecap(turn.text),
-          toolTrace: buildToolTrace(turn, isZh, i >= recentZone.length - RECAP_OUTPUT_TURNS)
+          toolTrace: buildToolTrace(turn, isZh, covered + i >= keepStart)
         })
         for (const note of injectedNotes(turn)) sendChars += note.length
       })
       if (
         !shouldCompact(
-          { promptTokens, staleTurns: stale.length, staleChars, sendMessages, sendChars },
+          { promptTokens, staleEntries: stale.length, staleChars, sendMessages, sendChars },
           settings.contextWindowTokens
         )
       )
@@ -1476,7 +1483,9 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
       // Send path only: UI still shows full `history`. Request body is
       //   [recap as synthetic user msg?] + history[covered..] + new user text
       // so the model sees a short context while the user sees everything.
-      const recent = compact ? history.slice(compact.covered) : history
+      const recentStart = compact?.covered ?? 0
+      const recent = history.slice(recentStart)
+      const outputKeepStart = computeChatTaskRoundKeepStart(history, settings.contextWindowTokens)
       const raw: AiMessageInput[] = [
         // Assistant turns carry their executed tool calls as a structured
         // trace — the protocol layer replays them as native tool messages so
@@ -1488,7 +1497,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
           if (turn.role !== 'assistant') {
             return [{ role: turn.role, text: buildSendText(turn), ...(turn.images?.length ? { images: turn.images } : {}) }]
           }
-          const trace = buildToolTrace(turn, isZh, i >= recent.length - RECAP_OUTPUT_TURNS)
+          const trace = buildToolTrace(turn, isZh, recentStart + i >= outputKeepStart)
           const assistantMsg: AiMessageInput = {
             role: turn.role,
             text: stripForgedRecap(turn.text),
@@ -2420,20 +2429,17 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
           </button>
           {chat.length > 0 && (() => {
             // Ring fill = progress toward the next pre-send compress. Mirrors
-            // shouldCompact: token-driven when usage is known, else the
-            // stale-zone char/turn fallback gates.
+            // shouldCompact: token-driven when usage is known, otherwise
+            // stale-zone character pressure.
             const covered = compactRef.current?.covered ?? 0
-            const keepStart = computeKeepStart(chat.map(estimateTurnTokens), settings.contextWindowTokens)
+            const keepStart = computeChatTaskRoundKeepStart(chat, settings.contextWindowTokens)
             const stale = chat.slice(covered, Math.max(covered, keepStart))
             const staleChars = stale.reduce((n, turn) => n + (turn.text?.length ?? 0), 0)
             const charRatio = Math.min(1, staleChars / COMPACT_TRIGGER_CHARS)
-            const turnRatio = Math.min(1, stale.length / COMPACT_MIN_STALE_TURNS)
-            // Fallback: both gates must open — show the more-empty of the two
-            // so the ring only looks "full" when compression is imminent.
             const ratio =
               contextUsage !== null
                 ? Math.min(1, contextUsage / compactTriggerTokens(settings.contextWindowTokens))
-                : Math.min(charRatio, turnRatio)
+                : charRatio
             const rounds = chat.filter((turn) => turn.role === 'user').length
             const pct = Math.round(ratio * 100)
             const tip =

@@ -33,22 +33,16 @@ export function compactTriggerTokens(windowTokens?: number): number {
 // next compress waits until enough *new* turns have slid out of the recent
 // window, which prevents thrashing (re-summarizing 1–2 turns per message).
 //
-// Product window (~15 rounds total feel): keep the last ~5 rounds (10 turns)
-// verbatim; older turns become the recap.
-/** @deprecated Legacy fixed-count keep window — the send path now sizes the
- * keep window by token budget (see computeKeepStart). Kept for reference. */
-export const COMPACT_KEEP_RECENT = 10
-/** Fallback gate (no usage data): minimum stale turns before re-running. */
-export const COMPACT_MIN_STALE_TURNS = 6
-/** Fallback gate (no usage data): char budget on stale turn.text. */
+/** Fallback gate when usage is unavailable: character pressure in the stale
+ * task-round zone. There is deliberately no fixed recent-turn count. */
 export const COMPACT_TRIGGER_CHARS = 12_000
 
 export interface CompactSignal {
   /** promptTokens from the latest provider usage report, or null when the
    * provider never reported usage (fallback char gates apply instead). */
   promptTokens: number | null
-  /** Number of turns in the stale zone [covered, keepStart). */
-  staleTurns: number
+  /** Number of transcript entries in the stale zone [covered, keepStart). */
+  staleEntries: number
   /** Sum of turn.text lengths across the stale zone. */
   staleChars: number
   /** Messages the request would contain if sent right now (recap + history
@@ -64,12 +58,11 @@ export interface CompactSignal {
 
 /** Pre-send trigger: token-driven when usage is available (95% of the
  * attention budget — the global default or a user-configured window),
- * otherwise the legacy stale-zone char gates — so every provider gets
- * compression, usage or not. */
+ * otherwise from stale-zone character pressure. Transport caps are separate
+ * safety limits. */
 export function shouldCompact(signal: CompactSignal, windowTokens?: number): boolean {
-  // Nothing to compress — even a hot token count can't help here (the
-  // recent-keep window is fixed in the core loop; shrinking it is P1-B2).
-  if (signal.staleTurns <= 0) return false
+  // Nothing to compress — the latest complete task round must remain whole.
+  if (signal.staleEntries <= 0) return false
   // Send-cap pressure: without compression truncateForSend would silently
   // drop the oldest messages with no recap — an unrecoverable accuracy hole
   // for chatty (low-token, many-turn) conversations. Compress them instead,
@@ -79,7 +72,7 @@ export function shouldCompact(signal: CompactSignal, windowTokens?: number): boo
   if ((signal.sendMessages ?? 0) > MAX_SEND_MESSAGES) return true
   if ((signal.sendChars ?? 0) > MAX_SEND_CHARS) return true
   if (signal.promptTokens !== null) return signal.promptTokens >= compactTriggerTokens(windowTokens)
-  return signal.staleTurns >= COMPACT_MIN_STALE_TURNS && signal.staleChars >= COMPACT_TRIGGER_CHARS
+  return signal.staleChars >= COMPACT_TRIGGER_CHARS
 }
 
 // ---- Hard payload safety net (runaway guard, not a diet) ----
@@ -88,10 +81,9 @@ export function shouldCompact(signal: CompactSignal, windowTokens?: number): boo
 // a message/char budget. Sits *under* rolling compression — the cap-pressure
 // gate above fires first, so by the time this trims anything the stale zone
 // is already folded into the recap. The full history stays visible locally.
-// 48 entries ≈ 24 rounds. Must sit well above what a fresh compression
-// leaves behind (recap + KEEP_MAX_TURNS turns + new message ≈ 22), or the
-// cap-pressure gate re-fires every other round and every send blocks on a
-// summarize request (thrash).
+// Must sit well above a normal recap + budget-sized task-round window + new
+// message, or the cap-pressure gate would re-fire every other round and every
+// send would block on a summarize request.
 export const MAX_SEND_MESSAGES = 48
 // Generous budget: the last ~2 rounds replay tool outputs at up to 12k per
 // call (toolRecap), and starving that replay costs more than it saves — the
@@ -137,43 +129,85 @@ export function truncateForSend(messages: AiMessageInput[], isZh: boolean, pinFi
   return kept
 }
 
-// ---- Recent-keep window: token-budget sized (accuracy over counting) ----
-//
-// A fixed turn count makes the keep window wildly variable in tokens: ten
-// chatty turns are ~2k tokens while ten file-heavy agent turns can be 90k —
-// the latter leaves compression no room to actually shrink the context.
-// Budget the window in tokens instead; turn counts are only guardrails.
+// ---- Recent task-round window: token-budget sized (accuracy over counting) ----
 
 /** Share of the attention budget reserved for verbatim recent turns. */
 export const KEEP_RECENT_TOKEN_RATIO = 0.2
-/** Never keep fewer verbatim turns than this (protects tiny-budget cases). */
-export const KEEP_MIN_TURNS = 4
-/** Never keep more verbatim turns than this (bounds per-send scan work). */
-export const KEEP_MAX_TURNS = 20
+/** One transcript entry as seen by the task-round retention policy. New
+ * conversations carry a stable taskRoundId. Persisted conversations from
+ * before that field existed fall back to a user message starting a round. */
+export interface TaskRoundTokenInput {
+  role: 'user' | 'assistant'
+  taskRoundId?: string
+  tokens: number
+}
 
-// The token estimators are shared with the main-process context meter. They
-// remain re-exported here to preserve the existing renderer/test API.
+export interface TaskRoundRange {
+  start: number
+  end: number
+  tokens: number
+}
 
-/** First index of the "always send full text" window. Walks from the newest
- * turn backwards accumulating per-turn token estimates until the keep budget
- * (window × KEEP_RECENT_TOKEN_RATIO) is spent, then clamps to the turn-count
- * guardrails. */
-export function computeKeepStart(turnTokenEstimates: number[], windowTokens?: number): number {
-  const len = turnTokenEstimates.length
+/** Group transcript entries into atomic user task rounds. A retained range
+ * never starts halfway through a round, so a task's request, tool evidence,
+ * and answer remain available together. */
+export function groupTaskRounds(entries: TaskRoundTokenInput[]): TaskRoundRange[] {
+  if (!entries.length) return []
+  const ranges: TaskRoundRange[] = []
+  let start = 0
+  let activeId = entries[0].taskRoundId
+
+  const finish = (end: number): void => {
+    let tokens = 0
+    for (let i = start; i < end; i++) {
+      const value = entries[i].tokens
+      tokens += Number.isFinite(value) ? Math.max(0, value) : 0
+    }
+    ranges.push({ start, end, tokens })
+  }
+
+  for (let i = 1; i < entries.length; i++) {
+    const entry = entries[i]
+    // Known ids are authoritative. Legacy entries use the old transcript
+    // convention: every user message begins a new user task round.
+    const startsRound = entry.taskRoundId ? entry.taskRoundId !== activeId : entry.role === 'user'
+    if (!startsRound) continue
+    finish(i)
+    start = i
+    activeId = entry.taskRoundId
+  }
+  finish(entries.length)
+  return ranges
+}
+
+/** First entry of the verbatim recent-task window. This policy walks complete
+ * user task rounds from newest to oldest until either the token budget or a
+ * transport message cap is reached. The newest complete task round is always
+ * retained, even when it alone exceeds the target budget. */
+export function computeTaskRoundKeepStart(
+  entries: TaskRoundTokenInput[],
+  windowTokens?: number,
+  maxKeptTurnEntries?: number
+): number {
+  if (!entries.length) return 0
   const window = windowTokens && windowTokens > 0 ? windowTokens : CONTEXT_WINDOW_TOKENS
   const budget = Math.round(window * KEEP_RECENT_TOKEN_RATIO)
-  let keepStart = 0
-  let accumulated = 0
-  for (let i = len - 1; i >= 0; i--) {
-    accumulated += turnTokenEstimates[i]
-    if (accumulated > budget) {
-      keepStart = i + 1
-      break
-    }
+  const maxEntries =
+    maxKeptTurnEntries === undefined ? Number.POSITIVE_INFINITY : Math.max(1, Math.floor(maxKeptTurnEntries))
+  const rounds = groupTaskRounds(entries)
+  let keepStart = entries.length
+  let keptTokens = 0
+  let keptEntries = 0
+
+  for (let i = rounds.length - 1; i >= 0; i--) {
+    const round = rounds[i]
+    const roundEntries = round.end - round.start
+    const isNewest = keepStart === entries.length
+    if (!isNewest && (keptTokens + round.tokens > budget || keptEntries + roundEntries > maxEntries)) break
+    keepStart = round.start
+    keptTokens += round.tokens
+    keptEntries += roundEntries
   }
-  // Guardrails: keep at least KEEP_MIN_TURNS and at most KEEP_MAX_TURNS.
-  keepStart = Math.min(keepStart, Math.max(0, len - KEEP_MIN_TURNS))
-  keepStart = Math.max(keepStart, len - KEEP_MAX_TURNS, 0)
   return keepStart
 }
 

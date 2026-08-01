@@ -2,19 +2,17 @@ import { describe, expect, it } from 'vitest'
 import type { AiMessageInput } from '@shared/types'
 import {
   CJK_TOKENS_PER_CHAR,
-  COMPACT_MIN_STALE_TURNS,
   COMPACT_TRIGGER_CHARS,
   COMPACT_TRIGGER_TOKENS,
   CONTEXT_WINDOW_TOKENS,
-  KEEP_MAX_TURNS,
-  KEEP_MIN_TURNS,
   KEEP_RECENT_TOKEN_RATIO,
   MAX_SEND_CHARS,
   MAX_SEND_MESSAGES,
-  computeKeepStart,
+  computeTaskRoundKeepStart,
   estimateEffectiveTokens,
   estimateTokensFromChars,
   estimateTokensFromText,
+  groupTaskRounds,
   messagePayloadChars,
   shouldCompact,
   truncateForSend
@@ -29,78 +27,78 @@ describe('compaction constants', () => {
 
 describe('shouldCompact', () => {
   it('never compacts with an empty stale zone, even at high token counts', () => {
-    expect(shouldCompact({ promptTokens: CONTEXT_WINDOW_TOKENS, staleTurns: 0, staleChars: 0 })).toBe(false)
+    expect(shouldCompact({ promptTokens: CONTEXT_WINDOW_TOKENS, staleEntries: 0, staleChars: 0 })).toBe(false)
   })
 
   it('token-driven: fires at exactly the trigger line', () => {
-    expect(shouldCompact({ promptTokens: COMPACT_TRIGGER_TOKENS, staleTurns: 2, staleChars: 100 })).toBe(true)
+    expect(shouldCompact({ promptTokens: COMPACT_TRIGGER_TOKENS, staleEntries: 2, staleChars: 100 })).toBe(true)
   })
 
   it('token-driven: stays quiet below the trigger line', () => {
-    expect(shouldCompact({ promptTokens: COMPACT_TRIGGER_TOKENS - 1, staleTurns: 20, staleChars: 999_999 })).toBe(
+    expect(shouldCompact({ promptTokens: COMPACT_TRIGGER_TOKENS - 1, staleEntries: 20, staleChars: 999_999 })).toBe(
       false
     )
   })
 
   it('token-driven: bypasses the min-stale-turns fallback gate', () => {
     // Usage says the context is hot — compress whatever stale exists, even a
-    // zone smaller than the char-fallback minimum.
+    // zone smaller than the char fallback pressure line.
     expect(
-      shouldCompact({ promptTokens: COMPACT_TRIGGER_TOKENS + 1, staleTurns: COMPACT_MIN_STALE_TURNS - 1, staleChars: 10 })
+      shouldCompact({ promptTokens: COMPACT_TRIGGER_TOKENS + 1, staleEntries: 1, staleChars: 10 })
     ).toBe(true)
   })
 
-  it('fallback: fires when both char gates are met', () => {
+  it('fallback: fires on stale character pressure without a fixed entry count', () => {
     expect(
-      shouldCompact({ promptTokens: null, staleTurns: COMPACT_MIN_STALE_TURNS, staleChars: COMPACT_TRIGGER_CHARS })
+      shouldCompact({ promptTokens: null, staleEntries: 1, staleChars: COMPACT_TRIGGER_CHARS })
     ).toBe(true)
   })
 
-  it('fallback: too few stale turns', () => {
+  it('fallback: stays quiet below the stale character pressure line', () => {
     expect(
-      shouldCompact({ promptTokens: null, staleTurns: COMPACT_MIN_STALE_TURNS - 1, staleChars: COMPACT_TRIGGER_CHARS * 2 })
+      shouldCompact({ promptTokens: null, staleEntries: 20, staleChars: COMPACT_TRIGGER_CHARS - 1 })
     ).toBe(false)
   })
 
-  it('fallback: not enough stale chars', () => {
+  it('fallback: never compacts an empty stale zone', () => {
     expect(
-      shouldCompact({ promptTokens: null, staleTurns: COMPACT_MIN_STALE_TURNS * 2, staleChars: COMPACT_TRIGGER_CHARS - 1 })
+      shouldCompact({ promptTokens: null, staleEntries: 0, staleChars: COMPACT_TRIGGER_CHARS * 2 })
     ).toBe(false)
   })
 
   it('cap pressure: fires when the payload would exceed the send cap, tokens cold', () => {
     expect(
-      shouldCompact({ promptTokens: 1_000, staleTurns: 2, staleChars: 100, sendMessages: MAX_SEND_MESSAGES + 1 })
+      shouldCompact({ promptTokens: 1_000, staleEntries: 2, staleChars: 100, sendMessages: MAX_SEND_MESSAGES + 1 })
     ).toBe(true)
   })
 
   it('cap pressure: quiet at exactly the send cap', () => {
     expect(
-      shouldCompact({ promptTokens: 1_000, staleTurns: 2, staleChars: 100, sendMessages: MAX_SEND_MESSAGES })
+      shouldCompact({ promptTokens: 1_000, staleEntries: 2, staleChars: 100, sendMessages: MAX_SEND_MESSAGES })
     ).toBe(false)
   })
 
   it('cap pressure: still requires a non-empty stale zone', () => {
     expect(
-      shouldCompact({ promptTokens: 1_000, staleTurns: 0, staleChars: 0, sendMessages: MAX_SEND_MESSAGES * 2 })
+      shouldCompact({ promptTokens: 1_000, staleEntries: 0, staleChars: 0, sendMessages: MAX_SEND_MESSAGES * 2 })
     ).toBe(false)
   })
 
   it('char-cap pressure: fires when the body would exceed the char cap, tokens cold', () => {
     expect(
-      shouldCompact({ promptTokens: 1_000, staleTurns: 2, staleChars: 100, sendMessages: 10, sendChars: MAX_SEND_CHARS + 1 })
+      shouldCompact({ promptTokens: 1_000, staleEntries: 2, staleChars: 100, sendMessages: 10, sendChars: MAX_SEND_CHARS + 1 })
     ).toBe(true)
   })
 
   it('char-cap pressure: quiet at exactly the char cap', () => {
     expect(
-      shouldCompact({ promptTokens: 1_000, staleTurns: 2, staleChars: 100, sendMessages: 10, sendChars: MAX_SEND_CHARS })
+      shouldCompact({ promptTokens: 1_000, staleEntries: 2, staleChars: 100, sendMessages: 10, sendChars: MAX_SEND_CHARS })
     ).toBe(false)
   })
 
   it('char-cap pressure: still requires a non-empty stale zone', () => {
     expect(
-      shouldCompact({ promptTokens: 1_000, staleTurns: 0, staleChars: 0, sendChars: MAX_SEND_CHARS * 2 })
+      shouldCompact({ promptTokens: 1_000, staleEntries: 0, staleChars: 0, sendChars: MAX_SEND_CHARS * 2 })
     ).toBe(false)
   })
 })
@@ -230,43 +228,64 @@ describe('estimateTokensFromText', () => {
   })
 })
 
-describe('computeKeepStart', () => {
-  const budget = Math.round(CONTEXT_WINDOW_TOKENS * KEEP_RECENT_TOKEN_RATIO)
+describe('task-round retention', () => {
+  it('groups modern task ids atomically and falls back to user-started legacy rounds', () => {
+    const modern = groupTaskRounds([
+      { role: 'user', taskRoundId: 'a', tokens: 10 },
+      { role: 'assistant', taskRoundId: 'a', tokens: 20 },
+      { role: 'user', taskRoundId: 'b', tokens: 30 },
+      { role: 'assistant', taskRoundId: 'b', tokens: 40 }
+    ])
+    const legacy = groupTaskRounds([
+      { role: 'user', tokens: 10 },
+      { role: 'assistant', tokens: 20 },
+      { role: 'user', tokens: 30 },
+      { role: 'assistant', tokens: 40 }
+    ])
 
-  it('keeps everything for an empty transcript', () => {
-    expect(computeKeepStart([])).toBe(0)
+    expect(modern).toEqual([
+      { start: 0, end: 2, tokens: 30 },
+      { start: 2, end: 4, tokens: 70 }
+    ])
+    expect(legacy).toEqual(modern)
   })
 
-  it('keeps the whole transcript while it fits the budget', () => {
-    // 8 small turns — far under the keep budget, but the min guardrail
-    // (not the budget) is what bounds keepStart from above here.
-    expect(computeKeepStart([10, 10, 10, 10, 10, 10, 10, 10])).toBe(0)
+  it('keeps whole newest task rounds rather than splitting a user and assistant pair', () => {
+    const entries = [
+      { role: 'user' as const, taskRoundId: 'a', tokens: 900 },
+      { role: 'assistant' as const, taskRoundId: 'a', tokens: 900 },
+      { role: 'user' as const, taskRoundId: 'b', tokens: 200 },
+      { role: 'assistant' as const, taskRoundId: 'b', tokens: 200 },
+      { role: 'user' as const, taskRoundId: 'c', tokens: 600 },
+      { role: 'assistant' as const, taskRoundId: 'c', tokens: 600 }
+    ]
+
+    // 10k attention budget -> 2k recent window. Rounds B+C fit (1.6k),
+    // while adding A would overflow. The cut is the start of B, never 3.
+    expect(computeTaskRoundKeepStart(entries, 10_000)).toBe(2)
   })
 
-  it('budget exceeded: cuts where the backward walk overflows', () => {
-    // Six turns of budget/4 each: walking backwards, the 5th accumulated
-    // turn overflows → keepStart lands after the overflowing index.
-    const per = Math.ceil(budget / 4)
-    const estimates = [per, per, per, per, per, per]
-    expect(computeKeepStart(estimates)).toBe(2)
+  it('keeps every complete round when all fit the token budget', () => {
+    const entries = Array.from({ length: 12 }, (_, index) => ({
+      role: index % 2 === 0 ? ('user' as const) : ('assistant' as const),
+      taskRoundId: `round-${Math.floor(index / 2)}`,
+      tokens: 10
+    }))
+
+    expect(computeTaskRoundKeepStart(entries, 10_000)).toBe(0)
   })
 
-  it('min guardrail: always keeps at least KEEP_MIN_TURNS verbatim', () => {
-    // Every turn is huge — the raw walk would keep only the newest one.
-    const estimates = Array(10).fill(budget * 2)
-    expect(computeKeepStart(estimates)).toBe(10 - KEEP_MIN_TURNS)
-  })
+  it('uses the transport cap only as a hard limit while retaining whole rounds', () => {
+    const entries = [
+      { role: 'user' as const, taskRoundId: 'a', tokens: 10 },
+      { role: 'assistant' as const, taskRoundId: 'a', tokens: 10 },
+      { role: 'user' as const, taskRoundId: 'b', tokens: 10 },
+      { role: 'assistant' as const, taskRoundId: 'b', tokens: 10 },
+      { role: 'user' as const, taskRoundId: 'c', tokens: 10 },
+      { role: 'assistant' as const, taskRoundId: 'c', tokens: 10 }
+    ]
 
-  it('max guardrail: never keeps more than KEEP_MAX_TURNS verbatim', () => {
-    // Every turn is tiny — the raw walk would keep all 50.
-    const estimates = Array(50).fill(1)
-    expect(computeKeepStart(estimates)).toBe(50 - KEEP_MAX_TURNS)
-  })
-
-  it('honours a user-configured window', () => {
-    // Tiny window → tiny keep budget → the min guardrail takes over.
-    const estimates = Array(10).fill(1_000)
-    expect(computeKeepStart(estimates, 4_000)).toBe(10 - KEEP_MIN_TURNS)
+    expect(computeTaskRoundKeepStart(entries, 1_000_000, 4)).toBe(2)
   })
 })
 

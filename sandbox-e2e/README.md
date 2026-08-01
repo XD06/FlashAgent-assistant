@@ -1,6 +1,7 @@
 # sandbox-e2e — 上下文压缩 E2E 回归工具
 
-用本机**真实 provider 配置**（`%APPDATA%/flashagent-assistant/settings.json`）发真实
+用本机**真实 provider 配置**（优先 `%APPDATA%/flashagent-assistant/settings.json`，若桌面
+应用尚未完成更名迁移则只读回退 `%APPDATA%/selection-assistant-lite/settings.json`）发真实
 API 请求，走生产代码链验证 Agent 上下文压缩全流程。与 `pnpm test` 的纯逻辑单测互补：
 单测保证判定函数正确，本工具保证"真模型 + 真网关 + 真代理"下的端到端效果。
 

@@ -16,7 +16,7 @@ import { ProxyAgent, fetch as undiciFetch } from 'undici'
 import {
   COMPACT_TRIGGER_TOKENS,
   KEEP_RECENT_TOKEN_RATIO,
-  computeKeepStart,
+  computeTaskRoundKeepStart,
   estimateTokensFromChars,
   shouldCompact
 } from '../src/renderer/chat/compaction'
@@ -31,11 +31,14 @@ import type { ProviderFetch, TokenUsage } from '../src/main/ai/OpenAICompatibleC
 import type { AiMessageInput, ProviderSettings } from '../src/shared/types'
 
 // ---------- 0. 读取用户真实配置（与 settingsStore 同一文件） ----------
-const settingsPath = path.join(
-  process.env.APPDATA ?? '',
-  'flashagent-assistant',
-  'settings.json'
-)
+const settingsPath = [
+  path.join(process.env.APPDATA ?? '', 'flashagent-assistant', 'settings.json'),
+  // This standalone driver can run before Electron copies legacy user data
+  // during the post-rebrand migration. Read-only fallback keeps the E2E
+  // usable without changing the user's local configuration.
+  path.join(process.env.APPDATA ?? '', 'selection-assistant-lite', 'settings.json')
+].find((candidate) => fs.existsSync(candidate))
+if (!settingsPath) throw new Error('local provider settings are missing')
 const stored = JSON.parse(fs.readFileSync(settingsPath, 'utf8')).settings
 const provider: ProviderSettings = stored.provider
 const compressModel: string = (stored.compressModel ?? '').trim()
@@ -85,13 +88,20 @@ const turns: Turn[] = [
 const COMPACT_TURN_MAX_CHARS = 20_000
 function buildCompactPayload(all: Turn[]): { payload: string; stale: Turn[]; keepStart: number } {
   const covered = 0
-  // 生产链用 computeKeepStart（token 预算制）。本剧本总量小，128k 窗口下
-  // 全部落在保留区；为了让埋点的前 6 轮进入陈旧区，反推一个“保留预算
-  // 恰好盖住后 10 轮”的模拟窗口，仍走生产函数验证其边界行为。
+  // 生产链按完整用户任务轮做 token 预算保留。本剧本总量小，128k 窗口下
+  // 全部落在保留区；为了让埋点的前 3 个任务轮进入陈旧区，反推一个“保留
+  // 预算恰好盖住后 5 个任务轮”的模拟窗口，仍走生产函数验证其边界行为。
   const estimates = all.map((t) => estimateTokensFromChars(t.text.length))
   const recentTokens = estimates.slice(all.length - 10).reduce((a, b) => a + b, 0)
   const simulatedWindow = Math.ceil(recentTokens / KEEP_RECENT_TOKEN_RATIO)
-  const keepStart = computeKeepStart(estimates, simulatedWindow)
+  const keepStart = computeTaskRoundKeepStart(
+    all.map((turn, index) => ({
+      role: turn.role,
+      taskRoundId: `task-${Math.floor(index / 2)}`,
+      tokens: estimates[index]
+    })),
+    simulatedWindow
+  )
   const stale = all.slice(covered, keepStart)
   const entries: string[] = []
   for (const turn of stale) {
@@ -221,11 +231,11 @@ async function main(): Promise<void> {
   hr('阶段 2  P1-B 触发判定')
   const { payload, stale, keepStart } = buildCompactPayload(turns)
   const staleChars = stale.reduce((n, t) => n + t.text.length, 0)
-  log(`对话共 ${turns.length} 轮，keepStart=${keepStart}，陈旧区 ${stale.length} 轮 / ${staleChars} 字符`)
+  log(`对话共 ${turns.length / 2} 个用户任务轮，keepStart=${keepStart}，陈旧区 ${stale.length} 条消息 / ${staleChars} 字符`)
   const realTokens = probe.usage ? (probe.usage as TokenUsage).promptTokens : null
-  log(`[case A] 真实 usage(${realTokens} tokens) → shouldCompact=${shouldCompact({ promptTokens: realTokens, staleTurns: stale.length, staleChars })}（远低于 121,600，预期 false）`)
-  log(`[case B] 模拟长会话 usage=125000 → shouldCompact=${shouldCompact({ promptTokens: 125_000, staleTurns: stale.length, staleChars })}（预期 true，token 触发）`)
-  log(`[case C] usage 缺失(null) → shouldCompact=${shouldCompact({ promptTokens: null, staleTurns: stale.length, staleChars })}（陈旧区 ${stale.length}≥6 且 ${staleChars}≥12000，预期 true，字符回退触发）`)
+  log(`[case A] 真实 usage(${realTokens} tokens) → shouldCompact=${shouldCompact({ promptTokens: realTokens, staleEntries: stale.length, staleChars })}（远低于 121,600，预期 false）`)
+  log(`[case B] 模拟长会话 usage=125000 → shouldCompact=${shouldCompact({ promptTokens: 125_000, staleEntries: stale.length, staleChars })}（预期 true，token 触发）`)
+  log(`[case C] usage 缺失(null) → shouldCompact=${shouldCompact({ promptTokens: null, staleEntries: stale.length, staleChars })}（陈旧区 ${staleChars}≥12000，预期 true，字符回退触发）`)
 
   // ============ 阶段 3：P1-C 真实压缩（走降级链） ============
   hr('阶段 3  P1-C 复工文档压缩（真实 API）')
