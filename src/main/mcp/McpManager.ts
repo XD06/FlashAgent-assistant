@@ -175,10 +175,14 @@ export class McpManager {
     }
   }
 
-  getToolDefinitions(): ToolDefinition[] {
+  /** Return schemas only for connected servers the caller explicitly chose to
+   * inject. An empty set intentionally means no MCP schema reaches the model. */
+  getToolDefinitions(injectedServerIds: ReadonlySet<string>): ToolDefinition[] {
     const defs: ToolDefinition[] = []
     for (const entry of this.servers.values()) {
-      if (entry.state === 'connected') defs.push(...entry.tools.map((tool) => tool.definition))
+      if (entry.state === 'connected' && injectedServerIds.has(entry.config.id)) {
+        defs.push(...entry.tools.map((tool) => tool.definition))
+      }
     }
     return defs
   }

@@ -175,6 +175,9 @@ function normalizeMcpServers(value: unknown): McpServerConfig[] {
       command: typeof candidate.command === 'string' ? candidate.command : undefined,
       env: typeof candidate.env === 'string' ? candidate.env : undefined,
       url: typeof candidate.url === 'string' ? candidate.url : undefined,
+      // Older configurations coupled connection and injection. Preserve that
+      // behavior on migration; newly created servers explicitly start false.
+      inject: candidate.inject !== false,
       enabled: candidate.enabled === true
     })
   }

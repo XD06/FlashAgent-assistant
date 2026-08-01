@@ -45,6 +45,8 @@ export interface McpServerConfig {
   env?: string
   /** http: server URL. */
   url?: string
+  /** Whether this connected server's tools enter the model request. */
+  inject: boolean
   enabled: boolean
 }
 

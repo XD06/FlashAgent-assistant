@@ -3468,6 +3468,20 @@ padding: 4px;
   white-space: nowrap;
   min-width: 0;
 }
+.ext-panel__mcp-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+.ext-panel__mcp-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: color-mix(in srgb, var(--text) 55%, transparent);
+  font-size: 11px;
+  white-space: nowrap;
+}
 .ext-panel__dot {
   width: 8px;
   height: 8px;
@@ -3563,6 +3577,8 @@ padding: 4px;
 }
 .ext-switch input:checked + .ext-switch__track { background: #3fb950; }
 .ext-switch input:checked + .ext-switch__track::after { transform: translateX(13px); }
+.ext-switch input:focus-visible + .ext-switch__track { outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent); outline-offset: 2px; }
+.ext-switch--disabled { cursor: not-allowed; opacity: 0.45; }
 
 /* Proxy URL input + test button on the settings page */
 .proxy-field {

@@ -24,10 +24,22 @@ const STATE_COLORS: Record<McpServerStatus['state'], string> = {
 }
 
 /** Small pill switch used by the skills / MCP lists. */
-function PillSwitch({ checked, onChange, title }: { checked: boolean; onChange: (v: boolean) => void; title?: string }) {
+function PillSwitch({
+  checked,
+  onChange,
+  title,
+  ariaLabel,
+  disabled = false
+}: {
+  checked: boolean
+  onChange: (v: boolean) => void
+  title?: string
+  ariaLabel?: string
+  disabled?: boolean
+}) {
   return (
-    <label className="ext-switch" title={title}>
-      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+    <label className={`ext-switch${disabled ? ' ext-switch--disabled' : ''}`} title={title}>
+      <input type="checkbox" checked={checked} disabled={disabled} aria-label={ariaLabel} onChange={(e) => onChange(e.target.checked)} />
       <span className="ext-switch__track" />
     </label>
   )
@@ -97,6 +109,10 @@ export function ExtensionsPanel({ settings, isZh, workingDir, onClose }: Extensi
     patchServers(settings.mcpServers.map((s) => (s.id === id ? { ...s, enabled } : s)))
   }
 
+  const toggleInjection = (id: string, inject: boolean): void => {
+    patchServers(settings.mcpServers.map((s) => (s.id === id ? { ...s, inject } : s)))
+  }
+
   const removeServer = (id: string): void => {
     patchServers(settings.mcpServers.filter((s) => s.id !== id))
   }
@@ -115,7 +131,8 @@ export function ExtensionsPanel({ settings, isZh, workingDir, onClose }: Extensi
         command: form.transport === 'stdio' ? form.command.trim() : undefined,
         env: form.transport === 'stdio' && form.env.trim() ? form.env.trim() : undefined,
         url: form.transport === 'http' ? form.url.trim() : undefined,
-        enabled: false
+        enabled: false,
+        inject: false
       }
     ])
     setForm({ name: '', transport: 'stdio', command: '', url: '', env: '' })
@@ -136,7 +153,7 @@ export function ExtensionsPanel({ settings, isZh, workingDir, onClose }: Extensi
     }
     patchServers([
       ...settings.mcpServers,
-      ...parsed.map((p) => ({ id: crypto.randomUUID(), ...p, enabled: false }))
+        ...parsed.map((p) => ({ id: crypto.randomUUID(), ...p, enabled: false, inject: false }))
     ])
     setJsonText('')
     setJsonError(null)
@@ -309,7 +326,10 @@ export function ExtensionsPanel({ settings, isZh, workingDir, onClose }: Extensi
             <div className="ext-panel__hint">{isZh ? '暂无 MCP 服务器' : 'No MCP servers configured'}</div>
           )}
           {mcp.map((server) => {
-            const enabled = settings.mcpServers.find((s) => s.id === server.id)?.enabled === true
+            const config = settings.mcpServers.find((s) => s.id === server.id)
+            const enabled = config?.enabled === true
+            const injected = enabled && config?.inject === true
+            const canInject = enabled && server.state === 'connected'
             return (
               <div key={server.id} className="ext-panel__item" title={server.error ?? server.toolNames.join(', ')}>
                 <span className="ext-panel__dot" style={{ background: STATE_COLORS[server.state] }} />
@@ -335,11 +355,33 @@ export function ExtensionsPanel({ settings, isZh, workingDir, onClose }: Extensi
                 <button className="ext-panel__icon-btn ext-panel__icon-btn--danger" title={isZh ? '删除' : 'Remove'} onClick={() => removeServer(server.id)}>
                   <Icon name="trash-2" size={12} />
                 </button>
-                <PillSwitch
-                  checked={enabled}
-                  onChange={(v) => toggleServer(server.id, v)}
-                  title={isZh ? (enabled ? '点击断开' : '点击连接') : (enabled ? 'Disconnect' : 'Connect')}
-                />
+                <div className="ext-panel__mcp-controls">
+                  <span className="ext-panel__mcp-control">
+                    <span>{isZh ? '连接' : 'Connect'}</span>
+                    <PillSwitch
+                      checked={enabled}
+                      onChange={(v) => toggleServer(server.id, v)}
+                      title={isZh ? (enabled ? '点击断开服务器' : '点击连接服务器') : (enabled ? 'Disconnect server' : 'Connect server')}
+                      ariaLabel={isZh ? `${server.name}：连接服务器` : `${server.name}: connect server`}
+                    />
+                  </span>
+                  <span className="ext-panel__mcp-control">
+                    <span>{isZh ? '注入' : 'Inject'}</span>
+                    <PillSwitch
+                      checked={injected}
+                      disabled={!canInject}
+                      onChange={(v) => toggleInjection(server.id, v)}
+                      title={
+                        !enabled
+                          ? (isZh ? '连接后可注入工具' : 'Connect before injecting tools')
+                          : server.state !== 'connected'
+                            ? (isZh ? '连接成功后可注入工具' : 'Inject tools after the connection succeeds')
+                            : (injected ? (isZh ? '从模型请求中移除工具' : 'Remove tools from model requests') : (isZh ? '将工具注入模型请求' : 'Inject tools into model requests'))
+                      }
+                      ariaLabel={isZh ? `${server.name}：注入工具` : `${server.name}: inject tools`}
+                    />
+                  </span>
+                </div>
               </div>
             )
           })}

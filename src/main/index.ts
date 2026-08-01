@@ -533,7 +533,14 @@ function registerIpc(): void {
       let alwaysAllow = false
 
       const useExtensions = request.useExtensions === true
-      const mcpTools = useExtensions ? mcpManager.getToolDefinitions() : []
+      // Connection and model injection are deliberately separate. A connected
+      // MCP service may stay ready without consuming attention or becoming a
+      // callable tool until the user enables its injection toggle.
+      const injectedMcpServerIds = new Set(
+        settings.mcpServers.filter((server) => server.enabled && server.inject).map((server) => server.id)
+      )
+      const mcpTools = useExtensions ? mcpManager.getToolDefinitions(injectedMcpServerIds) : []
+      const injectedMcpToolNames = new Set(mcpTools.map((tool) => tool.name))
       const tools = [
         ...(enableSearch ? [webSearchTool] : []),
         ...(agentEnabled ? agentToolDefinitionsForShell(settings.commandShell) : []),
@@ -742,7 +749,7 @@ function registerIpc(): void {
               const results = await searchWithFallback(query, controller.signal, 10, providerFetch)
               return formatSearchContext(query, results, settings.language)
             }
-            if (isMcpToolName(name) && mcpManager.ownsTool(name)) {
+            if (isMcpToolName(name) && injectedMcpToolNames.has(name) && mcpManager.ownsTool(name)) {
               return runMcpTool(name, args)
             }
             return runAgentTool(name, args)

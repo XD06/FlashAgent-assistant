@@ -75,8 +75,10 @@ interface TopicSession {
   agentEnabled: boolean
   workingDir: string | null
   searchEnabled: boolean
-  /** IDs of MCP servers that were switched on for this conversation. */
-  mcpEnabledIds: string[]
+  /** IDs of connected MCP servers whose tool schemas were injected. */
+  mcpInjectedIds?: string[]
+  /** Legacy session field: pre-injection split, this meant connected + injected. */
+  mcpEnabledIds?: string[]
 }
 
 /** A saved conversation topic */
@@ -925,14 +927,14 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
     agentEnabled: false,
     workingDir: null,
     searchEnabled: false,
-    mcpEnabledIds: []
+    mcpInjectedIds: []
   })
   React.useEffect(() => {
     sessionSnapshotRef.current = {
       agentEnabled,
       workingDir,
       searchEnabled,
-      mcpEnabledIds: settings.mcpServers.filter((s) => s.enabled).map((s) => s.id)
+      mcpInjectedIds: settings.mcpServers.filter((s) => s.enabled && s.inject).map((s) => s.id)
     }
   }, [agentEnabled, workingDir, searchEnabled, settings.mcpServers])
   const persistTopic = React.useCallback((turns: ChatTurn[], model?: string) => {
@@ -1765,14 +1767,27 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
       setSearchEnabled(session.searchEnabled)
       setWorkingDir(session.workingDir)
       setAgentEnabled(session.agentEnabled && !!session.workingDir)
-      const wantEnabled = new Set(session.mcpEnabledIds)
       const servers = settings.mcpServers
-      // Only touch global settings when a still-existing server differs —
-      // the main process reconciles connections on update (mcpManager.sync).
-      if (servers.some((s) => (s.enabled === true) !== wantEnabled.has(s.id))) {
+      const wantInjected = Array.isArray(session.mcpInjectedIds) ? new Set(session.mcpInjectedIds) : null
+      if (wantInjected && servers.some((s) => s.enabled && s.inject !== wantInjected.has(s.id))) {
         void window.assistantLite.settings.update({
-          mcpServers: servers.map((s) => ({ ...s, enabled: wantEnabled.has(s.id) }))
+          // Session restore only adjusts schema injection. Connection lifetime
+          // stays under the user's explicit global extension setting.
+          mcpServers: servers.map((s) => (s.enabled ? { ...s, inject: wantInjected.has(s.id) } : s))
         })
+      } else if (!wantInjected && Array.isArray(session.mcpEnabledIds)) {
+        // Preserve legacy topics, where this field coupled connection and
+        // injection. New topics never take this compatibility path.
+        const wantLegacyEnabled = new Set(session.mcpEnabledIds)
+        if (servers.some((s) => s.enabled !== wantLegacyEnabled.has(s.id) || s.inject !== wantLegacyEnabled.has(s.id))) {
+          void window.assistantLite.settings.update({
+            mcpServers: servers.map((s) => ({
+              ...s,
+              enabled: wantLegacyEnabled.has(s.id),
+              inject: wantLegacyEnabled.has(s.id)
+            }))
+          })
+        }
       }
     }
     setShowHistory(false)

@@ -287,6 +287,20 @@ describe('selection actions', () => {
     expect(normalized.actions.find((action) => action.id === 'bad')?.reasoning).toBe('on')
   })
 
+  it('migrates existing MCP servers to injected while honoring an explicit opt-out', () => {
+    const legacy = normalizeSettings({
+      ...defaultSettings,
+      mcpServers: [{ id: 'legacy', name: 'Legacy', transport: 'stdio', command: 'npx legacy', enabled: true }]
+    })
+    const optedOut = normalizeSettings({
+      ...defaultSettings,
+      mcpServers: [{ id: 'off', name: 'Off', transport: 'http', url: 'https://example.com/mcp', enabled: true, inject: false }]
+    })
+
+    expect(legacy.mcpServers[0]).toMatchObject({ enabled: true, inject: true })
+    expect(optedOut.mcpServers[0]).toMatchObject({ enabled: true, inject: false })
+  })
+
   it('builds a fixed language system prompt without custom prompt content', () => {
     expect(
       buildAssistantSystemPrompt({
