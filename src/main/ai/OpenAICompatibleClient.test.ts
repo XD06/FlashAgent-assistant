@@ -20,7 +20,8 @@ const provider: ProviderSettings = {
   baseUrl: 'https://api.example.com/v1/',
   apiKey: 'test-key',
   model: 'gpt-test',
-  temperature: 1
+  temperature: 1,
+  reasoning: 'on'
 }
 
 const anthropicProvider: ProviderSettings = {
@@ -28,7 +29,8 @@ const anthropicProvider: ProviderSettings = {
   baseUrl: 'https://api.anthropic.com',
   apiKey: 'anthropic-key',
   model: 'claude-3-5-sonnet-latest',
-  temperature: 1
+  temperature: 1,
+  reasoning: 'on'
 }
 
 afterEach(() => {

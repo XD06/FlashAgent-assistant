@@ -421,6 +421,17 @@ describe('search_files', () => {
     expect(output).toContain('search-a.ts')
   })
 
+  it('supports nested ** filename globs', async () => {
+    const { mkdirSync } = await import('node:fs')
+    const nested = join(searchDir, 'nested', 'fetch')
+    mkdirSync(nested, { recursive: true })
+    writeFileSync(join(nested, 'Headers.test.ts'), 'describe("Headers", () => {})\n', 'utf8')
+
+    const output = await executeAgentTool('search_files', { path: searchDir, glob: '**/*Headers*.test.ts' }, workDir)
+
+    expect(output).toContain('Headers.test.ts')
+  })
+
   it('skips node_modules and dot directories', async () => {
     const { mkdirSync } = await import('node:fs')
     mkdirSync(join(workDir, 'node_modules'), { recursive: true })

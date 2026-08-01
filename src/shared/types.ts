@@ -16,6 +16,8 @@ export interface ProviderSettings {
   apiKey: string
   model: string
   temperature: number
+  /** Default reasoning behavior for chat and actions without an override. */
+  reasoning: ReasoningMode
 }
 
 export interface ProviderTemplate {
@@ -45,8 +47,7 @@ export interface McpServerConfig {
   env?: string
   /** http: server URL. */
   url?: string
-  /** Whether this connected server's tools enter the model request. */
-  inject: boolean
+  /** Whether the server stays connected and its tools are available to Agent. */
   enabled: boolean
 }
 

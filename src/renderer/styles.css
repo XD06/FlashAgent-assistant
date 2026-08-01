@@ -3452,6 +3452,7 @@ padding: 4px;
 }
 .ext-panel__item:hover { background: color-mix(in srgb, var(--text) 4%, transparent); }
 .ext-panel__item-name { font-weight: 500; white-space: nowrap; }
+.ext-panel__item--model-settings { margin-top: 4px; }
 /* Tiny chain icon marking a linked (reused-in-place) skill folder. */
 .ext-panel__item-tag {
   display: inline-flex;
@@ -3504,6 +3505,37 @@ padding: 4px;
   font-size: 12px;
   font-family: inherit;
   flex-shrink: 0;
+}
+.ext-panel__model-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+.ext-panel__model-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: color-mix(in srgb, var(--text) 55%, transparent);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.ext-panel__number {
+  width: 48px;
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  padding: 3px 5px;
+  font: inherit;
+  text-align: center;
+}
+@media (max-width: 540px) {
+  .ext-panel__item--model-settings { flex-wrap: wrap; }
+  .ext-panel__item--model-settings .ext-panel__item-desc { flex-basis: 100%; }
+  .ext-panel__model-controls { margin-left: auto; }
 }
 .ext-panel__form input,
 .ext-panel__form select,

@@ -1,5 +1,5 @@
 import React from 'react'
-import type { AppSettings, CommandShell, McpServerConfig, McpServerStatus, McpTransport, SkillInfo } from '@shared/types'
+import type { AppSettings, CommandShell, McpServerConfig, McpServerStatus, McpTransport, ReasoningMode, SkillInfo } from '@shared/types'
 import { parseMcpJson } from '@shared/mcpJson'
 import type { ParsedMcpServer } from '@shared/mcpJson'
 import { Icon } from '../icons'
@@ -11,7 +11,7 @@ interface ExtensionsPanelProps {
   onClose: () => void
 }
 
-type PanelTab = 'memory' | 'skills' | 'mcp' | 'perms'
+type PanelTab = 'memory' | 'skills' | 'mcp' | 'other'
 
 // Shell picker only makes sense on Windows — macOS/Linux always run bash.
 const IS_WINDOWS_UI = navigator.platform.toLowerCase().includes('win')
@@ -109,10 +109,6 @@ export function ExtensionsPanel({ settings, isZh, workingDir, onClose }: Extensi
     patchServers(settings.mcpServers.map((s) => (s.id === id ? { ...s, enabled } : s)))
   }
 
-  const toggleInjection = (id: string, inject: boolean): void => {
-    patchServers(settings.mcpServers.map((s) => (s.id === id ? { ...s, inject } : s)))
-  }
-
   const removeServer = (id: string): void => {
     patchServers(settings.mcpServers.filter((s) => s.id !== id))
   }
@@ -131,8 +127,7 @@ export function ExtensionsPanel({ settings, isZh, workingDir, onClose }: Extensi
         command: form.transport === 'stdio' ? form.command.trim() : undefined,
         env: form.transport === 'stdio' && form.env.trim() ? form.env.trim() : undefined,
         url: form.transport === 'http' ? form.url.trim() : undefined,
-        enabled: false,
-        inject: false
+        enabled: false
       }
     ])
     setForm({ name: '', transport: 'stdio', command: '', url: '', env: '' })
@@ -153,7 +148,7 @@ export function ExtensionsPanel({ settings, isZh, workingDir, onClose }: Extensi
     }
     patchServers([
       ...settings.mcpServers,
-        ...parsed.map((p) => ({ id: crypto.randomUUID(), ...p, enabled: false, inject: false }))
+        ...parsed.map((p) => ({ id: crypto.randomUUID(), ...p, enabled: false }))
     ])
     setJsonText('')
     setJsonError(null)
@@ -164,8 +159,15 @@ export function ExtensionsPanel({ settings, isZh, workingDir, onClose }: Extensi
     { id: 'memory', label: isZh ? '记忆' : 'Memory' },
     { id: 'skills', label: 'Skills' },
     { id: 'mcp', label: 'MCP' },
-    { id: 'perms', label: isZh ? '权限' : 'Access' }
+    { id: 'other', label: isZh ? '其他' : 'Other' }
   ]
+
+  const updateTemperature = (value: string): void => {
+    const parsed = Number(value)
+    if (!Number.isFinite(parsed)) return
+    const max = settings.provider.apiType === 'anthropic' ? 1 : 2
+    void window.assistantLite.settings.update({ provider: { temperature: Math.min(max, Math.max(0, parsed)) } })
+  }
 
   return (
     <div className="ext-panel">
@@ -265,7 +267,7 @@ export function ExtensionsPanel({ settings, isZh, workingDir, onClose }: Extensi
         </div>
       )}
 
-      {tab === 'perms' && (
+      {tab === 'other' && (
         <div className="ext-panel__section">
           <div className="ext-panel__item">
             <span className="ext-panel__item-name">{isZh ? '完全访问模式' : 'Full access mode'}</span>
@@ -311,6 +313,50 @@ export function ExtensionsPanel({ settings, isZh, workingDir, onClose }: Extensi
               </div>
             </>
           )}
+          <div className="ext-panel__item ext-panel__item--model-settings">
+            <span className="ext-panel__item-name">{isZh ? '模型参数' : 'Model defaults'}</span>
+            <span className="ext-panel__item-desc">
+              {isZh ? '当前服务商的默认值' : 'Defaults for the current provider'}
+            </span>
+            <div className="ext-panel__model-controls">
+              <label
+                className="ext-panel__model-control"
+                title={isZh ? '影响所有模型回复的随机性，包括 Agent 工具调用。' : 'Controls randomness for every model response, including Agent tool calls.'}
+              >
+                <span>{isZh ? '温度' : 'Temp.'}</span>
+                <input
+                  className="ext-panel__number"
+                  type="number"
+                  min="0"
+                  max={settings.provider.apiType === 'anthropic' ? 1 : 2}
+                  step="0.1"
+                  value={settings.provider.temperature}
+                  aria-label={isZh ? '模型温度' : 'Model temperature'}
+                  onChange={(event) => updateTemperature(event.target.value)}
+                />
+              </label>
+              <label
+                className="ext-panel__model-control"
+                title={isZh ? '自动时不额外发送思考参数；其他选项会按服务商协议请求对应强度。' : 'Auto sends no extra reasoning parameter; other options use the matching provider protocol.'}
+              >
+                <span>{isZh ? '思考' : 'Reasoning'}</span>
+                <select
+                  className="ext-panel__select"
+                  value={settings.provider.reasoning}
+                  aria-label={isZh ? '思考强度' : 'Reasoning intensity'}
+                  onChange={(event) =>
+                    void window.assistantLite.settings.update({ provider: { reasoning: event.target.value as ReasoningMode } })
+                  }
+                >
+                  <option value="on">{isZh ? '自动' : 'Auto'}</option>
+                  <option value="off">{isZh ? '关闭' : 'Off'}</option>
+                  <option value="low">{isZh ? '低' : 'Low'}</option>
+                  <option value="medium">{isZh ? '中' : 'Medium'}</option>
+                  <option value="high">{isZh ? '高' : 'High'}</option>
+                </select>
+              </label>
+            </div>
+          </div>
         </div>
       )}
 
@@ -328,8 +374,6 @@ export function ExtensionsPanel({ settings, isZh, workingDir, onClose }: Extensi
           {mcp.map((server) => {
             const config = settings.mcpServers.find((s) => s.id === server.id)
             const enabled = config?.enabled === true
-            const injected = enabled && config?.inject === true
-            const canInject = enabled && server.state === 'connected'
             return (
               <div key={server.id} className="ext-panel__item" title={server.error ?? server.toolNames.join(', ')}>
                 <span className="ext-panel__dot" style={{ background: STATE_COLORS[server.state] }} />
@@ -363,22 +407,6 @@ export function ExtensionsPanel({ settings, isZh, workingDir, onClose }: Extensi
                       onChange={(v) => toggleServer(server.id, v)}
                       title={isZh ? (enabled ? '点击断开服务器' : '点击连接服务器') : (enabled ? 'Disconnect server' : 'Connect server')}
                       ariaLabel={isZh ? `${server.name}：连接服务器` : `${server.name}: connect server`}
-                    />
-                  </span>
-                  <span className="ext-panel__mcp-control">
-                    <span>{isZh ? '注入' : 'Inject'}</span>
-                    <PillSwitch
-                      checked={injected}
-                      disabled={!canInject}
-                      onChange={(v) => toggleInjection(server.id, v)}
-                      title={
-                        !enabled
-                          ? (isZh ? '连接后可注入工具' : 'Connect before injecting tools')
-                          : server.state !== 'connected'
-                            ? (isZh ? '连接成功后可注入工具' : 'Inject tools after the connection succeeds')
-                            : (injected ? (isZh ? '从模型请求中移除工具' : 'Remove tools from model requests') : (isZh ? '将工具注入模型请求' : 'Inject tools into model requests'))
-                      }
-                      ariaLabel={isZh ? `${server.name}：注入工具` : `${server.name}: inject tools`}
                     />
                   </span>
                 </div>

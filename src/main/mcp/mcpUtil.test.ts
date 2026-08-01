@@ -54,7 +54,7 @@ describe('buildMcpToolName', () => {
 })
 
 describe('mcpConfigKey', () => {
-  const base: McpServerConfig = { id: '1', name: 'a', transport: 'stdio', command: 'npx x', inject: true, enabled: true }
+  const base: McpServerConfig = { id: '1', name: 'a', transport: 'stdio', command: 'npx x', enabled: true }
 
   it('changes when connection-relevant fields change', () => {
     expect(mcpConfigKey({ ...base, command: 'npx y' })).not.toBe(mcpConfigKey(base))

@@ -69,7 +69,8 @@ export const defaultProviderTemplate: ProviderTemplate = {
     baseUrl: 'https://api.openai.com/v1',
     apiKey: '',
     model: 'gpt-4o-mini',
-    temperature: 1
+    temperature: 1,
+    reasoning: 'on'
   }
 }
 

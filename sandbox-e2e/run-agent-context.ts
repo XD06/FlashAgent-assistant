@@ -10,9 +10,12 @@
  */
 import { existsSync, promises as fs } from 'node:fs'
 import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { ProxyAgent, fetch as undiciFetch } from 'undici'
 import { streamChatMessages, type ProviderFetch } from '../src/main/ai/OpenAICompatibleClient'
-import { agentToolDefinitionsForShell, executeAgentTool } from '../src/main/agent/AgentTools'
+import { agentToolDefinitionsForShell, executeAgentTool, resolveCommandShell, shellSyntaxLabel } from '../src/main/agent/AgentTools'
+import { buildAgentSystemPrompt, type AgentPromptVariant } from '../src/main/agent/AgentPrompt'
+import { buildAssistantSystemPrompt } from '../src/shared/actions'
 import type { ContextMeasurement } from '../src/shared/contextMeter'
 import type { AppSettings, ProviderSettings } from '../src/shared/types'
 
@@ -22,16 +25,18 @@ interface NumericRequestMetric extends ContextMeasurement {
   reportedCompletionTokens: number | null
 }
 
-type ScenarioId = 'baseline' | 'cjk' | 'large-output' | 'image'
+type ScenarioId = 'baseline' | 'cjk' | 'large-output' | 'image' | 'repair' | 'public-regression'
 
 interface E2eScenario {
   id: ScenarioId
   markerName: string
   taskLines: string[]
-  systemLines: string[]
-  requiredToolName?: string
+  requiredToolNames?: string[]
+  observationToolNames?: string[]
   imageDataUrl?: string
   largeOutputFixtureName?: string
+  repairFixture?: boolean
+  publicRegressionFixture?: boolean
 }
 
 interface E2eResult {
@@ -44,7 +49,12 @@ interface E2eResult {
   toolErrorCount: number
   totalToolResultChars: number
   maxToolResultChars: number
-  requiredToolCallSatisfied: boolean
+  requiredToolCallsSatisfied: boolean
+  repairFixturePassed: boolean
+  publicRegressionFixturePassed: boolean
+  observedOptionalToolCalls: string[]
+  intermediateVisibleTextCount: number
+  promptVariant: AgentPromptVariant
   imageSent: boolean
   markerCreated: boolean
   syntaxCheckSucceeded: boolean
@@ -69,6 +79,7 @@ const scenarios: Record<ScenarioId, E2eScenario> = {
   baseline: {
     id: 'baseline',
     markerName: 'AGENT_CONTEXT_E2E.md',
+    observationToolNames: ['list_dir', 'search_files'],
     taskLines: [
       'Work only in the provided isolated repository.',
       'Inspect package metadata and the JavaScript entry module.',
@@ -77,11 +88,6 @@ const scenarios: Record<ScenarioId, E2eScenario> = {
       'Do not install dependencies, do not change existing source or configuration, and use tools for every action.',
       'When done, give a concise evidence-based summary.'
     ],
-    systemLines: [
-      'You are a precise coding agent in an isolated regression workspace.',
-      'Use the provided file and command tools for all inspection and actions.',
-      'Do not claim an action completed without its matching successful tool result.'
-    ]
   },
   cjk: {
     id: 'cjk',
@@ -94,17 +100,12 @@ const scenarios: Record<ScenarioId, E2eScenario> = {
       '不要安装依赖，不要改动已有源码或配置；每一项检查和写入都必须通过工具完成。',
       '完成后给出简短、有证据的中文总结。'
     ],
-    systemLines: [
-      '你是隔离回归工作区中的精确编码 Agent。',
-      '所有检查和操作都必须使用已提供的文件与命令工具。',
-      '没有对应成功工具结果时，不得声称操作已完成。'
-    ]
   },
   'large-output': {
     id: 'large-output',
     markerName: 'AGENT_CONTEXT_E2E_LARGE_OUTPUT.md',
     largeOutputFixtureName: 'AGENT_CONTEXT_E2E_LARGE_OUTPUT.txt',
-    requiredToolName: 'read_file',
+    requiredToolNames: ['read_file'],
     taskLines: [
       'Work only in the provided isolated repository.',
       'First use read_file to inspect AGENT_CONTEXT_E2E_LARGE_OUTPUT.txt. Do not use a shell command to read that file.',
@@ -114,11 +115,6 @@ const scenarios: Record<ScenarioId, E2eScenario> = {
       'Do not install dependencies or change existing source or configuration. Use tools for every action.',
       'When done, give a concise evidence-based summary.'
     ],
-    systemLines: [
-      'You are a precise coding agent in an isolated regression workspace.',
-      'Use the provided file and command tools for all inspection and actions.',
-      'Do not claim an action completed without its matching successful tool result.'
-    ]
   },
   image: {
     id: 'image',
@@ -133,23 +129,104 @@ const scenarios: Record<ScenarioId, E2eScenario> = {
       'Do not install dependencies or change existing source or configuration. Use tools for every action.',
       'When done, give a concise evidence-based summary.'
     ],
-    systemLines: [
-      'You are a precise coding agent in an isolated regression workspace.',
-      'Use the provided file and command tools for all inspection and actions.',
-      'Do not claim an action completed without its matching successful tool result.'
+  },
+  repair: {
+    id: 'repair',
+    markerName: 'AGENT_PROMPT_REPAIR_UNUSED.md',
+    repairFixture: true,
+    requiredToolNames: ['read_file', 'edit_file', 'run_command'],
+    observationToolNames: ['list_dir', 'search_files', 'write_file'],
+    taskLines: [
+      'Work only in the provided isolated repository.',
+      'Fix only AGENT_PROMPT_FIXTURE.mjs so AGENT_PROMPT_FIXTURE.test.mjs passes.',
+      'Before editing, inspect both fixture files with read_file. Do not edit the test file.',
+      'Use edit_file, not write_file or a shell command, for the source change.',
+      'Run node AGENT_PROMPT_FIXTURE.test.mjs after editing. A passing test is required completion evidence.',
+      'Do not install dependencies or modify other existing source or configuration. Use tools for every action.',
+      'When done, give a concise evidence-based summary.'
+    ]
+  },
+  'public-regression': {
+    id: 'public-regression',
+    markerName: 'AGENT_PUBLIC_REGRESSION_UNUSED.md',
+    publicRegressionFixture: true,
+    taskLines: [
+      'Work only in the provided isolated checkout of the public escape-string-regexp repository.',
+      'A downstream regression report says escapeStringRegexp(\'foo - bar\') now returns an output that leaves the hyphen unescaped, breaking use in Unicode regular expressions.',
+      'Investigate the report and fix the defect with the smallest justified change. Limit source changes to index.js; do not alter package metadata or existing tests.',
+      'The repository\'s AVA dependencies are intentionally unavailable. Do not install dependencies; choose an appropriate built-in Node verification for the reported behavior.',
+      'When done, give a concise evidence-based summary.'
     ]
   }
 }
 
+const cliArgs = process.argv.slice(2)
+const traceEnabled = cliArgs.includes('--trace')
+
 function readScenario(): E2eScenario {
-  const requested = process.argv[2] ?? 'baseline'
+  const requested = cliArgs.find((arg) => !arg.startsWith('--')) ?? 'baseline'
   if (requested in scenarios) return scenarios[requested as ScenarioId]
   throw new Error(`Unknown E2E scenario: ${requested}`)
+}
+
+function readPromptVariant(): AgentPromptVariant {
+  const raw = cliArgs.find((arg) => arg.startsWith('--prompt='))?.slice('--prompt='.length)
+  if (raw === 'baseline') return 'baseline'
+  if (!raw || raw === 'focused') return raw === 'focused' ? 'focused' : 'baseline'
+  throw new Error(`Unknown prompt variant: ${raw}`)
+}
+
+function trace(label: string, value: string): void {
+  if (!traceEnabled) return
+  console.log(`\n===== ${label} =====\n${value}`)
 }
 
 function buildLargeOutputFixture(): string {
   const line = 'This controlled fixture measures a large read_file result without retaining it in metrics.\n'
   return line.repeat(Math.ceil(24_000 / line.length))
+}
+
+async function prepareRepairFixture(): Promise<void> {
+  await fs.writeFile(
+    path.join(workspace, 'AGENT_PROMPT_FIXTURE.mjs'),
+    `export function normalizeSlug(value) {\n  if (typeof value !== 'string') throw new TypeError('Expected a string')\n  return value.trim().toLowerCase()\n}\n`,
+    'utf8'
+  )
+  await fs.writeFile(
+    path.join(workspace, 'AGENT_PROMPT_FIXTURE.test.mjs'),
+    `import assert from 'node:assert/strict'\nimport { normalizeSlug } from './AGENT_PROMPT_FIXTURE.mjs'\n\nassert.equal(normalizeSlug('  Flash   Agent  '), 'flash-agent')\nassert.equal(normalizeSlug('Already-Slug'), 'already-slug')\nconsole.log('fixture passed')\n`,
+    'utf8'
+  )
+}
+
+async function preparePublicRegressionFixture(): Promise<void> {
+  const entryPath = path.join(workspace, 'index.js')
+  const original = [
+    'export default function escapeStringRegexp(string) {',
+    "\tif (typeof string !== 'string') {",
+    "\t\tthrow new TypeError('Expected a string');",
+    '\t}',
+    '',
+    '\treturn string',
+    "\t\t.replace(/[|\\\\{}()[\\]^$+*?.]/g, '\\\\$&')",
+    "\t\t.replace(/-/g, '\\\\x2d');",
+    '}',
+    ''
+  ].join('\n')
+  const regression = original.replace(".replace(/-/g, '\\\\x2d');", ".replace(/-/g, '-');")
+  if (regression === original) throw new Error('failed to inject public regression fixture')
+  await fs.writeFile(entryPath, regression, 'utf8')
+}
+
+async function validatePublicRegressionFixture(): Promise<boolean> {
+  const entryUrl = pathToFileURL(path.join(workspace, 'index.js')).href
+  const { default: escapeStringRegexp } = await import(`${entryUrl}?agent-e2e=${Date.now()}`) as {
+    default: (input: string) => string
+  }
+  const escaped = escapeStringRegexp('foo - bar')
+  if (escaped !== 'foo \\x2d bar') return false
+  new RegExp(escapeStringRegexp('-'), 'u')
+  return true
 }
 
 function writeResult(result: E2eResult): Promise<void> {
@@ -159,11 +236,14 @@ function writeResult(result: E2eResult): Promise<void> {
 async function main(): Promise<void> {
   if (!existsSync(workspace)) throw new Error('isolated public-repository workspace is missing')
   const scenario = readScenario()
+  const promptVariant = readPromptVariant()
   const markerPath = path.join(workspace, scenario.markerName)
   await fs.rm(markerPath, { force: true })
   if (scenario.largeOutputFixtureName) {
     await fs.writeFile(path.join(workspace, scenario.largeOutputFixtureName), buildLargeOutputFixture(), 'utf8')
   }
+  if (scenario.repairFixture) await prepareRepairFixture()
+  if (scenario.publicRegressionFixture) await preparePublicRegressionFixture()
   const settingsRaw = await (async (): Promise<string> => {
     for (const candidate of settingsPaths) {
       try {
@@ -190,12 +270,30 @@ async function main(): Promise<void> {
   let totalToolResultChars = 0
   let maxToolResultChars = 0
   const toolNames = new Set<string>()
+  const observedOptionalToolCalls: string[] = []
   let syntaxCheckSucceeded = false
+  let repairFixturePassed = false
+  let publicRegressionFixturePassed = false
+  let intermediateVisibleTextCount = 0
+  let responseText = ''
+  let reasoningText = ''
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), 180_000)
   const started = Date.now()
 
   try {
+    const systemPrompt = buildAgentSystemPrompt(
+      {
+        baseSystemPrompt: buildAssistantSystemPrompt({ language: settings.language }),
+        workingDir: workspace,
+        shellLabel: shellSyntaxLabel(resolveCommandShell(settings.commandShell))
+      },
+      promptVariant
+    )
+    trace('PROMPT VARIANT', promptVariant)
+    trace('SYSTEM PROMPT', systemPrompt)
+    trace('USER TASK', scenario.taskLines.join('\n'))
+
     await streamChatMessages(
       provider,
       [{
@@ -203,10 +301,11 @@ async function main(): Promise<void> {
         text: scenario.taskLines.join(' '),
         ...(scenario.imageDataUrl ? { images: [scenario.imageDataUrl] } : {})
       }],
-      [...scenario.systemLines, `Working directory: ${workspace}`].join('\n'),
+      systemPrompt,
       controller.signal,
-      () => {
-        // Model output is intentionally not retained by this test driver.
+      (delta) => {
+        if (delta.content) responseText += delta.content
+        if (delta.reasoning) reasoningText += delta.reasoning
       },
       'off',
       {
@@ -216,6 +315,7 @@ async function main(): Promise<void> {
         toolLoopTimeoutMs: 180_000,
         onContextMeasured: (measurement) => {
           requests.push({ ...measurement, reportedPromptTokens: null, reportedCompletionTokens: null })
+          trace('REQUEST CONTEXT', JSON.stringify({ modelRequestIndex: requests.length - 1, ...measurement }, null, 2))
         },
         shadowBudget: { contextWindowTokens: settings.contextWindowTokens },
         onUsage: (usage) => {
@@ -224,12 +324,23 @@ async function main(): Promise<void> {
             target.reportedPromptTokens = usage.promptTokens
             target.reportedCompletionTokens = usage.completionTokens
           }
+          trace('REQUEST USAGE', JSON.stringify(usage, null, 2))
         },
         onToolCall: async (name, args) => {
+          if (responseText || reasoningText) {
+            trace('MODEL RESPONSE', responseText || '(tool call without visible text)')
+            if (reasoningText) trace('MODEL REASONING', reasoningText)
+            if (responseText.trim()) intermediateVisibleTextCount += 1
+            responseText = ''
+            reasoningText = ''
+          }
           toolCallCount += 1
           toolNames.add(name)
+          if (scenario.observationToolNames?.includes(name)) observedOptionalToolCalls.push(name)
+          trace('TOOL CALL', `${name}\n${JSON.stringify(args, null, 2)}`)
           try {
             const output = await executeAgentTool(name, args, workspace, controller.signal, undefined, settings.commandShell)
+            trace('TOOL RESULT', output)
             totalToolResultChars += output.length
             maxToolResultChars = Math.max(maxToolResultChars, output.length)
             if (
@@ -240,8 +351,18 @@ async function main(): Promise<void> {
             ) {
               syntaxCheckSucceeded = true
             }
+            if (
+              scenario.repairFixture &&
+              name === 'run_command' &&
+              typeof args.command === 'string' &&
+              args.command.includes('AGENT_PROMPT_FIXTURE.test.mjs') &&
+              !output.startsWith('Exit code ')
+            ) {
+              repairFixturePassed = true
+            }
             return output
-          } catch {
+          } catch (error) {
+            trace('TOOL ERROR', error instanceof Error ? error.message : String(error))
             toolErrorCount += 1
             return '[Tool execution failed. Inspect the request and choose a safe alternative.]'
           }
@@ -251,16 +372,27 @@ async function main(): Promise<void> {
   } finally {
     clearTimeout(timeout)
   }
+  if (scenario.publicRegressionFixture) {
+    try {
+      publicRegressionFixturePassed = await validatePublicRegressionFixture()
+    } catch (error) {
+      trace('INDEPENDENT VERIFICATION ERROR', error instanceof Error ? error.message : String(error))
+    }
+  }
+  if (responseText || reasoningText) {
+    trace('MODEL RESPONSE', responseText || '(no visible final text)')
+    if (reasoningText) trace('MODEL REASONING', reasoningText)
+  }
 
   const result: E2eResult = {
     scenario: scenario.id,
     passed:
-      existsSync(markerPath) &&
-      syntaxCheckSucceeded &&
+      (scenario.repairFixture ? repairFixturePassed : scenario.publicRegressionFixture ? publicRegressionFixturePassed : existsSync(markerPath)) &&
+      (scenario.repairFixture ? repairFixturePassed : scenario.publicRegressionFixture ? publicRegressionFixturePassed : syntaxCheckSucceeded) &&
       toolCallCount > 0 &&
       toolErrorCount === 0 &&
       requests.length > 0 &&
-      (!scenario.requiredToolName || toolNames.has(scenario.requiredToolName)),
+      (!scenario.repairFixture || repairFixturePassed),
     elapsedMs: Date.now() - started,
     providerReportedUsage: requests.some((request) => request.reportedPromptTokens !== null),
     modelRequestCount: requests.length,
@@ -268,7 +400,12 @@ async function main(): Promise<void> {
     toolErrorCount,
     totalToolResultChars,
     maxToolResultChars,
-    requiredToolCallSatisfied: !scenario.requiredToolName || toolNames.has(scenario.requiredToolName),
+    requiredToolCallsSatisfied: !scenario.requiredToolNames || scenario.requiredToolNames.every((name) => toolNames.has(name)),
+    repairFixturePassed,
+    publicRegressionFixturePassed,
+    observedOptionalToolCalls,
+    intermediateVisibleTextCount,
+    promptVariant,
     imageSent: scenario.imageDataUrl !== undefined,
     markerCreated: existsSync(markerPath),
     syntaxCheckSucceeded,
@@ -282,7 +419,7 @@ async function main(): Promise<void> {
 
 main().catch(async () => {
   const result: E2eResult = {
-    scenario: (process.argv[2] as ScenarioId | undefined) ?? 'baseline',
+    scenario: (cliArgs.find((arg) => !arg.startsWith('--')) as ScenarioId | undefined) ?? 'baseline',
     passed: false,
     elapsedMs: 0,
     providerReportedUsage: false,
@@ -291,7 +428,12 @@ main().catch(async () => {
     toolErrorCount: 0,
     totalToolResultChars: 0,
     maxToolResultChars: 0,
-    requiredToolCallSatisfied: false,
+    requiredToolCallsSatisfied: false,
+    repairFixturePassed: false,
+    publicRegressionFixturePassed: false,
+    observedOptionalToolCalls: [],
+    intermediateVisibleTextCount: 0,
+    promptVariant: 'focused',
     imageSent: false,
     markerCreated: false,
     syntaxCheckSucceeded: false,

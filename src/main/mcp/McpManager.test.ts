@@ -6,7 +6,7 @@ function addConnectedServer(manager: McpManager, id: string): void {
     servers: Map<string, unknown>
   }
   internals.servers.set(id, {
-    config: { id, name: id, transport: 'stdio', command: 'npx test', enabled: true, inject: true },
+    config: { id, name: id, transport: 'stdio', command: 'npx test', enabled: true },
     configKey: id,
     client: null,
     state: 'connected',
@@ -20,8 +20,8 @@ function addConnectedServer(manager: McpManager, id: string): void {
   })
 }
 
-describe('McpManager tool injection', () => {
-  it('exposes schemas only for explicitly injected connected servers', () => {
+describe('McpManager tool availability', () => {
+  it('exposes schemas only for selected connected servers', () => {
     const manager = new McpManager()
     addConnectedServer(manager, 'selected')
     addConnectedServer(manager, 'connected-only')

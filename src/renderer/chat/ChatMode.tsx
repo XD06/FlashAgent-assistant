@@ -1,5 +1,5 @@
 import React from 'react'
-import type { AgentToolEvent, AiChunkPayload, AiMessageInput, AppSettings, ToolTraceEntry } from '@shared/types'
+import type { AgentToolEvent, AiChunkPayload, AiMessageInput, AppSettings } from '@shared/types'
 import type { ContextMeasurement } from '@shared/contextMeter'
 import { MarkdownView } from '../Markdown'
 import { Icon } from '../icons'
@@ -7,6 +7,7 @@ import { getTranslator } from '../i18n'
 import { ThinkingBlock } from './ThinkingBlock'
 import { ExtensionsPanel } from './ExtensionsPanel'
 import { renderTerminalText, highlightLineNumbers } from './ansi'
+import { buildToolTrace, TOOL_TRACE_OUTPUT_PER_CALL } from './toolTrace'
 import {
   COMPACT_TRIGGER_CHARS,
   compactTriggerTokens,
@@ -70,15 +71,11 @@ interface ChatCompact {
 }
 
 /** Session toggles captured with a topic so reopening it restores the
- * same working context (agent mode, workspace, search, MCP servers). */
+ * same working context (agent mode, workspace, search). */
 interface TopicSession {
   agentEnabled: boolean
   workingDir: string | null
   searchEnabled: boolean
-  /** IDs of connected MCP servers whose tool schemas were injected. */
-  mcpInjectedIds?: string[]
-  /** Legacy session field: pre-injection split, this meant connected + injected. */
-  mcpEnabledIds?: string[]
 }
 
 /** A saved conversation topic */
@@ -124,12 +121,8 @@ function formatTokens(n: number): string {
 // native tool-call/tool-result messages at the protocol layer — history
 // looks like real tool use, not narration); toolRecap below renders the
 // text form, still used when serializing stale turns for the summarizer.
-const RECAP_MAX_CALLS = 20
 const RECAP_HEADINGS = ['【本轮实际执行的工具调用】', '[Tool calls actually executed this turn]']
 const RECAP_ENDINGS = ['【工具记录结束】', '[End of tool record]']
-// Per-call ceiling matches the in-turn 12k cap. Which completed task rounds
-// keep their output is decided by the shared task-round budget below.
-const RECAP_OUTPUT_PER_CALL = 12_000
 
 // The model sees the machine-appended recap block in replayed history and
 // may imitate it, forging a "tool record" for work it never did. Strip
@@ -185,7 +178,7 @@ function toolRecap(turn: ChatTurn, isZh: boolean, withOutput = false): string {
     .flatMap((b) => (b.kind === 'tools' ? b.events : []))
     .filter((e) => e.state === 'done' || e.state === 'error' || e.state === 'rejected' || e.state === 'reverted')
   if (settled.length === 0) return ''
-  const lines = settled.slice(0, RECAP_MAX_CALLS).map((e) => {
+  const lines = settled.map((e) => {
     const mark = e.state === 'done' ? 'ok' : e.state
     // Same identity shape as the in-loop result prefix (`[tool: … → status]`)
     // so the model sees one canonical, machine-only format everywhere.
@@ -194,23 +187,13 @@ function toolRecap(turn: ChatTurn, isZh: boolean, withOutput = false): string {
     // indented two spaces so the markerless strip fallback still recognises
     // the block shape.
     if (withOutput && e.result && (e.state === 'done' || e.state === 'error')) {
-      const body = e.result.slice(0, RECAP_OUTPUT_PER_CALL)
+      const body = e.result.slice(0, TOOL_TRACE_OUTPUT_PER_CALL)
       const truncated =
         body.length < e.result.length ? (isZh ? '\n  （输出已截断）' : '\n  (output truncated)') : ''
       line += `\n${body.replace(/^/gm, '  ')}${truncated}`
     }
     return line
   })
-  if (settled.length > RECAP_MAX_CALLS) {
-    // Overflow calls: keep a one-line identity record (tool name + status)
-    // so the model still knows what was executed beyond the display window.
-    const overflow = settled.slice(RECAP_MAX_CALLS)
-    for (const e of overflow) {
-      const mark = e.state === 'done' ? 'ok' : e.state
-      lines.push(`[tool: ${e.toolName} ${e.summary} → ${mark}]`)
-    }
-    lines.push(isZh ? `（以上 ${overflow.length} 次为溢出摘要，输出已省略）` : `(${overflow.length} overflow calls above — outputs omitted)`)
-  }
   return `\n\n${isZh ? RECAP_HEADINGS[0] : RECAP_HEADINGS[1]}\n${lines.join('\n')}\n${isZh ? RECAP_ENDINGS[0] : RECAP_ENDINGS[1]}`
 }
 
@@ -220,32 +203,6 @@ function settledToolEvents(turn: ChatTurn): AgentToolEvent[] {
   return turn.blocks
     .flatMap((b) => (b.kind === 'tools' ? b.events : []))
     .filter((e) => e.state === 'done' || e.state === 'error' || e.state === 'rejected' || e.state === 'reverted')
-}
-
-// Structured cross-turn replay — the native counterpart of toolRecap. Every
-// settled call ships (protocol pairing: each replayed call needs a result);
-// recent turns carry capped outputs, older ones and overflow calls beyond
-// RECAP_MAX_CALLS keep the one-line identity record only. The result text
-// keeps the `[tool: … → status]` first line so stubs stay self-identifying.
-function buildToolTrace(turn: ChatTurn, isZh: boolean, withOutput: boolean): ToolTraceEntry[] {
-  return settledToolEvents(turn).map((e, idx) => {
-    const mark = e.state === 'done' ? 'ok' : e.state
-    let result = `[tool: ${e.toolName} ${e.summary} → ${mark}]`
-    if (e.state === 'done' || e.state === 'error') {
-      if (withOutput && idx < RECAP_MAX_CALLS && e.result) {
-        const body = e.result.slice(0, RECAP_OUTPUT_PER_CALL)
-        const truncated = body.length < e.result.length ? (isZh ? '\n（输出已截断）' : '\n(output truncated)') : ''
-        result += `\n${body}${truncated}`
-      } else {
-        result += isZh
-          ? '\n（较早轮次，输出已省略 — 如需内容请重新调用工具）'
-          : '\n(older turn — output omitted; call the tool again if needed)'
-      }
-    }
-    // Topics saved before argsJson existed fall back to a summary-shaped
-    // object — still valid JSON, still identifies the call.
-    return { id: e.callId, name: e.toolName, argsJson: e.argsJson ?? JSON.stringify({ summary: e.summary }), result }
-  })
 }
 
 // ---- Compression material sizing ----
@@ -284,7 +241,7 @@ function estimateTurnTokens(turn: ChatTurn): number {
         tokens += estimateTokensFromText(e.summary) + estimateTokensFromChars(e.toolName.length + 16)
         if (e.result && (e.state === 'done' || e.state === 'error')) {
           tokens += estimateTokensFromText(
-            e.result.length > RECAP_OUTPUT_PER_CALL ? e.result.slice(0, RECAP_OUTPUT_PER_CALL) : e.result
+            e.result.length > TOOL_TRACE_OUTPUT_PER_CALL ? e.result.slice(0, TOOL_TRACE_OUTPUT_PER_CALL) : e.result
           )
         }
       }
@@ -933,15 +890,13 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
   const sessionSnapshotRef = React.useRef<TopicSession>({
     agentEnabled: false,
     workingDir: null,
-    searchEnabled: false,
-    mcpInjectedIds: []
+    searchEnabled: false
   })
   React.useEffect(() => {
     sessionSnapshotRef.current = {
       agentEnabled,
       workingDir,
-      searchEnabled,
-      mcpInjectedIds: settings.mcpServers.filter((s) => s.enabled && s.inject).map((s) => s.id)
+      searchEnabled
     }
   }, [agentEnabled, workingDir, searchEnabled, settings.mcpServers])
   const persistTopic = React.useCallback((turns: ChatTurn[], model?: string) => {
@@ -1110,7 +1065,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
         sendChars += messagePayloadChars({
           role: 'assistant',
           text: stripForgedRecap(turn.text),
-          toolTrace: buildToolTrace(turn, isZh, covered + i >= keepStart)
+          toolTrace: buildToolTrace(settledToolEvents(turn), isZh, covered + i >= keepStart)
         })
         for (const note of injectedNotes(turn)) sendChars += note.length
       })
@@ -1497,7 +1452,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
           if (turn.role !== 'assistant') {
             return [{ role: turn.role, text: buildSendText(turn), ...(turn.images?.length ? { images: turn.images } : {}) }]
           }
-          const trace = buildToolTrace(turn, isZh, recentStart + i >= outputKeepStart)
+          const trace = buildToolTrace(settledToolEvents(turn), isZh, recentStart + i >= outputKeepStart)
           const assistantMsg: AiMessageInput = {
             role: turn.role,
             text: stripForgedRecap(turn.text),
@@ -1768,36 +1723,14 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
     setEditingUser(null)
     setChat(topic.turns)
     if (topic.model) setSelectedModel(topic.model)
-    // Restore the session context saved with the topic (agent mode, workspace,
-    // search, MCP toggles). Legacy topics without a snapshot keep the current
-    // toggles untouched.
+    // Restore the session context saved with the topic. MCP connection state is
+    // global: connected servers are always available to Agent, so changing
+    // topics never changes MCP connections behind the user's back.
     const session = topic.session
     if (session) {
       setSearchEnabled(session.searchEnabled)
       setWorkingDir(session.workingDir)
       setAgentEnabled(session.agentEnabled && !!session.workingDir)
-      const servers = settings.mcpServers
-      const wantInjected = Array.isArray(session.mcpInjectedIds) ? new Set(session.mcpInjectedIds) : null
-      if (wantInjected && servers.some((s) => s.enabled && s.inject !== wantInjected.has(s.id))) {
-        void window.assistantLite.settings.update({
-          // Session restore only adjusts schema injection. Connection lifetime
-          // stays under the user's explicit global extension setting.
-          mcpServers: servers.map((s) => (s.enabled ? { ...s, inject: wantInjected.has(s.id) } : s))
-        })
-      } else if (!wantInjected && Array.isArray(session.mcpEnabledIds)) {
-        // Preserve legacy topics, where this field coupled connection and
-        // injection. New topics never take this compatibility path.
-        const wantLegacyEnabled = new Set(session.mcpEnabledIds)
-        if (servers.some((s) => s.enabled !== wantLegacyEnabled.has(s.id) || s.inject !== wantLegacyEnabled.has(s.id))) {
-          void window.assistantLite.settings.update({
-            mcpServers: servers.map((s) => ({
-              ...s,
-              enabled: wantLegacyEnabled.has(s.id),
-              inject: wantLegacyEnabled.has(s.id)
-            }))
-          })
-        }
-      }
     }
     setShowHistory(false)
     setTimeout(() => inputRef.current?.focus(), 0)

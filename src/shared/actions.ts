@@ -175,9 +175,6 @@ function normalizeMcpServers(value: unknown): McpServerConfig[] {
       command: typeof candidate.command === 'string' ? candidate.command : undefined,
       env: typeof candidate.env === 'string' ? candidate.env : undefined,
       url: typeof candidate.url === 'string' ? candidate.url : undefined,
-      // Older configurations coupled connection and injection. Preserve that
-      // behavior on migration; newly created servers explicitly start false.
-      inject: candidate.inject !== false,
       enabled: candidate.enabled === true
     })
   }
@@ -189,11 +186,13 @@ function normalizeProviderApiType(type: unknown): ProviderApiType {
 }
 
 function normalizeProviderSettings(provider: Partial<ProviderSettings> | ProviderSettings): ProviderSettings {
+  const temperature = typeof provider.temperature === 'number' && Number.isFinite(provider.temperature) ? provider.temperature : 1
   return {
     ...defaultProviderTemplate.provider,
     ...provider,
     apiType: normalizeProviderApiType(provider.apiType),
-    temperature: provider.temperature ?? 1
+    temperature: Math.min(2, Math.max(0, temperature)),
+    reasoning: normalizeReasoning(provider.reasoning)
   }
 }
 

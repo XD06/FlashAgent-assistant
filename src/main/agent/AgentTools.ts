@@ -11,7 +11,7 @@ const MAX_READ_LINES = 2000
 // model cannot ask for a multi-GB file and balloon main-process memory.
 const MAX_READ_FILE_SIZE = 10 * 1024 * 1024
 const MAX_LIST_ENTRIES = 500
-const MAX_COMMAND_OUTPUT = 10_000
+const MAX_COMMAND_OUTPUT = 1_000_000
 const DEFAULT_COMMAND_TIMEOUT_MS = 60_000
 const MAX_COMMAND_TIMEOUT_MS = 300_000
 
@@ -127,7 +127,7 @@ export function shellSyntaxLabel(kind: ResolvedShellKind): string {
 }
 
 function runCommandDescription(kind: ResolvedShellKind): string {
-  return `Run a shell command in the working directory (${shellSyntaxLabel(kind)}). Returns stdout+stderr, truncated to 10KB. Not interactive.`
+  return `Run a shell command in the working directory (${shellSyntaxLabel(kind)}). Returns stdout+stderr up to 1MB; long results can be read later in pages from the local tool-output archive. Not interactive.`
 }
 
 export const agentToolDefinitions: ToolDefinition[] = [
@@ -210,6 +210,20 @@ export const agentToolDefinitions: ToolDefinition[] = [
         timeout_seconds: { type: 'number', description: 'Kill the command after this many seconds. Default 60, max 300.' }
       },
       required: ['command']
+    }
+  },
+  {
+    name: 'read_tool_output',
+    description:
+      'Read a saved page of a prior Agent tool result by call_id. Use this when replayed history says an older result was omitted or truncated, instead of rerunning an expensive command. offset is zero-based characters; limit defaults to 8000 and is capped at 10000.',
+    parameters: {
+      type: 'object',
+      properties: {
+        call_id: { type: 'string', description: 'The call_id shown in an omitted tool-result replay.' },
+        offset: { type: 'number', description: 'Zero-based character offset. Default 0.' },
+        limit: { type: 'number', description: 'Characters to read. Default 8000, maximum 10000.' }
+      },
+      required: ['call_id']
     }
   }
 ]
@@ -407,7 +421,7 @@ function runCommandTool(
       {
         cwd: workingDir,
         timeout,
-        maxBuffer: 1024 * 1024,
+        maxBuffer: MAX_COMMAND_OUTPUT + 1024,
         windowsHide: true,
         // Force UTF-8 for piped Python output — on zh-CN Windows it defaults
         // to GBK, which Node then mis-decodes as UTF-8 (mojibake).
@@ -446,8 +460,31 @@ const MAX_SEARCH_RESULTS = 200
 const MAX_SEARCH_FILE_SIZE = 1024 * 1024
 
 function globToRegExp(glob: string): RegExp {
-  const escaped = glob.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '[^\\\\/]*').replace(/\?/g, '.')
-  return new RegExp(`^${escaped}$`, 'i')
+  const input = glob.replace(/\\/g, '/')
+  let source = ''
+  for (let index = 0; index < input.length; index++) {
+    const char = input[index]
+    if (char === '*') {
+      if (input[index + 1] === '*') {
+        while (input[index + 1] === '*') index++
+        if (input[index + 1] === '/') {
+          index++
+          source += '(?:.*/)?'
+        } else source += '.*'
+      } else source += '[^/]*'
+      continue
+    }
+    if (char === '?') {
+      source += '[^/]'
+      continue
+    }
+    if (char === '/') {
+      source += '/'
+      continue
+    }
+    source += char.replace(/[.+^${}()|[\]\\]/g, '\\$&')
+  }
+  return new RegExp(`^${source}$`, 'i')
 }
 
 async function searchFilesTool(workingDir: string, args: Record<string, unknown>): Promise<string> {
@@ -486,7 +523,8 @@ async function searchFilesTool(workingDir: string, args: Record<string, unknown>
         await walk(full)
       } else if (entry.isFile()) {
         visited += 1
-        if (nameRegExp && !nameRegExp.test(entry.name)) continue
+        const candidate = globPattern.includes('/') || globPattern.includes('\\') ? relative(root, full).replace(/\\/g, '/') : entry.name
+        if (nameRegExp && !nameRegExp.test(candidate)) continue
         if (!pattern) {
           results.push(full)
           continue
@@ -565,6 +603,8 @@ export function summarizeToolCall(name: string, args: Record<string, unknown>, w
       return asString(args.command)
     case 'search_files':
       return [asString(args.glob), asString(args.pattern)].filter(Boolean).join(' · ')
+    case 'read_tool_output':
+      return asString(args.call_id)
     case 'read_file':
     case 'write_file':
     case 'edit_file':

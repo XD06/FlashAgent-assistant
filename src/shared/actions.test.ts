@@ -58,6 +58,15 @@ describe('selection actions', () => {
     expect(merged.provider.model).toBe('custom-model')
     expect(merged.provider.baseUrl).toBe(defaultSettings.provider.baseUrl)
     expect(merged.provider.temperature).toBe(1)
+    expect(merged.provider.reasoning).toBe('on')
+  })
+
+  it('normalizes provider model parameters and syncs them to the active template', () => {
+    const merged = mergeSettings(defaultSettings, { provider: { temperature: 0.3, reasoning: 'medium' } })
+
+    expect(merged.provider.temperature).toBe(0.3)
+    expect(merged.provider.reasoning).toBe('medium')
+    expect(merged.providerTemplates[0]?.provider).toMatchObject({ temperature: 0.3, reasoning: 'medium' })
   })
 
   it('merges shortcut settings without dropping the other shortcut', () => {
@@ -287,18 +296,18 @@ describe('selection actions', () => {
     expect(normalized.actions.find((action) => action.id === 'bad')?.reasoning).toBe('on')
   })
 
-  it('migrates existing MCP servers to injected while honoring an explicit opt-out', () => {
-    const legacy = normalizeSettings({
+  it('normalizes legacy MCP injection flags into connection-only configurations', () => {
+    const normalized = normalizeSettings({
       ...defaultSettings,
-      mcpServers: [{ id: 'legacy', name: 'Legacy', transport: 'stdio', command: 'npx legacy', enabled: true }]
-    })
-    const optedOut = normalizeSettings({
-      ...defaultSettings,
-      mcpServers: [{ id: 'off', name: 'Off', transport: 'http', url: 'https://example.com/mcp', enabled: true, inject: false }]
+      mcpServers: [
+        { id: 'legacy', name: 'Legacy', transport: 'stdio', command: 'npx legacy', enabled: true },
+        { id: 'previous-opt-out', name: 'Previous opt-out', transport: 'http', url: 'https://example.com/mcp', enabled: true, inject: false }
+      ]
     })
 
-    expect(legacy.mcpServers[0]).toMatchObject({ enabled: true, inject: true })
-    expect(optedOut.mcpServers[0]).toMatchObject({ enabled: true, inject: false })
+    expect(normalized.mcpServers).toHaveLength(2)
+    expect(normalized.mcpServers.every((server) => server.enabled)).toBe(true)
+    expect(normalized.mcpServers.every((server) => !Object.hasOwn(server, 'inject'))).toBe(true)
   })
 
   it('builds a fixed language system prompt without custom prompt content', () => {

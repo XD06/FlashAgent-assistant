@@ -11,8 +11,10 @@ import type { AgentToolEvent, AiStreamRequest, SettingsPatch } from '@shared/typ
 import { listModels, streamChatMessages, testModel, type ProviderFetch } from './ai/OpenAICompatibleClient'
 import { formatSearchContext, searchWithFallback, webSearchTool } from './ai/WebSearch'
 import { agentToolDefinitionsForShell, assessCommandRisk, executeAgentTool, requiresApproval, resolveCommandShell, restoreSnapshot, shellSyntaxLabel, snapshotForMutation, summarizeToolCall } from './agent/AgentTools'
+import { buildAgentSystemPrompt } from './agent/AgentPrompt'
 import { validateAgentToolArgs } from './agent/validateToolArgs'
 import { deleteSnapshot, loadSnapshot, saveSnapshot } from './agent/SnapshotStore'
+import { readToolOutput, saveToolOutput } from './agent/ToolOutputStore'
 import { cancelApprovalsForRequest, resolveApproval, waitForApproval } from './agent/AgentSession'
 import { buildMemoryPrompt, ensureGlobalMemoryFile, getGlobalMemoryPath } from './memory'
 import { buildSkillsPrompt, getSkillsDir, readSkillMeta, scanSkills } from './skills'
@@ -533,11 +535,10 @@ function registerIpc(): void {
       let alwaysAllow = false
 
       const useExtensions = request.useExtensions === true
-      // Connection and model injection are deliberately separate. A connected
-      // MCP service may stay ready without consuming attention or becoming a
-      // callable tool until the user enables its injection toggle.
+      // Connecting an MCP service makes its tools available to the Agent.
+      // A disconnected service contributes no schemas or model attention.
       const injectedMcpServerIds = new Set(
-        settings.mcpServers.filter((server) => server.enabled && server.inject).map((server) => server.id)
+        settings.mcpServers.filter((server) => server.enabled).map((server) => server.id)
       )
       const mcpTools = useExtensions ? mcpManager.getToolDefinitions(injectedMcpServerIds) : []
       const injectedMcpToolNames = new Set(mcpTools.map((tool) => tool.name))
@@ -547,18 +548,11 @@ function registerIpc(): void {
         ...mcpTools
       ]
       let effectiveSystemPrompt = agentEnabled
-        ? `${systemPrompt}\n\n` +
-          // Core grounding rule — placed FIRST so it anchors model behavior.
-          `IMPORTANT: You MUST use tool calls to perform actions. Describing an action in text does NOT execute it. ` +
-          `Only a tool_use/function_call returned in the API response counts as real work.\n\n` +
-          `You can operate on the user’s real file system with the tools read_file, write_file, edit_file, list_dir, search_files and run_command (shell: ${shellSyntaxLabel(resolveCommandShell(settings.commandShell))}). Working directory: ${workingDir}. ` +
-          `Prefer search_files to locate code instead of listing and reading files one by one. Read files before editing them, prefer edit_file for small changes, and keep commands non-interactive. ` +
-          `Write/edit/command calls require user approval and may be rejected — if rejected, ask or adjust your approach instead of retrying the same call.\n\n` +
-          `Grounding rules:\n` +
-          `- Talk is not work. Nothing counts as done unless the tool call ran and returned success.\n` +
-          `- Tool calls from earlier turns are replayed by the app as real tool messages in this conversation (and older summaries may contain a 【本轮实际执行的工具调用】 block). Both are generated from execution logs and are authoritative. NEVER fabricate tool results or write \`[tool: ...]\` lines in your own text.\n` +
-          `- Never claim you created, edited, or verified anything without the matching tool result. Never invent outputs.\n` +
-          `- If you cannot perform an action, say so. Do not pretend it succeeded.`
+        ? buildAgentSystemPrompt({
+            baseSystemPrompt: systemPrompt,
+            workingDir,
+            shellLabel: shellSyntaxLabel(resolveCommandShell(settings.commandShell))
+          })
         : systemPrompt
       if (request.useMemory === true) {
         const userDataDir = app.getPath('userData')
@@ -629,15 +623,23 @@ function registerIpc(): void {
           }, 300)
         }
         try {
-          const output = await executeAgentTool(
-            name,
-            args,
-            workingDir,
-            controller.signal,
-            name === 'run_command' ? pushLiveOutput : undefined,
-            settings.commandShell
-          )
+          const output =
+            name === 'read_tool_output'
+              ? await readToolOutput(
+                  String(args.call_id ?? ''),
+                  typeof args.offset === 'number' ? args.offset : undefined,
+                  typeof args.limit === 'number' ? args.limit : undefined
+                )
+              : await executeAgentTool(
+                  name,
+                  args,
+                  workingDir,
+                  controller.signal,
+                  name === 'run_command' ? pushLiveOutput : undefined,
+                  settings.commandShell
+                )
           if (snapshot) void saveSnapshot(callId, snapshot)
+          if (name !== 'read_tool_output') await saveToolOutput(callId, output)
           // Mirror the in-turn 12k cap (head + tail) so cross-turn replay via
           // toolRecap can carry the same content the model saw this turn.
           sendTool({ state: 'done', result: capResultForEvent(output) })
@@ -694,12 +696,10 @@ function registerIpc(): void {
             sendChunk({ type: 'reasoning', reasoning: delta.reasoning })
           }
         },
-        request.reasoning ?? 'on',
+        request.reasoning ?? provider.reasoning,
         {
           fetcher: providerFetch,
           tools: tools.length ? tools : undefined,
-          // Agent mode: lower temperature to reduce hallucinated tool calls.
-          agentTemperature: agentEnabled ? 0.5 : undefined,
           // Agent/MCP runs span many rounds and can pause on user approval.
           // Models often issue one call per round, so real tasks (read × N +
           // edit × N + build/test) need generous headroom.
