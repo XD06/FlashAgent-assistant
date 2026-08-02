@@ -14,6 +14,9 @@ import {
   estimateTokensFromText,
   groupTaskRounds,
   messagePayloadChars,
+  messagePayloadTokens,
+  sendCharCapForWindow,
+  sendMessageCapForWindow,
   shouldCompact,
   truncateForSend
 } from './compaction'
@@ -66,40 +69,22 @@ describe('shouldCompact', () => {
     ).toBe(false)
   })
 
-  it('cap pressure: fires when the payload would exceed the send cap, tokens cold', () => {
+  it('does not compact solely because an old fixed send cap is exceeded', () => {
     expect(
-      shouldCompact({ promptTokens: 1_000, staleEntries: 2, staleChars: 100, sendMessages: MAX_SEND_MESSAGES + 1 })
-    ).toBe(true)
-  })
-
-  it('cap pressure: quiet at exactly the send cap', () => {
-    expect(
-      shouldCompact({ promptTokens: 1_000, staleEntries: 2, staleChars: 100, sendMessages: MAX_SEND_MESSAGES })
+      shouldCompact({
+        promptTokens: 1_000,
+        staleEntries: 2,
+        staleChars: 100,
+        sendMessages: MAX_SEND_MESSAGES + 1,
+        sendChars: MAX_SEND_CHARS * 4
+      })
     ).toBe(false)
   })
 
-  it('cap pressure: still requires a non-empty stale zone', () => {
-    expect(
-      shouldCompact({ promptTokens: 1_000, staleEntries: 0, staleChars: 0, sendMessages: MAX_SEND_MESSAGES * 2 })
-    ).toBe(false)
-  })
-
-  it('char-cap pressure: fires when the body would exceed the char cap, tokens cold', () => {
-    expect(
-      shouldCompact({ promptTokens: 1_000, staleEntries: 2, staleChars: 100, sendMessages: 10, sendChars: MAX_SEND_CHARS + 1 })
-    ).toBe(true)
-  })
-
-  it('char-cap pressure: quiet at exactly the char cap', () => {
-    expect(
-      shouldCompact({ promptTokens: 1_000, staleEntries: 2, staleChars: 100, sendMessages: 10, sendChars: MAX_SEND_CHARS })
-    ).toBe(false)
-  })
-
-  it('char-cap pressure: still requires a non-empty stale zone', () => {
-    expect(
-      shouldCompact({ promptTokens: 1_000, staleEntries: 0, staleChars: 0, sendChars: MAX_SEND_CHARS * 2 })
-    ).toBe(false)
+  it('uses the configured attention budget for a replay-token estimate', () => {
+    expect(shouldCompact({ promptTokens: null, staleEntries: 2, staleChars: 1, sendTokens: 120_000 }, 128_000)).toBe(false)
+    expect(shouldCompact({ promptTokens: null, staleEntries: 2, staleChars: 1, sendTokens: 121_600 }, 128_000)).toBe(true)
+    expect(shouldCompact({ promptTokens: null, staleEntries: 2, staleChars: 1, sendTokens: 120_000 }, 1_000_000)).toBe(false)
   })
 })
 
@@ -121,6 +106,13 @@ describe('truncateForSend', () => {
     expect(out[0].text).toContain('6 earlier messages omitted')
     expect(out[1].text).toBe('m6')
     expect(out[out.length - 1].text).toBe(`m${MAX_SEND_MESSAGES + 5}`)
+  })
+
+  it('scales send caps when the caller supplies a larger attention window', () => {
+    const input = many(MAX_SEND_MESSAGES + 6)
+    expect(sendMessageCapForWindow(128_000)).toBeGreaterThan(input.length)
+    expect(sendCharCapForWindow(128_000)).toBeGreaterThan(MAX_SEND_CHARS)
+    expect(truncateForSend(input, false, false, 128_000)).toEqual(input)
   })
 
   it('char budget: trims older messages but always keeps the latest', () => {
@@ -188,6 +180,15 @@ describe('messagePayloadChars', () => {
       toolTrace: [{ id: 'c1', name: 'run', argsJson: '{}', result: 'out' }]
     }
     expect(messagePayloadChars(m)).toBe(2 + 3 + 2 + 3 + 24)
+  })
+
+  it('estimates tool replay tokens with the same atomic trace shape', () => {
+    const m: AiMessageInput = {
+      role: 'assistant',
+      text: 'done',
+      toolTrace: [{ id: 'c1', name: 'read_file', argsJson: '{"path":"a.ts"}', result: 'hello world' }]
+    }
+    expect(messagePayloadTokens(m)).toBeGreaterThan(estimateTokensFromText(m.text))
   })
 })
 

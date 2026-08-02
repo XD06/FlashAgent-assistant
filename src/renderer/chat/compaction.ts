@@ -52,43 +52,53 @@ export interface CompactSignal {
   sendMessages?: number
   /** Characters the request body would contain if sent right now (recap +
    * replayed turn texts with tool records + the new message). Optional —
-   * same contract as sendMessages. */
+   * retained only for diagnostics and older callers; it does not decide
+   * compaction. */
   sendChars?: number
+  /** Estimated token count of the full replay payload, used when real usage
+   * is unavailable or one request behind. */
+  sendTokens?: number
 }
 
 /** Pre-send trigger: token-driven when usage is available (95% of the
  * attention budget — the global default or a user-configured window),
- * otherwise from stale-zone character pressure. Transport caps are separate
- * safety limits. */
+ * otherwise from stale-zone character pressure. */
 export function shouldCompact(signal: CompactSignal, windowTokens?: number): boolean {
   // Nothing to compress — the latest complete task round must remain whole.
   if (signal.staleEntries <= 0) return false
-  // Send-cap pressure: without compression truncateForSend would silently
-  // drop the oldest messages with no recap — an unrecoverable accuracy hole
-  // for chatty (low-token, many-turn) conversations. Compress them instead,
-  // regardless of how far the token count is from the trigger line. Both cap
-  // dimensions gate here: message count AND body chars (a few huge replayed
-  // turns can bust the char budget long before the count cap).
-  if ((signal.sendMessages ?? 0) > MAX_SEND_MESSAGES) return true
-  if ((signal.sendChars ?? 0) > MAX_SEND_CHARS) return true
-  if (signal.promptTokens !== null) return signal.promptTokens >= compactTriggerTokens(windowTokens)
+  // Provider usage is authoritative when available. If a provider omits it,
+  // use the pre-send replay estimate instead. Fixed transport caps never
+  // decide compaction: a larger user-selected attention budget must keep
+  // working after a long Agent/tool round.
+  const tokenEstimate = Math.max(signal.promptTokens ?? 0, signal.sendTokens ?? 0)
+  if (signal.promptTokens !== null || signal.sendTokens !== undefined) {
+    return tokenEstimate >= compactTriggerTokens(windowTokens)
+  }
   return signal.staleChars >= COMPACT_TRIGGER_CHARS
 }
 
-// ---- Hard payload safety net (runaway guard, not a diet) ----
-//
-// Cap what gets sent to the model on long conversations: latest turns within
-// a message/char budget. Sits *under* rolling compression — the cap-pressure
-// gate above fires first, so by the time this trims anything the stale zone
-// is already folded into the recap. The full history stays visible locally.
-// Must sit well above a normal recap + budget-sized task-round window + new
-// message, or the cap-pressure gate would re-fire every other round and every
-// send would block on a summarize request.
+// ---- Payload safety net ----
+// These are fallback limits for callers that have no configured attention
+// budget. Chat passes the selected budget, so this guard grows with it.
 export const MAX_SEND_MESSAGES = 48
 // Generous budget: the last ~2 rounds replay tool outputs at up to 12k per
 // call (toolRecap), and starving that replay costs more than it saves — the
 // model just re-reads everything.
 export const MAX_SEND_CHARS = 120_000
+
+/** A configured attention budget must not be silently narrowed by the
+ * fallback transport cap. */
+export function sendMessageCapForWindow(windowTokens?: number): number {
+  if (!windowTokens || windowTokens <= 0) return MAX_SEND_MESSAGES
+  return Math.max(MAX_SEND_MESSAGES, Math.ceil(windowTokens / 256))
+}
+
+/** English-like payloads average four characters per token. CJK-heavy text
+ * reaches the token trigger sooner, so token pressure remains the main guard. */
+export function sendCharCapForWindow(windowTokens?: number): number {
+  if (!windowTokens || windowTokens <= 0) return MAX_SEND_CHARS
+  return Math.max(MAX_SEND_CHARS, Math.ceil(windowTokens * 4))
+}
 
 /** Chars a message contributes to the wire payload. An embedded tool trace
  * expands into real tool-call/tool-result messages at the protocol layer,
@@ -101,19 +111,35 @@ export function messagePayloadChars(m: AiMessageInput): number {
   return total
 }
 
-export function truncateForSend(messages: AiMessageInput[], isZh: boolean, pinFirst = false): AiMessageInput[] {
+/** Approximate the replay payload in tokens without retaining prompt text. */
+export function messagePayloadTokens(m: AiMessageInput): number {
+  let total = estimateTokensFromText(m.text)
+  for (const t of m.toolTrace ?? []) {
+    total += estimateTokensFromText(t.name) + estimateTokensFromText(t.argsJson) + estimateTokensFromText(t.result) + 6
+  }
+  return total
+}
+
+export function truncateForSend(
+  messages: AiMessageInput[],
+  isZh: boolean,
+  pinFirst = false,
+  windowTokens?: number
+): AiMessageInput[] {
   // pinFirst: the leading message is the recap — it must survive truncation
   // (dropping it would erase the compressed history), so it is kept outside
   // the sliding window while still counting toward the char budget.
   const head = pinFirst && messages.length > 0 ? messages[0] : null
   const rest = head ? messages.slice(1) : messages
-  const recent = rest.slice(-(MAX_SEND_MESSAGES - (head ? 1 : 0)))
+  const maxMessages = sendMessageCapForWindow(windowTokens)
+  const maxChars = sendCharCapForWindow(windowTokens)
+  const recent = rest.slice(-(maxMessages - (head ? 1 : 0)))
   const kept: AiMessageInput[] = []
   let total = head ? messagePayloadChars(head) : 0
   for (let i = recent.length - 1; i >= 0; i--) {
     total += messagePayloadChars(recent[i])
     // Always keep at least the latest message, however large it is.
-    if (kept.length > 0 && total > MAX_SEND_CHARS) break
+    if (kept.length > 0 && total > maxChars) break
     kept.unshift(recent[i])
   }
   const omitted = rest.length - kept.length

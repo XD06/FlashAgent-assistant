@@ -15,8 +15,8 @@ import {
   estimateEffectiveTokens,
   estimateTokensFromChars,
   estimateTokensFromText,
-  MAX_SEND_MESSAGES,
-  messagePayloadChars,
+  messagePayloadTokens,
+  sendMessageCapForWindow,
   shouldCompact,
   truncateForSend
 } from './compaction'
@@ -107,9 +107,8 @@ const STORAGE_KEY = 'aia-chat-topics'
 const MODELS_CACHE_KEY = 'aia-models-cache'
 const MODELS_CACHE_TTL = 5 * 60 * 1000 // 5 minutes
 
-// Send-payload hard caps (MAX_SEND_MESSAGES / MAX_SEND_CHARS) and
-// truncateForSend live in ./compaction — pure and unit-tested. The
-// cap-pressure gate in shouldCompact fires before the cap ever trims.
+// Send-payload fallback caps and truncateForSend live in ./compaction. The
+// configured attention budget, not a fixed transport number, drives recap.
 
 // Compact display for the real context size reported by the provider.
 function formatTokens(n: number): string {
@@ -259,7 +258,7 @@ function computeChatTaskRoundKeepStart(turns: ChatTurn[], windowTokens: number):
   return computeTaskRoundKeepStart(
     turns.map((turn) => ({ role: turn.role, taskRoundId: turn.taskRoundId, tokens: estimateTurnTokens(turn) })),
     windowTokens,
-    MAX_SEND_MESSAGES - 2
+    sendMessageCapForWindow(windowTokens) - 2
   )
 }
 
@@ -1044,34 +1043,26 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
         turns.slice(usageTurnsRef.current).reduce((n, turn) => n + estimateTokensFromText(buildSendText(turn)), 0) +
         estimateTokensFromText(pendingText)
       const promptTokens = estimateEffectiveTokens(contextUsageRef.current, trailingTokens)
-      // Payload size if sent uncompressed: recap? + history entries +
-      // injected-note replays + the new message (pre-merge overcount —
-      // merging only shrinks it, so this errs toward compressing).
-      const injectedCount = turns.slice(covered).reduce((n, turn) => n + injectedNotes(turn).length, 0)
-      const sendMessages =
-        (compactRef.current?.summary ? 1 : 0) + (turns.length - covered) + injectedCount + 1
-      // Body chars of the same would-be payload — mirrors the send path
-      // (buildSendText / stripForgedRecap + structured toolTrace with the
-      // recency window). Catches the case where few but huge replayed turns
-      // bust MAX_SEND_CHARS while the count cap and token line are still far:
-      // without this gate truncateForSend would silently drop history.
+      // Estimate the same payload that the send path will replay. This is a
+      // token estimate rather than a fixed character/message cap, so a larger
+      // configured attention budget survives a completed 50-tool task round.
       const recentZone = turns.slice(covered)
-      let sendChars = (compactRef.current?.summary?.length ?? 0) + pendingText.length
+      let sendTokens = estimateTokensFromText(compactRef.current?.summary ?? '') + estimateTokensFromText(pendingText)
       recentZone.forEach((turn, i) => {
         if (turn.role !== 'assistant') {
-          sendChars += buildSendText(turn).length
+          sendTokens += estimateTokensFromText(buildSendText(turn))
           return
         }
-        sendChars += messagePayloadChars({
+        sendTokens += messagePayloadTokens({
           role: 'assistant',
           text: stripForgedRecap(turn.text),
           toolTrace: buildToolTrace(settledToolEvents(turn), isZh, covered + i >= keepStart)
         })
-        for (const note of injectedNotes(turn)) sendChars += note.length
+        for (const note of injectedNotes(turn)) sendTokens += estimateTokensFromText(note)
       })
       if (
         !shouldCompact(
-          { promptTokens, staleEntries: stale.length, staleChars, sendMessages, sendChars },
+          { promptTokens, staleEntries: stale.length, staleChars, sendTokens },
           settings.contextWindowTokens
         )
       )
@@ -1486,7 +1477,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
         } else mergedRaw.push({ ...m })
       }
       // Pin the recap head so the hard cap can never silently drop it.
-      const messages = truncateForSend(mergedRaw, isZh, !!compact?.summary)
+      const messages = truncateForSend(mergedRaw, isZh, !!compact?.summary, settings.contextWindowTokens)
       const requestId = crypto.randomUUID()
       activeRequestId.current = requestId
       void window.assistantLite.ai.stream({
