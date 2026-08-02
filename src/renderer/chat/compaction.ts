@@ -33,18 +33,12 @@ export function compactTriggerTokens(windowTokens?: number): number {
 // next compress waits until enough *new* turns have slid out of the recent
 // window, which prevents thrashing (re-summarizing 1–2 turns per message).
 //
-/** Fallback gate when usage is unavailable: character pressure in the stale
- * task-round zone. There is deliberately no fixed recent-turn count. */
-export const COMPACT_TRIGGER_CHARS = 12_000
-
 export interface CompactSignal {
   /** promptTokens from the latest provider usage report, or null when the
-   * provider never reported usage (fallback char gates apply instead). */
+   * provider never reported usage. */
   promptTokens: number | null
   /** Number of transcript entries in the stale zone [covered, keepStart). */
   staleEntries: number
-  /** Sum of turn.text lengths across the stale zone. */
-  staleChars: number
   /** Messages the request would contain if sent right now (recap + history
    * entries + injected-note replays + the new message), counted before
    * consecutive-user merging — a conservative overcount. Optional: callers
@@ -60,21 +54,19 @@ export interface CompactSignal {
   sendTokens?: number
 }
 
-/** Pre-send trigger: token-driven when usage is available (95% of the
- * attention budget — the global default or a user-configured window),
- * otherwise from stale-zone character pressure. */
+/** Pre-send trigger: token-driven only (95% of the attention budget — the
+ * global default or a user-configured window). When the provider does not
+ * report usage, ChatMode supplies the token estimate of the actual replay
+ * payload. Character and message counts never trigger compaction. */
 export function shouldCompact(signal: CompactSignal, windowTokens?: number): boolean {
   // Nothing to compress — the latest complete task round must remain whole.
   if (signal.staleEntries <= 0) return false
   // Provider usage is authoritative when available. If a provider omits it,
-  // use the pre-send replay estimate instead. Fixed transport caps never
-  // decide compaction: a larger user-selected attention budget must keep
-  // working after a long Agent/tool round.
+  // use the pre-send replay estimate instead. Fixed transport caps and raw
+  // character counts never decide compaction: a large user-selected attention
+  // budget must keep working after a long Agent/tool round.
   const tokenEstimate = Math.max(signal.promptTokens ?? 0, signal.sendTokens ?? 0)
-  if (signal.promptTokens !== null || signal.sendTokens !== undefined) {
-    return tokenEstimate >= compactTriggerTokens(windowTokens)
-  }
-  return signal.staleChars >= COMPACT_TRIGGER_CHARS
+  return tokenEstimate >= compactTriggerTokens(windowTokens)
 }
 
 // ---- Payload safety net ----

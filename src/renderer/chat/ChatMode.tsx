@@ -9,7 +9,6 @@ import { ExtensionsPanel } from './ExtensionsPanel'
 import { renderTerminalText, highlightLineNumbers } from './ansi'
 import { buildToolTrace, TOOL_TRACE_OUTPUT_PER_CALL } from './toolTrace'
 import {
-  COMPACT_TRIGGER_CHARS,
   compactTriggerTokens,
   computeTaskRoundKeepStart,
   estimateEffectiveTokens,
@@ -1016,8 +1015,8 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
   // Codex-style inter-turn compaction: runs when the user sends the next
   // message, before the real request goes out. UI keeps every turn; only the
   // *send* payload substitutes [0, covered) with the recap.
-  // Trigger: token-driven at 95% of the attention budget when usage is
-  // available, else the legacy stale-zone char gates (see ./compaction).
+  // Trigger: token-driven at 95% of the attention budget. When the provider
+  // has no usage report, the exact payload to be replayed is token-estimated.
   // Throws when compression was needed but failed — the caller reports it as
   // a normal request failure (the main process already retried the compress
   // model and fell back to the current chat model, whose window certainly
@@ -1035,7 +1034,6 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
       const keepStart = computeChatTaskRoundKeepStart(turns, settings.contextWindowTokens)
       if (keepStart <= covered) return
       const stale = turns.slice(covered, keepStart)
-      const staleChars = stale.reduce((n, turn) => n + (turn.text?.length ?? 0), 0)
       // Hybrid count: the provider's usage report lags one request behind —
       // add a script-aware estimate for the turns it never saw plus the
       // message about to be sent, so a huge paste can't slip past the trigger.
@@ -1062,7 +1060,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
       })
       if (
         !shouldCompact(
-          { promptTokens, staleEntries: stale.length, staleChars, sendTokens },
+          { promptTokens, staleEntries: stale.length, sendTokens },
           settings.contextWindowTokens
         )
       )
@@ -2352,18 +2350,13 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
             <Icon name="plus" size={16} />
           </button>
           {chat.length > 0 && (() => {
-            // Ring fill = progress toward the next pre-send compress. Mirrors
-            // shouldCompact: token-driven when usage is known, otherwise
-            // stale-zone character pressure.
+            // Ring fill reflects provider-reported context usage. The actual
+            // pre-send decision also has a replay-token estimate when this is
+            // unavailable, but never falls back to a character threshold.
             const covered = compactRef.current?.covered ?? 0
-            const keepStart = computeChatTaskRoundKeepStart(chat, settings.contextWindowTokens)
-            const stale = chat.slice(covered, Math.max(covered, keepStart))
-            const staleChars = stale.reduce((n, turn) => n + (turn.text?.length ?? 0), 0)
-            const charRatio = Math.min(1, staleChars / COMPACT_TRIGGER_CHARS)
-            const ratio =
-              contextUsage !== null
-                ? Math.min(1, contextUsage / compactTriggerTokens(settings.contextWindowTokens))
-                : charRatio
+            const ratio = contextUsage !== null
+              ? Math.min(1, contextUsage / compactTriggerTokens(settings.contextWindowTokens))
+              : 0
             const rounds = chat.filter((turn) => turn.role === 'user').length
             const pct = Math.round(ratio * 100)
             const tip =
@@ -2372,8 +2365,8 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
                   ? `已进行 ${rounds} 轮 · 上下文 ${formatTokens(contextUsage)}/${formatTokens(compactTriggerTokens(settings.contextWindowTokens))} tokens（${pct}%）${covered > 0 ? ` · 已压进摘要 ${covered} 条` : ''}`
                   : `${rounds} round${rounds === 1 ? '' : 's'} · context ${formatTokens(contextUsage)}/${formatTokens(compactTriggerTokens(settings.contextWindowTokens))} tokens (${pct}%)${covered > 0 ? ` · ${covered} in recap` : ''}`
                 : isZh
-                  ? `已进行 ${rounds} 轮 · 距下次压缩 ${pct}%（待压 ${stale.length} 条 / ${staleChars} 字）${covered > 0 ? ` · 已压进摘要 ${covered} 条` : ''}`
-                  : `${rounds} round${rounds === 1 ? '' : 's'} · ${pct}% to next compress (${stale.length} turns / ${staleChars} chars pending)${covered > 0 ? ` · ${covered} in recap` : ''}`
+                  ? `已进行 ${rounds} 轮 · 上下文将在下次发送时按 token 计算${covered > 0 ? ` · 已压进摘要 ${covered} 条` : ''}`
+                  : `${rounds} round${rounds === 1 ? '' : 's'} · context will be token-estimated on the next send${covered > 0 ? ` · ${covered} in recap` : ''}`
             const C = 2 * Math.PI * 6.5
             return (
               <div className="chat-context-ring" title={tip} aria-label={tip}>

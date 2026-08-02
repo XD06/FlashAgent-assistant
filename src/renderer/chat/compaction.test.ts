@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest'
 import type { AiMessageInput } from '@shared/types'
 import {
   CJK_TOKENS_PER_CHAR,
-  COMPACT_TRIGGER_CHARS,
   COMPACT_TRIGGER_TOKENS,
   CONTEXT_WINDOW_TOKENS,
   KEEP_RECENT_TOKEN_RATIO,
@@ -30,43 +29,29 @@ describe('compaction constants', () => {
 
 describe('shouldCompact', () => {
   it('never compacts with an empty stale zone, even at high token counts', () => {
-    expect(shouldCompact({ promptTokens: CONTEXT_WINDOW_TOKENS, staleEntries: 0, staleChars: 0 })).toBe(false)
+    expect(shouldCompact({ promptTokens: CONTEXT_WINDOW_TOKENS, staleEntries: 0 })).toBe(false)
   })
 
   it('token-driven: fires at exactly the trigger line', () => {
-    expect(shouldCompact({ promptTokens: COMPACT_TRIGGER_TOKENS, staleEntries: 2, staleChars: 100 })).toBe(true)
+    expect(shouldCompact({ promptTokens: COMPACT_TRIGGER_TOKENS, staleEntries: 2 })).toBe(true)
   })
 
   it('token-driven: stays quiet below the trigger line', () => {
-    expect(shouldCompact({ promptTokens: COMPACT_TRIGGER_TOKENS - 1, staleEntries: 20, staleChars: 999_999 })).toBe(
+    expect(shouldCompact({ promptTokens: COMPACT_TRIGGER_TOKENS - 1, staleEntries: 20 })).toBe(
       false
     )
   })
 
-  it('token-driven: bypasses the min-stale-turns fallback gate', () => {
-    // Usage says the context is hot — compress whatever stale exists, even a
-    // zone smaller than the char fallback pressure line.
+  it('token-driven: compacts a hot context as soon as a complete stale round exists', () => {
+    // Usage says the context is hot — compress whatever complete stale round
+    // exists; no fixed character or entry threshold delays it.
     expect(
-      shouldCompact({ promptTokens: COMPACT_TRIGGER_TOKENS + 1, staleEntries: 1, staleChars: 10 })
+      shouldCompact({ promptTokens: COMPACT_TRIGGER_TOKENS + 1, staleEntries: 1 })
     ).toBe(true)
   })
 
-  it('fallback: fires on stale character pressure without a fixed entry count', () => {
-    expect(
-      shouldCompact({ promptTokens: null, staleEntries: 1, staleChars: COMPACT_TRIGGER_CHARS })
-    ).toBe(true)
-  })
-
-  it('fallback: stays quiet below the stale character pressure line', () => {
-    expect(
-      shouldCompact({ promptTokens: null, staleEntries: 20, staleChars: COMPACT_TRIGGER_CHARS - 1 })
-    ).toBe(false)
-  })
-
-  it('fallback: never compacts an empty stale zone', () => {
-    expect(
-      shouldCompact({ promptTokens: null, staleEntries: 0, staleChars: COMPACT_TRIGGER_CHARS * 2 })
-    ).toBe(false)
+  it('does not compact without a context token measurement, regardless of transcript size', () => {
+    expect(shouldCompact({ promptTokens: null, staleEntries: 20 })).toBe(false)
   })
 
   it('does not compact solely because an old fixed send cap is exceeded', () => {
@@ -74,7 +59,6 @@ describe('shouldCompact', () => {
       shouldCompact({
         promptTokens: 1_000,
         staleEntries: 2,
-        staleChars: 100,
         sendMessages: MAX_SEND_MESSAGES + 1,
         sendChars: MAX_SEND_CHARS * 4
       })
@@ -82,9 +66,9 @@ describe('shouldCompact', () => {
   })
 
   it('uses the configured attention budget for a replay-token estimate', () => {
-    expect(shouldCompact({ promptTokens: null, staleEntries: 2, staleChars: 1, sendTokens: 120_000 }, 128_000)).toBe(false)
-    expect(shouldCompact({ promptTokens: null, staleEntries: 2, staleChars: 1, sendTokens: 121_600 }, 128_000)).toBe(true)
-    expect(shouldCompact({ promptTokens: null, staleEntries: 2, staleChars: 1, sendTokens: 120_000 }, 1_000_000)).toBe(false)
+    expect(shouldCompact({ promptTokens: null, staleEntries: 2, sendTokens: 120_000 }, 128_000)).toBe(false)
+    expect(shouldCompact({ promptTokens: null, staleEntries: 2, sendTokens: 121_600 }, 128_000)).toBe(true)
+    expect(shouldCompact({ promptTokens: null, staleEntries: 2, sendTokens: 120_000 }, 1_000_000)).toBe(false)
   })
 })
 
