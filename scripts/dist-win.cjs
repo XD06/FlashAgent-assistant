@@ -12,6 +12,14 @@ const { execFileSync } = require('node:child_process')
 
 delete process.env.ELECTRON_RUN_AS_NODE
 
+// electron-builder packs 7z archives with 7za -mx=9, which needs ~1GB of
+// commit memory and fails on constrained machines ("Can't allocate required
+// memory"). Default to a low level unless explicitly overridden — see
+// ELECTRON_BUILDER_COMPRESSION_LEVEL in app-builder-lib targets/archive.js.
+if (!process.env.ELECTRON_BUILDER_COMPRESSION_LEVEL) {
+  process.env.ELECTRON_BUILDER_COMPRESSION_LEVEL = '1'
+}
+
 const args = process.argv.slice(2)
 if (args.length === 0) {
   args.push('--win', 'portable', '--x64', '--publish', 'never')
