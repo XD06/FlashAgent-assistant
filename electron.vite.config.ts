@@ -59,7 +59,8 @@ export default defineConfig({
           selectionAction: resolve(__dirname, 'src/renderer/selectionAction.html'),
           selectionToolbar: resolve(__dirname, 'src/renderer/selectionToolbar.html'),
           screenshotOverlay: resolve(__dirname, 'src/renderer/screenshotOverlay.html'),
-          screenshotPin: resolve(__dirname, 'src/renderer/screenshotPin.html')
+          screenshotPin: resolve(__dirname, 'src/renderer/screenshotPin.html'),
+          translate: resolve(__dirname, 'src/renderer/translate.html')
         }
       }
     }

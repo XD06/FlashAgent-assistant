@@ -11,15 +11,18 @@ import { ProviderNameInput } from './ProviderNameInput'
 import type {
   ActionItem,
   AppLanguage,
+  AppSettings,
   FilterMode,
   ProviderTemplate,
   ReasoningMode,
   ShortcutSettings,
   ThemeMode,
-  TriggerMode
+  TranslateServiceId,
+  TriggerMode,
+  VocabEntry
 } from '@shared/types'
 
-type SettingsSectionId = 'api' | 'actions' | 'selection' | 'window'
+type SettingsSectionId = 'api' | 'actions' | 'selection' | 'translate' | 'vocabulary' | 'window'
 
 type SettingsSectionMeta = {
   id: SettingsSectionId
@@ -226,6 +229,24 @@ function ShortcutRecorder({
     </div>
   )
 }
+
+/** Curated Edge TTS voices for speech synthesis; a stored custom voice is
+ * appended to the list so the select can always display it. */
+const TTS_VOICE_CHOICES: Array<{ value: string; labelKey: string }> = [
+  { value: 'zh-CN-XiaoxiaoNeural', labelKey: 'ttsVoiceXiaoxiao' },
+  { value: 'zh-CN-XiaoyiNeural', labelKey: 'ttsVoiceXiaoyi' },
+  { value: 'zh-CN-YunxiNeural', labelKey: 'ttsVoiceYunxi' },
+  { value: 'zh-CN-YunjianNeural', labelKey: 'ttsVoiceYunjian' },
+  { value: 'zh-CN-YunyangNeural', labelKey: 'ttsVoiceYunyang' },
+  { value: 'zh-HK-HiuMaanNeural', labelKey: 'ttsVoiceHkHiuMaan' },
+  { value: 'zh-TW-HsiaoChenNeural', labelKey: 'ttsVoiceTwHsiaoChen' },
+  { value: 'en-US-JennyNeural', labelKey: 'ttsVoiceJenny' },
+  { value: 'en-US-GuyNeural', labelKey: 'ttsVoiceGuy' },
+  { value: 'en-US-ChristopherNeural', labelKey: 'ttsVoiceChristopher' },
+  { value: 'en-GB-SoniaNeural', labelKey: 'ttsVoiceSonia' },
+  { value: 'ja-JP-NanamiNeural', labelKey: 'ttsVoiceNanami' },
+  { value: 'ko-KR-SunHiNeural', labelKey: 'ttsVoiceSunHi' }
+]
 
 const ACTION_ICON_CHOICES = [
   'sparkles',
@@ -444,6 +465,185 @@ function ActionEditor({
   )
 }
 
+/** Compact one-line meanings for a grid chip: "n.闪耀 v.使闪光". */
+function chipMeanings(entry: VocabEntry): string {
+  return entry.meanings
+    .slice(0, 3)
+    .map((meaning) => `${meaning.partOfSpeech ?? ''}${meaning.means[0] ?? ''}`)
+    .join(' ')
+    .trim()
+}
+
+function VocabularySection({ t }: { t: (key: string) => string }) {
+  const [entries, setEntries] = React.useState<VocabEntry[] | null>(null)
+  const [search, setSearch] = React.useState('')
+  const [detail, setDetail] = React.useState<VocabEntry | null>(null)
+  const [confirmingClear, setConfirmingClear] = React.useState(false)
+  const clearTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const refresh = React.useCallback(async () => {
+    setEntries(await window.assistantLite.vocabulary.list())
+  }, [])
+
+  React.useEffect(() => {
+    void refresh()
+    return () => {
+      if (clearTimerRef.current) clearTimeout(clearTimerRef.current)
+    }
+  }, [refresh])
+
+  // Escape closes the detail modal.
+  React.useEffect(() => {
+    if (!detail) return
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setDetail(null)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [detail])
+
+  const removeWord = async (word: string) => {
+    await window.assistantLite.vocabulary.remove(word)
+    setDetail(null)
+    void refresh()
+  }
+
+  const clearAll = async () => {
+    if (!confirmingClear) {
+      setConfirmingClear(true)
+      if (clearTimerRef.current) clearTimeout(clearTimerRef.current)
+      clearTimerRef.current = setTimeout(() => setConfirmingClear(false), 3000)
+      return
+    }
+    if (clearTimerRef.current) clearTimeout(clearTimerRef.current)
+    setConfirmingClear(false)
+    await window.assistantLite.vocabulary.clear()
+    setDetail(null)
+    void refresh()
+  }
+
+  const exportAll = async () => {
+    await window.assistantLite.vocabulary.exportFile()
+  }
+
+  const filtered = (entries ?? []).filter((entry) =>
+    entry.word.toLowerCase().includes(search.trim().toLowerCase())
+  )
+
+  return (
+    <div className="settings-stack settings-stack--vocabulary">
+      <SettingSection title={t('sectionVocabulary')}>
+        <div className="vocab-toolbar">
+          <input
+            className="vocab-search"
+            value={search}
+            placeholder={t('vocabSearch')}
+            onChange={(event) => setSearch(event.target.value)}
+          />
+          <span className="vocab-count">{t('vocabCount').replace('{{count}}', String(filtered.length))}</span>
+          <button type="button" className="pill" onClick={() => void exportAll()} disabled={!entries?.length}>
+            {t('vocabExport')}
+          </button>
+          <button
+            type="button"
+            className={confirmingClear ? 'pill danger-pill' : 'pill'}
+            onClick={() => void clearAll()}
+            disabled={!entries?.length}>
+            {confirmingClear ? t('vocabClearConfirm') : t('vocabClear')}
+          </button>
+        </div>
+
+        {entries?.length === 0 ? (
+          <div className="vocab-empty">{t('vocabEmpty')}</div>
+        ) : (
+          <div className="vocab-grid">
+            {filtered.map((entry) => (
+              <button type="button" className="vocab-chip" key={entry.word} onClick={() => setDetail(entry)}>
+                <span className="vocab-chip__word">{entry.word}</span>
+                <span className="vocab-chip__mean">{chipMeanings(entry)}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </SettingSection>
+
+      {detail && (
+        <div className="vocab-modal-backdrop" onClick={() => setDetail(null)}>
+          <div className="vocab-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="vocab-modal__head">
+              <strong>{detail.word}</strong>
+              <button type="button" className="inline-icon-button" onClick={() => setDetail(null)} aria-label="close">
+                <Icon name="x" size={14} />
+              </button>
+            </div>
+            <div className="vocab-modal__body">
+              {detail.phonetics.length > 0 && (
+                <div className="tr-dict__phonetics">
+                  {detail.phonetics.map((phonetic) => (
+                    <span className="tr-dict__phonetic" key={phonetic.label}>
+                      <span className={`tr-dict__phonetic-tag tr-dict__phonetic-tag--${phonetic.label}`}>{phonetic.label}</span>
+                      <span className="tr-dict__phonetic-text">/{phonetic.phonetic}/</span>
+                      {phonetic.audioUrl && (
+                        <button
+                          type="button"
+                          className="tr-tool-button"
+                          onClick={() => {
+                            const audio = new Audio(phonetic.audioUrl)
+                            void audio.play().catch(() => {})
+                          }}>
+                          <Icon name="volume-2" size={13} />
+                        </button>
+                      )}
+                    </span>
+                  ))}
+                </div>
+              )}
+              <div className="tr-dict__meanings">
+                {detail.meanings.map((meaning, index) => (
+                  <div className="tr-dict__meaning" key={index}>
+                    {meaning.partOfSpeech && <span className="tr-dict__pos">{meaning.partOfSpeech}</span>}
+                    <span className="tr-dict__means">{meaning.means.join('；')}</span>
+                  </div>
+                ))}
+              </div>
+              <ExchangeLines exchange={detail.exchange} t={t} />
+            </div>
+            <div className="vocab-modal__foot">
+              <button type="button" className="danger-text" onClick={() => void removeWord(detail.word)}>
+                {t('vocabDelete')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** Word-form lines (plural, past tense…) shared by dict-like views. */
+function ExchangeLines({ exchange, t }: { exchange: VocabEntry['exchange']; t: (key: string) => string }) {
+  const labels: Array<[keyof VocabEntry['exchange'], string]> = [
+    ['plurals', 'dictPlurals'],
+    ['pastTense', 'dictPastTense'],
+    ['pastParticiple', 'dictPastParticiple'],
+    ['presentParticiple', 'dictPresentParticiple'],
+    ['thirdPersonSingular', 'dictThirdPerson'],
+    ['comparative', 'dictComparative'],
+    ['superlative', 'dictSuperlative']
+  ]
+  const rows = labels.filter(([key]) => exchange[key]?.length)
+  if (!rows.length) return null
+  return (
+    <div className="tr-dict__exchange">
+      {rows.map(([key, labelKey]) => (
+        <span className="tr-dict__exchange-item" key={key}>
+          {t(labelKey)}：{exchange[key]!.join('、')}
+        </span>
+      ))}
+    </div>
+  )
+}
+
 function SettingsApp() {
   const { settings, loaded, update } = useSettings()
   const [accessibilityTrusted, setAccessibilityTrusted] = React.useState(true)
@@ -592,10 +792,35 @@ function SettingsApp() {
     void update({ shortcuts: { [field]: value } })
   }
 
+  const updateTranslate = (patch: Partial<AppSettings['translate']>) => {
+    void update({ translate: { ...settings.translate, ...patch } })
+  }
+
+  const updateTts = (patch: Partial<AppSettings['tts']>) => {
+    void update({ tts: { ...settings.tts, ...patch } })
+  }
+
+  const toggleTranslateService = (id: TranslateServiceId, enabled: boolean) => {
+    updateTranslate({
+      services: settings.translate.services.map((service) => (service.id === id ? { ...service, enabled } : service))
+    })
+  }
+
+  const moveTranslateService = (id: TranslateServiceId, dir: -1 | 1) => {
+    const services = [...settings.translate.services]
+    const i = services.findIndex((service) => service.id === id)
+    const j = i + dir
+    if (i < 0 || j < 0 || j >= services.length) return
+    ;[services[i], services[j]] = [services[j], services[i]]
+    updateTranslate({ services })
+  }
+
   const sections: SettingsSectionMeta[] = [
     { id: 'api', label: t('sectionApi'), icon: 'link' },
     { id: 'actions', label: t('sectionActions'), icon: 'mouse-pointer' },
     { id: 'selection', label: t('sectionSelection'), icon: 'scan-text' },
+    { id: 'translate', label: t('sectionTranslate'), icon: 'languages' },
+    { id: 'vocabulary', label: t('sectionVocabulary'), icon: 'book-open' },
     { id: 'window', label: t('sectionWindow'), icon: 'laptop' }
   ]
   const defaultActionById = new Map(defaultActions.map((action) => [action.id, action]))
@@ -940,6 +1165,125 @@ function SettingsApp() {
           </SettingSection>
         </div>
       )
+    }
+
+    if (activeSection === 'translate') {
+      const translateServiceName = (id: TranslateServiceId): string => {
+        switch (id) {
+          case 'microsoft':
+            return t('serviceMicrosoft')
+          case 'iciba':
+            return t('serviceIciba')
+          case 'icibaDict':
+            return t('serviceIcibaDict')
+          case 'deeplx':
+            return t('serviceDeeplx')
+        }
+      }
+      const voiceChoices = TTS_VOICE_CHOICES.some((choice) => choice.value === settings.tts.voice)
+        ? TTS_VOICE_CHOICES
+        : [{ value: settings.tts.voice, labelKey: '' }, ...TTS_VOICE_CHOICES]
+
+      return (
+        <div className="settings-stack settings-stack--translate">
+          <SettingSection title={t('translateGroup')}>
+            <div className="group-hint">{t('translateServicesHint')}</div>
+            <div className="translate-service-list">
+              {settings.translate.services.map((service, index) => (
+                <div className="translate-service-row" key={service.id}>
+                  <span className="setting-title">{translateServiceName(service.id)}</span>
+                  <div className="translate-service-row-tools">
+                    <button
+                      className="inline-icon-button"
+                      type="button"
+                      title={t('moveUp')}
+                      onClick={() => moveTranslateService(service.id, -1)}
+                      disabled={index === 0}>
+                      <Icon name="arrow-up" size={13} />
+                    </button>
+                    <button
+                      className="inline-icon-button"
+                      type="button"
+                      title={t('moveDown')}
+                      onClick={() => moveTranslateService(service.id, 1)}
+                      disabled={index === settings.translate.services.length - 1}>
+                      <Icon name="arrow-down" size={13} />
+                    </button>
+                    <Toggle
+                      checked={service.enabled}
+                      label={translateServiceName(service.id)}
+                      onChange={(enabled) => toggleTranslateService(service.id, enabled)}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+            <SettingRow title={t('deeplxEndpoint')} description={t('deeplxEndpointDesc')}>
+              <input
+                value={settings.translate.deeplxEndpoint}
+                placeholder="https://your-deeplx.example.com"
+                onChange={(event) => updateTranslate({ deeplxEndpoint: event.target.value.trim() })}
+              />
+            </SettingRow>
+            <SettingRow title={t('vocabAutoRecord')} description={t('vocabAutoRecordDesc')}>
+              <Toggle
+                checked={settings.vocabulary.autoRecord}
+                label={t('vocabAutoRecord')}
+                onChange={(autoRecord) => update({ vocabulary: { autoRecord } })}
+              />
+            </SettingRow>
+          </SettingSection>
+
+          <SettingSection title={t('ttsGroup')}>
+            <SettingRow title={t('ttsEndpoint')} description={t('ttsEndpointDesc')}>
+              <input
+                value={settings.tts.endpoint}
+                placeholder="https://tts.example.com/v1/audio/speech"
+                onChange={(event) => updateTts({ endpoint: event.target.value.trim() })}
+              />
+            </SettingRow>
+            <SettingRow title={t('ttsVoice')}>
+              <select value={settings.tts.voice} onChange={(event) => updateTts({ voice: event.target.value })}>
+                {voiceChoices.map((choice) => (
+                  <option key={choice.value} value={choice.value}>
+                    {choice.labelKey ? t(choice.labelKey) : choice.value}
+                  </option>
+                ))}
+              </select>
+            </SettingRow>
+            <SettingRow title={t('ttsSpeed')} description={t('ttsSpeedDesc')}>
+              <select value={String(settings.tts.speed)} onChange={(event) => updateTts({ speed: Number(event.target.value) })}>
+                {['0.5', '0.75', '1', '1.25', '1.5', '2'].map((value) => (
+                  <option key={value} value={value}>
+                    {value}×
+                  </option>
+                ))}
+              </select>
+            </SettingRow>
+            <SettingRow title={t('ttsPitch')} description={t('ttsPitchDesc')}>
+              <NumberField value={settings.tts.pitch} min={-50} max={50} onCommit={(pitch) => updateTts({ pitch })} />
+            </SettingRow>
+          </SettingSection>
+
+          <SettingSection title={t('translateShortcut')}>
+            <SettingRow
+              title={t('translateShortcut')}
+              description={t('translateShortcutDesc')}
+              className="shortcut-row">
+              <ShortcutRecorder
+                value={settings.shortcuts.translate}
+                label={t('translateShortcut')}
+                onChange={(value) => updateShortcut('translate', value)}
+                t={t}
+              />
+            </SettingRow>
+          </SettingSection>
+        </div>
+      )
+    }
+
+    if (activeSection === 'vocabulary') {
+      return <VocabularySection t={t} />
     }
 
     if (activeSection === 'window') {

@@ -407,11 +407,39 @@ function Minus({ size = 16, strokeWidth = 2 }: IconProps) {
   )
 }
 
+function ArrowRightLeft({ size = 16, strokeWidth = 2 }: IconProps) {
+  return (
+    <svg {...baseProps(size)} strokeWidth={strokeWidth}>
+      <path d="m16 3 4 4-4 4" />
+      <path d="M20 7H4" />
+      <path d="m8 21-4-4 4-4" />
+      <path d="M4 17h16" />
+    </svg>
+  )
+}
+
+function ChevronDown({ size = 16, strokeWidth = 2 }: IconProps) {
+  return (
+    <svg {...baseProps(size)} strokeWidth={strokeWidth}>
+      <path d="m6 9 6 6 6-6" />
+    </svg>
+  )
+}
+
+function Check({ size = 16, strokeWidth = 2 }: IconProps) {
+  return (
+    <svg {...baseProps(size)} strokeWidth={strokeWidth}>
+      <path d="M20 6 9 17l-5-5" />
+    </svg>
+  )
+}
+
 const icons: Record<string, (props: IconProps) => React.JSX.Element> = {
   'circle-help': CircleHelp,
   'arrow-up': ArrowUp,
   'arrow-down': ArrowDown,
   'arrow-up-right': ArrowUpRight,
+  'arrow-right-left': ArrowRightLeft,
   'book-open': BookOpen,
   power: Power,
   copy: CopyIcon,
@@ -444,6 +472,8 @@ const icons: Record<string, (props: IconProps) => React.JSX.Element> = {
   'file-text': FileText,
   'refresh-cw': RefreshCw,
   'chevron-right': ChevronRight,
+  'chevron-down': ChevronDown,
+  check: Check,
   'corner-down-right': CornerDownRight,
   clock: Clock,
   minus: Minus
