@@ -1,4 +1,12 @@
-import type { ActionItem, AppSettings, ProviderTemplate } from './types'
+import type { ActionItem, AppSettings, ProviderTemplate, TranslateServiceId } from './types'
+
+/** Default quick-translate service order: free built-ins first, DeepLX opt-in. */
+export const defaultTranslateServices: Array<{ id: TranslateServiceId; enabled: boolean }> = [
+  { id: 'microsoft', enabled: true },
+  { id: 'iciba', enabled: true },
+  { id: 'icibaDict', enabled: true },
+  { id: 'deeplx', enabled: false }
+]
 
 export const defaultActions: ActionItem[] = [
   {
@@ -106,7 +114,21 @@ export const defaultSettings: AppSettings = {
     toggleAssistant: 'CommandOrControl+Shift+Space',
     processSelection: 'CommandOrControl+Shift+S',
     captureScreen: 'CommandOrControl+Shift+A',
-    chat: 'CommandOrControl+Shift+C'
+    chat: 'CommandOrControl+Shift+C',
+    translate: 'CommandOrControl+Shift+T'
+  },
+  translate: {
+    services: defaultTranslateServices,
+    deeplxEndpoint: 'https://ts.203065.xyz'
+  },
+  tts: {
+    endpoint: 'https://tts.wangwangit.com/v1/audio/speech',
+    voice: 'zh-CN-XiaoxiaoNeural',
+    speed: 1,
+    pitch: 0
+  },
+  vocabulary: {
+    autoRecord: false
   },
   actions: defaultActions,
   mcpServers: [],

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, Tray, dialog, globalShortcut, ipcMain, nativeImage, net, shell } from 'electron'
+import { app, BrowserWindow, Menu, Tray, dialog, globalShortcut, ipcMain, nativeImage, net, screen, shell } from 'electron'
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
@@ -25,6 +25,8 @@ import { stripDocJunk, validateRecapDoc } from '@shared/recapDoc'
 import { ScreenshotService } from './ScreenshotService'
 import { SelectionService } from './SelectionService'
 import { SpeechService } from './SpeechService'
+import { registerTranslateIpc } from './translate'
+import { initVocabulary, registerVocabularyIpc } from './vocabulary'
 import { getSettings, onSettingsChanged, updateSettings } from './settingsStore'
 import { isSupportedPlatform, isWin } from './platform'
 
@@ -38,6 +40,7 @@ app.commandLine.appendSwitch('js-flags', '--max-old-space-size=512')
 
 let settingsWindow: BrowserWindow | null = null
 let chatWindow: BrowserWindow | null = null
+let translateWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let isQuitting = false
 
@@ -151,15 +154,12 @@ function createSettingsWindow(): BrowserWindow {
   }
 
   settingsWindow = new BrowserWindow({
-    // The labelled navigation rail needs a wider canvas than the compact toolbar layout.
-    width: 840,
-    height: 640,
+    // Open at the minimum working size — the shell layout is densest there;
+    // the user can enlarge up to the max but starts compact.
+    width: 760,
+    height: 540,
     minWidth: 760,
     minHeight: 540,
-    // Settings are form-centric; beyond this the work area gains empty space
-    // rather than useful density.
-    maxWidth: 1120,
-    maxHeight: 860,
     icon: appIcon,
     title: 'FlashAgent-assistant',
     autoHideMenuBar: true,
@@ -254,6 +254,72 @@ function openChatWindow(): void {
   loadRenderer(win, 'selectionAction.html')
 }
 
+const TRANSLATE_DEFAULT_WIDTH = 420
+const TRANSLATE_DEFAULT_HEIGHT = 480
+
+function openTranslateWindow(): void {
+  if (translateWindow && !translateWindow.isDestroyed()) {
+    if (translateWindow.isMinimized()) translateWindow.restore()
+    translateWindow.show()
+    translateWindow.focus()
+    return
+  }
+  const settings = getSettings()
+  // 560×560 was the pre-polish default; treat it as "never resized" so the
+  // compact default takes effect for existing installs too.
+  const storedWidth = settings.translateWindowWidth
+  const storedHeight = settings.translateWindowHeight
+  const width = storedWidth && storedWidth !== 560 ? storedWidth : TRANSLATE_DEFAULT_WIDTH
+  const height = storedHeight && storedHeight !== 560 ? storedHeight : TRANSLATE_DEFAULT_HEIGHT
+  translateWindow = new BrowserWindow({
+    width: width + CHAT_SHADOW_PADDING * 2,
+    height: height + CHAT_SHADOW_PADDING * 2,
+    minWidth: 360 + CHAT_SHADOW_PADDING * 2,
+    minHeight: 320 + CHAT_SHADOW_PADDING * 2,
+    icon: appIcon,
+    title: 'FlashAgent-assistant',
+    autoHideMenuBar: true,
+    show: false,
+    frame: false,
+    transparent: true,
+    hasShadow: false,
+    paintWhenInitiallyHidden: true,
+    titleBarStyle: 'hidden',
+    trafficLightPosition: { x: CHAT_SHADOW_PADDING + 12, y: CHAT_SHADOW_PADDING + 10 },
+    webPreferences: {
+      preload: preloadPath,
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      backgroundThrottling: true
+    }
+  })
+  const win = translateWindow
+  // Height is content-driven (the renderer reports it via WindowAdjustHeight);
+  // only the width is a user preference worth remembering.
+  const saveBounds = (): void => {
+    if (win.isDestroyed()) return
+    const bounds = win.getBounds()
+    void updateSettings({
+      translateWindowWidth: Math.max(360, bounds.width - CHAT_SHADOW_PADDING * 2)
+    })
+  }
+  win.on('close', saveBounds)
+  win.on('closed', () => {
+    if (translateWindow === win) translateWindow = null
+  })
+  let resizeTimer: ReturnType<typeof setTimeout> | null = null
+  win.on('resized', () => {
+    if (resizeTimer) clearTimeout(resizeTimer)
+    resizeTimer = setTimeout(saveBounds, 200)
+  })
+  win.once('ready-to-show', () => {
+    win.show()
+    win.focus()
+  })
+  loadRenderer(win, 'translate.html')
+}
+
 function createTray(): void {
   tray = new Tray(getTrayIcon())
   tray.setToolTip('FlashAgent-assistant')
@@ -315,6 +381,12 @@ function registerShortcuts(): void {
       accelerator: settings.shortcuts.chat,
       action: () => {
         openChatWindow()
+      }
+    },
+    {
+      accelerator: settings.shortcuts.translate,
+      action: () => {
+        openTranslateWindow()
       }
     }
   ]
@@ -403,6 +475,22 @@ function argsJsonForEvent(args: Record<string, unknown>): string {
 function registerIpc(): void {
   selectionService.registerIpc()
   screenshotService.registerIpc()
+  registerTranslateIpc(providerFetch)
+  initVocabulary(app.getPath('userData'))
+  registerVocabularyIpc()
+
+  // Height-to-content resizing (quick-translate window): the renderer reports
+  // its document height; clamp to the display work area so tall results
+  // scroll instead of overflowing the screen. Top edge stays put.
+  ipcMain.handle(IPC.WindowAdjustHeight, (event, contentHeight: number) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (!win || win.isDestroyed() || !Number.isFinite(contentHeight)) return
+    const bounds = win.getBounds()
+    const workArea = screen.getDisplayMatching(bounds).workArea
+    const outer = Math.round(Math.min(Math.max(contentHeight, 380), workArea.height - 40))
+    if (outer === bounds.height) return
+    win.setBounds({ x: bounds.x, y: bounds.y, width: bounds.width, height: outer })
+  })
 
   // Typing in the proxy input fires one settings update per keystroke —
   // debounce the MCP reconnect so connections rebuild once the URL settles.

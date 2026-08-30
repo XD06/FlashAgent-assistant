@@ -137,7 +137,8 @@ export function mergeLegacySettings(current: AppSettings, legacy: AppSettings): 
     toggleAssistant: inheritLegacy(current.shortcuts.toggleAssistant, legacy.shortcuts.toggleAssistant, defaultSettings.shortcuts.toggleAssistant),
     processSelection: inheritLegacy(current.shortcuts.processSelection, legacy.shortcuts.processSelection, defaultSettings.shortcuts.processSelection),
     captureScreen: inheritLegacy(current.shortcuts.captureScreen, legacy.shortcuts.captureScreen, defaultSettings.shortcuts.captureScreen),
-    chat: inheritLegacy(current.shortcuts.chat, legacy.shortcuts.chat, defaultSettings.shortcuts.chat)
+    chat: inheritLegacy(current.shortcuts.chat, legacy.shortcuts.chat, defaultSettings.shortcuts.chat),
+    translate: inheritLegacy(current.shortcuts.translate, legacy.shortcuts.translate, defaultSettings.shortcuts.translate)
   }
   result.providerTemplates = mergeProviderTemplates(current.providerTemplates, legacy.providerTemplates)
   const activeProvider = inheritLegacy(

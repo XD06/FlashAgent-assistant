@@ -5,10 +5,13 @@ import type {
   AiChunkPayload,
   AiStreamRequest,
   AppSettings,
+  DictEntry,
   McpServerStatus,
   SelectedTextPayload,
   SettingsPatch,
-  SkillInfo
+  SkillInfo,
+  TranslateChunkPayload,
+  VocabEntry
 } from '@shared/types'
 
 const api = {
@@ -91,6 +94,31 @@ const api = {
     exportMarkdown: (title: string, markdown: string): Promise<string | null> =>
       ipcRenderer.invoke(IPC.ChatExportMarkdown, { title, markdown })
   },
+  translate: {
+    /** Kick off all enabled services; results arrive via onChunk per service. */
+    run: (request: { requestId: string; text: string; from: string; to: string }): Promise<void> =>
+      ipcRenderer.invoke(IPC.TranslateRun, request),
+    abort: (requestId: string): Promise<void> => ipcRenderer.invoke(IPC.TranslateAbort, requestId),
+    onChunk: (callback: (payload: TranslateChunkPayload) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, payload: TranslateChunkPayload) => callback(payload)
+      ipcRenderer.on(IPC.TranslateChunk, listener)
+      return () => {
+        ipcRenderer.off(IPC.TranslateChunk, listener)
+      }
+    }
+  },
+  tts: {
+    /** Synthesize speech for the given text; resolves to an audio/mpeg data URL. */
+    synthesize: (text: string): Promise<string> => ipcRenderer.invoke(IPC.TtsSynthesize, text)
+  },
+  vocabulary: {
+    list: (): Promise<VocabEntry[]> => ipcRenderer.invoke(IPC.VocabList),
+    add: (dict: DictEntry): Promise<boolean> => ipcRenderer.invoke(IPC.VocabAdd, dict),
+    remove: (word: string): Promise<boolean> => ipcRenderer.invoke(IPC.VocabRemove, word),
+    clear: (): Promise<void> => ipcRenderer.invoke(IPC.VocabClear),
+    /** Save all words as Markdown via a save dialog; returns the path or null. */
+    exportFile: (): Promise<string | null> => ipcRenderer.invoke(IPC.VocabExport)
+  },
   memory: {
     open: (): Promise<string> => ipcRenderer.invoke(IPC.MemoryOpen),
     openProject: (workingDir: string): Promise<string> => ipcRenderer.invoke(IPC.MemoryOpenProject, workingDir)
@@ -116,7 +144,10 @@ const api = {
   windowControls: {
     close: (): Promise<void> => ipcRenderer.invoke(IPC.WindowClose),
     minimize: (): Promise<void> => ipcRenderer.invoke(IPC.WindowMinimize),
-    pin: (pinned: boolean): Promise<void> => ipcRenderer.invoke(IPC.WindowPin, pinned)
+    pin: (pinned: boolean): Promise<void> => ipcRenderer.invoke(IPC.WindowPin, pinned),
+    /** Grow/shrink the window to the given content height (main clamps it). */
+    adjustHeight: (contentHeight: number): Promise<void> =>
+      ipcRenderer.invoke(IPC.WindowAdjustHeight, contentHeight)
   },
   app: {
     openExternal: (url: string): Promise<void> => ipcRenderer.invoke(IPC.OpenExternal, url)

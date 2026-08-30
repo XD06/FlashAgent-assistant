@@ -30,6 +30,18 @@ export const IPC = {
 
   ChatExportMarkdown: 'chat:export-markdown',
 
+  TranslateRun: 'translate:run',
+  TranslateAbort: 'translate:abort',
+  TranslateChunk: 'translate:chunk',
+
+  TtsSynthesize: 'tts:synthesize',
+
+  VocabList: 'vocab:list',
+  VocabAdd: 'vocab:add',
+  VocabRemove: 'vocab:remove',
+  VocabClear: 'vocab:clear',
+  VocabExport: 'vocab:export',
+
   MemoryOpen: 'memory:open',
   MemoryOpenProject: 'memory:open-project',
 
@@ -47,6 +59,8 @@ export const IPC = {
   WindowClose: 'window:close',
   WindowMinimize: 'window:minimize',
   WindowPin: 'window:pin',
+  /** Resize the window to fit its content (quick-translate height-to-content). */
+  WindowAdjustHeight: 'window:adjust-height',
   OpenExternal: 'app:open-external',
 
   ScreenshotStart: 'screenshot:start',

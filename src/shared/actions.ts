@@ -13,6 +13,9 @@ import type {
   ReasoningMode,
   SettingsPatch,
   ThemeMode,
+  TranslateServiceConfig,
+  TranslateSettings,
+  TtsSettings,
   TriggerMode
 } from './types'
 
@@ -128,7 +131,15 @@ export function mergeSettings(current: AppSettings, patch: SettingsPatch): AppSe
       ...current.shortcuts,
       ...(shortcuts ?? {})
     },
-    actions: normalizeActionItems(actions ?? current.actions)
+    actions: normalizeActionItems(actions ?? current.actions),
+    translate: normalizeTranslateSettings(rest.translate ?? current.translate),
+    tts: normalizeTtsSettings(rest.tts ?? current.tts),
+    vocabulary: {
+      autoRecord:
+        typeof (rest.vocabulary ?? current.vocabulary)?.autoRecord === 'boolean'
+          ? (rest.vocabulary ?? current.vocabulary)!.autoRecord
+          : defaultSettings.vocabulary.autoRecord
+    }
   }
 }
 
@@ -285,4 +296,37 @@ function appendMissingBuiltInActions(actions: ActionItem[]): ActionItem[] {
   if (!hasMigratableBuiltInAction || !speakAction) return actions
 
   return [...actions, { ...speakAction }]
+}
+
+function normalizeTranslateSettings(value: unknown): TranslateSettings {
+  const raw = value && typeof value === 'object' ? (value as Partial<TranslateSettings>) : {}
+  const byId = new Map(
+    Array.isArray(raw.services)
+      ? raw.services
+          .filter((item): item is TranslateServiceConfig => !!item && typeof item === 'object')
+          .map((item) => [item.id, item])
+      : []
+  )
+  // Keep the default order as the base so unknown/renamed ids can't wedge the
+  // list, then apply the stored enabled flags on top.
+  const services = defaultSettings.translate.services.map((service) => ({
+    id: service.id,
+    enabled: byId.get(service.id)?.enabled === true
+  }))
+  return {
+    services,
+    deeplxEndpoint: typeof raw.deeplxEndpoint === 'string' ? raw.deeplxEndpoint : ''
+  }
+}
+
+function normalizeTtsSettings(value: unknown): TtsSettings {
+  const raw = value && typeof value === 'object' ? (value as Partial<TtsSettings>) : {}
+  const speed = typeof raw.speed === 'number' && Number.isFinite(raw.speed) ? raw.speed : defaultSettings.tts.speed
+  const pitch = typeof raw.pitch === 'number' && Number.isFinite(raw.pitch) ? raw.pitch : defaultSettings.tts.pitch
+  return {
+    endpoint: typeof raw.endpoint === 'string' ? raw.endpoint : defaultSettings.tts.endpoint,
+    voice: typeof raw.voice === 'string' && raw.voice.trim() ? raw.voice : defaultSettings.tts.voice,
+    speed: Math.min(2, Math.max(0.5, speed)),
+    pitch: Math.round(Math.min(50, Math.max(-50, pitch)))
+  }
 }

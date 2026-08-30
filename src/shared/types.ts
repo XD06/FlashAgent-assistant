@@ -31,6 +31,34 @@ export interface ShortcutSettings {
   processSelection: string
   captureScreen: string
   chat: string
+  /** Global shortcut that opens the quick-translate window. */
+  translate: string
+}
+
+/** Built-in quick-translate services, all key-free. */
+export type TranslateServiceId = 'microsoft' | 'iciba' | 'icibaDict' | 'deeplx'
+
+export interface TranslateServiceConfig {
+  id: TranslateServiceId
+  enabled: boolean
+}
+
+export interface TranslateSettings {
+  /** Enabled services run in parallel; results render in this order. */
+  services: TranslateServiceConfig[]
+  /** DeepLX-compatible base URL (POST {base}/v1/translate, LibreTranslate format). */
+  deeplxEndpoint: string
+}
+
+export interface TtsSettings {
+  /** OpenAI-compatible /v1/audio/speech endpoint. */
+  endpoint: string
+  /** Edge TTS voice, e.g. zh-CN-XiaoxiaoNeural. */
+  voice: string
+  /** 0.5 – 2.0. */
+  speed: number
+  /** -50 – 50. */
+  pitch: number
 }
 
 export type McpTransport = 'stdio' | 'http'
@@ -107,6 +135,8 @@ export interface AppSettings {
   actionWindowHeight: number
   chatWindowWidth?: number
   chatWindowHeight?: number
+  translateWindowWidth?: number
+  translateWindowHeight?: number
   fontFamily: string
   fontSize: number
   autoLaunch: boolean
@@ -133,6 +163,15 @@ export interface AppSettings {
   commandShell: CommandShell
   shortcuts: ShortcutSettings
   actions: ActionItem[]
+  /** Quick-translate window: built-in services and target config. */
+  translate: TranslateSettings
+  /** Speech synthesis for the translate window (input and results). */
+  tts: TtsSettings
+  /** Vocabulary book (生词本) behavior. */
+  vocabulary: {
+    /** Auto-record English words looked up in the translate window. */
+    autoRecord: boolean
+  }
   mcpServers: McpServerConfig[]
   /** Skills the user switched off; newly discovered skills default to on. */
   disabledSkills: string[]
@@ -249,5 +288,70 @@ export interface AiChunkPayload {
 export type SettingsPatch = Partial<Omit<AppSettings, 'provider' | 'shortcuts'>> & {
   provider?: Partial<ProviderSettings>
   shortcuts?: Partial<ShortcutSettings>
+}
+
+export interface TranslateRunRequest {
+  requestId: string
+  text: string
+  /** Source language code ('auto' allowed); shared/translate LANGUAGES codes. */
+  from: string
+  to: string
+}
+
+export interface TranslateChunkPayload {
+  requestId: string
+  serviceId: TranslateServiceId
+  state: 'done' | 'error'
+  /** Translated text (state=done). */
+  text?: string
+  /** Dictionary entry for the icibaDict service. */
+  dict?: DictEntry
+  /** Whether the word is already in the vocabulary book (dict chunks only). */
+  vocabSaved?: boolean
+  /** True when auto-record actually inserted the word on this lookup —
+   * lets the renderer show the save toast for the automatic path. */
+  vocabJustSaved?: boolean
+  /** Language detected by the service (e.g. 'en'), when it reports one. */
+  detected?: string
+  error?: string
+  elapsedMs?: number
+}
+
+/** One dictionary pronunciation (uk/us phonetics or zh pinyin). */
+export interface DictPhonetic {
+  label: 'uk' | 'us' | 'zh'
+  phonetic: string
+  audioUrl: string
+}
+
+export interface DictMeaning {
+  partOfSpeech: string
+  means: string[]
+}
+
+/** iciba dictionary lookup result for a single word. */
+export interface DictEntry {
+  word: string
+  phonetics: DictPhonetic[]
+  meanings: DictMeaning[]
+  exchange: {
+    plurals?: string[]
+    pastTense?: string[]
+    pastParticiple?: string[]
+    presentParticiple?: string[]
+    thirdPersonSingular?: string[]
+    comparative?: string[]
+    superlative?: string[]
+  }
+}
+
+/** One saved vocabulary word (生词本). Snapshot of the dict data at save time
+ * so the detail view works offline. */
+export interface VocabEntry {
+  word: string
+  addedAt: number
+  phonetics: DictPhonetic[]
+  meanings: DictMeaning[]
+  exchange: DictEntry['exchange']
 }
 import type { ContextMeasurement } from './contextMeter'
