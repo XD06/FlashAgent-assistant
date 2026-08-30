@@ -29,6 +29,7 @@ This project is a derivative of [zcx960/AIA-selection-assistan](https://github.c
 ## Highlights
 
 - **Fast answers from text selection**: a floating toolbar, built-in and custom actions, per-action shortcuts, system TTS, and compact mode. Ask about selected content in place.
+- **Quick translate and vocabulary**: a hotkey summons a lightweight translate window with key-free Microsoft / Kingsoft / DeepLX engines running in parallel, an iciba dictionary card, and Edge TTS read-aloud (no LLM API needed). Looked-up English words can be saved into a vocabulary book automatically or manually, with grid preview, dictionary details, search, and Markdown export.
 - **Multi-provider configuration**: OpenAI-compatible and Anthropic APIs, multiple provider templates, and dedicated models for actions, vision, and compaction.
 - **Screenshots and vision**: region capture with pen and arrow annotations; save, copy, pin, and send to AI vision; source images can be expanded from the result window.
 - **Chat and context**: local multi-topic history, automatic titles, Markdown export, and token-driven compaction that preserves task state and next steps.
@@ -128,6 +129,7 @@ On the first launch after the project rename, the app copies the legacy `selecti
 ## Project documentation
 
 - [CHANGELOG.md](./CHANGELOG.md): release history.
+- [docs/QUICK-TRANSLATE.md](./docs/QUICK-TRANSLATE.md): architecture notes for quick translate, TTS, and the vocabulary book.
 - [CONTRIBUTING.md](./CONTRIBUTING.md): development and contribution guidance.
 - [SECURITY.md](./SECURITY.md): private security reporting guidance.
 - [docs/ARCHIVE.md](./docs/ARCHIVE.md): historical design and implementation records.

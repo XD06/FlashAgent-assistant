@@ -29,6 +29,7 @@ FlashAgent-assistant 是面向快速问答与轻量 Agent 工作流的桌面 AI 
 ## 核心能力
 
 - **快速问答与划词操作**：浮动工具栏、内置和自定义动作、动作专属快捷键、系统 TTS，以及紧凑模式；选中内容即可就地提问。
+- **快速翻译与生词本**：快捷键呼出轻量翻译窗，内置微软 / 金山 / DeepLX 免 Key 引擎并行翻译、金山词霸词典与 Edge TTS 朗读（无需大模型接口）；查过的英文单词可自动或手动收进生词本，支持网格预览、词典详情、搜索与 Markdown 导出。
 - **多模型配置**：支持 OpenAI-compatible 与 Anthropic API；可维护多个服务商模板，并为动作、识图和压缩分别指定模型。
 - **截图与识图**：区域截图支持画笔和箭头标注，可保存、复制、钉图和送入 AI 视觉对话；原图可在结果窗中展开查看。
 - **对话与上下文**：多话题本地历史、自动命名、Markdown 导出和 token 驱动的长对话压缩；压缩摘要保留任务、事实、文件状态和下一步。
@@ -128,6 +129,7 @@ pnpm dist:win
 ## 项目文档
 
 - [CHANGELOG.md](./CHANGELOG.md)：版本变更记录。
+- [docs/QUICK-TRANSLATE.md](./docs/QUICK-TRANSLATE.md)：快速翻译、语音合成与生词本的架构说明。
 - [CONTRIBUTING.md](./CONTRIBUTING.md)：开发与贡献约定。
 - [SECURITY.md](./SECURITY.md)：安全问题披露方式。
 - [docs/ARCHIVE.md](./docs/ARCHIVE.md)：历史方案与实施记录索引。
