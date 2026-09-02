@@ -8,6 +8,7 @@ import {
   normalizeSettings
 } from './actions'
 import { defaultSettings } from './defaults'
+import type { TranslateServiceConfig } from './types'
 
 describe('translate settings normalization', () => {
   it('preserves the provided service order across a merge (reorder persists)', () => {
@@ -26,7 +27,7 @@ describe('translate settings normalization', () => {
   })
 
   it('collapses the legacy 0.8.0 full-catalog order to the curated default', () => {
-    const legacy = [
+    const legacy: TranslateServiceConfig[] = [
       { id: 'microsoft', enabled: true },
       { id: 'iciba', enabled: false },
       { id: 'icibaDict', enabled: true },
@@ -41,7 +42,7 @@ describe('translate settings normalization', () => {
   })
 
   it('keeps customized orders untouched by the legacy migration', () => {
-    const customized = [
+    const customized: TranslateServiceConfig[] = [
       { id: 'deeplx', enabled: true },
       { id: 'microsoft', enabled: true },
       { id: 'iciba', enabled: true },

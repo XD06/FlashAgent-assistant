@@ -1275,9 +1275,13 @@ function SettingsApp() {
                     <div className="translate-service-row translate-service-row--optional" key={id}>
                       <span className="setting-title">{translateServiceName(id)}</span>
                       <div className="translate-service-row-tools">
-                        <button type="button" className="pill" onClick={() => addTranslateService(id)}>
-                          <Icon name="plus" size={13} />
-                          {t('addService')}
+                        <button
+                          type="button"
+                          className="inline-icon-button"
+                          title={t('addService')}
+                          aria-label={`${t('addService')} ${translateServiceName(id)}`}
+                          onClick={() => addTranslateService(id)}>
+                          <Icon name="plus" size={15} />
                         </button>
                       </div>
                     </div>
