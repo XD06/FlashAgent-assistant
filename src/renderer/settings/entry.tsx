@@ -1176,6 +1176,10 @@ function SettingsApp() {
             return t('serviceIciba')
           case 'icibaDict':
             return t('serviceIcibaDict')
+          case 'tencent':
+            return t('serviceTencent')
+          case 'yandex':
+            return t('serviceYandex')
           case 'deeplx':
             return t('serviceDeeplx')
         }
@@ -1223,6 +1227,13 @@ function SettingsApp() {
                 value={settings.translate.deeplxEndpoint}
                 placeholder="https://your-deeplx.example.com"
                 onChange={(event) => updateTranslate({ deeplxEndpoint: event.target.value.trim() })}
+              />
+            </SettingRow>
+            <SettingRow title={t('tencentClientKey')} description={t('tencentClientKeyDesc')}>
+              <input
+                value={settings.translate.tencentClientKey}
+                placeholder={t('tencentClientKeyPlaceholder')}
+                onChange={(event) => updateTranslate({ tencentClientKey: event.target.value.trim() })}
               />
             </SettingRow>
             <SettingRow title={t('vocabAutoRecord')} description={t('vocabAutoRecordDesc')}>

@@ -8,6 +8,8 @@ import { translateDeeplx } from './deeplx'
 import { lookupIcibaWord, translateIciba } from './iciba'
 import { translateMicrosoft } from './microsoft'
 import { synthesizeSpeech } from './tts'
+import { translateTencent } from './tencent'
+import { translateYandex } from './yandex'
 import { addVocabulary, hasVocabulary, isEnglishWord } from '../vocabulary'
 
 const SERVICE_TIMEOUT_MS = 15_000
@@ -78,6 +80,19 @@ async function runService(
         }))
       )
     }
+    case 'tencent':
+      return withElapsed(
+        translateTencent(text, from, to, getSettings().translate.tencentClientKey, fetchImpl, timedSignal).then(
+          (r) => ({ state: 'done' as const, text: r.text, detected: r.detected })
+        )
+      )
+    case 'yandex':
+      return withElapsed(
+        translateYandex(text, from, to, fetchImpl, timedSignal).then((r) => ({
+          state: 'done' as const,
+          text: r.text
+        }))
+      )
   }
 }
 

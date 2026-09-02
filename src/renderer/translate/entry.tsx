@@ -71,6 +71,10 @@ function serviceDisplayName(serviceId: TranslateServiceId, t: (key: string) => s
       return t('serviceIciba')
     case 'icibaDict':
       return t('serviceIcibaDict')
+    case 'tencent':
+      return t('serviceTencent')
+    case 'yandex':
+      return t('serviceYandex')
     case 'deeplx':
       return t('serviceDeeplx')
   }

@@ -1,10 +1,14 @@
 import type { ActionItem, AppSettings, ProviderTemplate, TranslateServiceId } from './types'
 
-/** Default quick-translate service order: free built-ins first, DeepLX opt-in. */
+/** Default quick-translate service order: free built-ins first, DeepLX opt-in.
+ * New services keep their default enabled state on existing installs (merge
+ * fills missing ids from this list). */
 export const defaultTranslateServices: Array<{ id: TranslateServiceId; enabled: boolean }> = [
   { id: 'microsoft', enabled: true },
   { id: 'iciba', enabled: true },
   { id: 'icibaDict', enabled: true },
+  { id: 'tencent', enabled: true },
+  { id: 'yandex', enabled: true },
   { id: 'deeplx', enabled: false }
 ]
 
@@ -119,7 +123,8 @@ export const defaultSettings: AppSettings = {
   },
   translate: {
     services: defaultTranslateServices,
-    deeplxEndpoint: 'https://ts.203065.xyz'
+    deeplxEndpoint: 'https://ts.203065.xyz',
+    tencentClientKey: ''
   },
   tts: {
     endpoint: 'https://tts.wangwangit.com/v1/audio/speech',

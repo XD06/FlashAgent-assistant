@@ -75,3 +75,14 @@ export function deeplxLanguageCode(code: string): string {
   if (code === 'zh-tw') return 'ZH'
   return code.toUpperCase()
 }
+
+/** Tencent Transmart / Yandex use ISO 639-1 short codes. Neither converts
+ * traditional Chinese natively (Tencent zh-TW echoes simplified, Yandex maps
+ * to zh), so zh-tw degrades to zh for both. */
+export function tencentLanguageCode(code: string): string {
+  return code === 'zh-tw' ? 'zh' : code
+}
+
+export function yandexLanguageCode(code: string): string {
+  return code === 'zh-tw' ? 'zh' : code
+}

@@ -5,7 +5,9 @@ import {
   icibaLanguageCode,
   isSingleWord,
   microsoftLanguageCode,
-  translateLanguageLabel
+  tencentLanguageCode,
+  translateLanguageLabel,
+  yandexLanguageCode
 } from './translate'
 
 describe('isSingleWord', () => {
@@ -45,6 +47,13 @@ describe('service code mapping', () => {
     expect(icibaLanguageCode('zh-tw')).toBe('cht')
     expect(deeplxLanguageCode('zh-tw')).toBe('ZH')
     expect(deeplxLanguageCode('ja')).toBe('JA')
+  })
+
+  it('degrades traditional chinese for tencent and yandex', () => {
+    expect(tencentLanguageCode('zh-tw')).toBe('zh')
+    expect(yandexLanguageCode('zh-tw')).toBe('zh')
+    expect(tencentLanguageCode('ja')).toBe('ja')
+    expect(yandexLanguageCode('en')).toBe('en')
   })
 
   it('passes common codes through unchanged', () => {

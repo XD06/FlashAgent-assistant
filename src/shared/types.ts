@@ -36,7 +36,7 @@ export interface ShortcutSettings {
 }
 
 /** Built-in quick-translate services, all key-free. */
-export type TranslateServiceId = 'microsoft' | 'iciba' | 'icibaDict' | 'deeplx'
+export type TranslateServiceId = 'microsoft' | 'iciba' | 'icibaDict' | 'tencent' | 'yandex' | 'deeplx'
 
 export interface TranslateServiceConfig {
   id: TranslateServiceId
@@ -48,6 +48,9 @@ export interface TranslateSettings {
   services: TranslateServiceConfig[]
   /** DeepLX-compatible base URL (POST {base}/v1/translate, LibreTranslate format). */
   deeplxEndpoint: string
+  /** Tencent Transmart shared client_key override. Empty = built-in default
+   * (the key is validated server-side and can be rotated by Tencent). */
+  tencentClientKey: string
 }
 
 export interface TtsSettings {

@@ -307,15 +307,17 @@ function normalizeTranslateSettings(value: unknown): TranslateSettings {
           .map((item) => [item.id, item])
       : []
   )
-  // Keep the default order as the base so unknown/renamed ids can't wedge the
-  // list, then apply the stored enabled flags on top.
+  // Keep the default order as the base; stored flags win for known ids, while
+  // ids the store has never seen (added by an app update) fall back to their
+  // default enabled state instead of silently starting disabled.
   const services = defaultSettings.translate.services.map((service) => ({
     id: service.id,
-    enabled: byId.get(service.id)?.enabled === true
+    enabled: byId.get(service.id)?.enabled ?? service.enabled
   }))
   return {
     services,
-    deeplxEndpoint: typeof raw.deeplxEndpoint === 'string' ? raw.deeplxEndpoint : ''
+    deeplxEndpoint: typeof raw.deeplxEndpoint === 'string' ? raw.deeplxEndpoint : '',
+    tencentClientKey: typeof raw.tencentClientKey === 'string' ? raw.tencentClientKey : ''
   }
 }
 

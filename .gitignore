@@ -27,3 +27,4 @@ sandbox-e2e/agent-context-result.json
 
 # 个人笔记（不入库）
 使用bug.txt
+tmp/
