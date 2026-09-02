@@ -4153,3 +4153,9 @@ padding: 4px;
 .tr-toast--muted svg {
   color: var(--muted);
 }
+
+/* Optional (not yet added) translate services render muted with an add pill. */
+.translate-service-row--optional .setting-title {
+  color: var(--settings-muted);
+  font-weight: 500;
+}

@@ -9,6 +9,10 @@ export interface TranslateLanguage {
   auto?: boolean
 }
 
+/** All built-in quick-translate service ids (runtime mirror of the
+ * TranslateServiceId union in types.ts — keep in sync). */
+export const TRANSLATE_SERVICE_IDS = ['microsoft', 'iciba', 'icibaDict', 'tencent', 'yandex', 'deeplx'] as const
+
 export const TRANSLATE_LANGUAGES: TranslateLanguage[] = [
   { code: 'auto', label: 'Auto', auto: true },
   { code: 'zh', label: '中文（简体）' },

@@ -1,15 +1,12 @@
 import type { ActionItem, AppSettings, ProviderTemplate, TranslateServiceId } from './types'
 
-/** Default quick-translate service order: free built-ins first, DeepLX opt-in.
- * New services keep their default enabled state on existing installs (merge
- * fills missing ids from this list). */
+/** Services present in a fresh install's translate window. The rest of the
+ * catalog (see TRANSLATE_SERVICE_IDS) is offered as optional in settings and
+ * only participates once the user adds it. */
 export const defaultTranslateServices: Array<{ id: TranslateServiceId; enabled: boolean }> = [
   { id: 'microsoft', enabled: true },
-  { id: 'iciba', enabled: true },
   { id: 'icibaDict', enabled: true },
-  { id: 'tencent', enabled: true },
-  { id: 'yandex', enabled: true },
-  { id: 'deeplx', enabled: false }
+  { id: 'tencent', enabled: true }
 ]
 
 export const defaultActions: ActionItem[] = [

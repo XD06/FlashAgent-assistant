@@ -93,6 +93,9 @@ async function runService(
           text: r.text
         }))
       )
+    default:
+      // Stored settings may carry ids this build doesn't know (downgrade).
+      throw new Error(`Unknown translate service: ${serviceId}`)
   }
 }
 

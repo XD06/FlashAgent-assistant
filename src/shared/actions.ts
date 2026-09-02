@@ -1,4 +1,5 @@
 import { defaultProviderTemplate, defaultSettings } from './defaults'
+import { TRANSLATE_SERVICE_IDS } from './translate'
 import type {
   ActionItem,
   ActionType,
@@ -14,6 +15,7 @@ import type {
   SettingsPatch,
   ThemeMode,
   TranslateServiceConfig,
+  TranslateServiceId,
   TranslateSettings,
   TtsSettings,
   TriggerMode
@@ -300,20 +302,32 @@ function appendMissingBuiltInActions(actions: ActionItem[]): ActionItem[] {
 
 function normalizeTranslateSettings(value: unknown): TranslateSettings {
   const raw = value && typeof value === 'object' ? (value as Partial<TranslateSettings>) : {}
-  const byId = new Map(
-    Array.isArray(raw.services)
-      ? raw.services
-          .filter((item): item is TranslateServiceConfig => !!item && typeof item === 'object')
-          .map((item) => [item.id, item])
-      : []
-  )
-  // Keep the default order as the base; stored flags win for known ids, while
-  // ids the store has never seen (added by an app update) fall back to their
-  // default enabled state instead of silently starting disabled.
-  const services = defaultSettings.translate.services.map((service) => ({
-    id: service.id,
-    enabled: byId.get(service.id)?.enabled ?? service.enabled
-  }))
+  // The stored order IS the display/request order — rebuilding it in default
+  // order here silently discarded every reorder (the ↑↓ buttons appeared
+  // dead). Preserve the caller's order, keep known ids only, dedupe.
+  const stored = Array.isArray(raw.services) ? raw.services : []
+  const seen = new Set<string>()
+  const services: TranslateServiceConfig[] = []
+  for (const item of stored) {
+    if (!item || typeof item !== 'object' || typeof item.id !== 'string') continue
+    if (!(TRANSLATE_SERVICE_IDS as readonly string[]).includes(item.id) || seen.has(item.id)) continue
+    seen.add(item.id)
+    services.push({ id: item.id, enabled: item.enabled === true })
+  }
+  // 0.8.0 stored the whole six-service catalog; collapse that exact legacy
+  // ordering to the slimmer opt-in default so existing installs land on the
+  // curated three instead of a wall of cards. Any customized order (or an
+  // added optional service) skips the migration.
+  const legacyDefaultOrder = 'microsoft,iciba,icibaDict,tencent,yandex,deeplx'
+  if (services.map((service) => service.id).join(',') === legacyDefaultOrder) {
+    const enabledById = new Map(services.map((service) => [service.id, service.enabled]))
+    const migrated: TranslateServiceId[] = ['microsoft', 'icibaDict', 'tencent']
+    return {
+      services: migrated.map((id) => ({ id, enabled: enabledById.get(id) ?? true })),
+      deeplxEndpoint: typeof raw.deeplxEndpoint === 'string' ? raw.deeplxEndpoint : '',
+      tencentClientKey: typeof raw.tencentClientKey === 'string' ? raw.tencentClientKey : ''
+    }
+  }
   return {
     services,
     deeplxEndpoint: typeof raw.deeplxEndpoint === 'string' ? raw.deeplxEndpoint : '',

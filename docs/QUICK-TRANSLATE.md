@@ -48,8 +48,13 @@ Preload 暴露：`window.assistantLite.translate.*`、`tts.*`、`vocabulary.*`�
 
 ```ts
 translate: {
-  services: Array<{ id: 'microsoft' | 'iciba' | 'icibaDict' | 'deeplx', enabled: boolean }>  // 顺序即展示顺序
-  deeplxEndpoint: string   // 默认 https://ts.203065.xyz（公共实例，上游故障时 503）
+  // 「已添加」服务，顺序即请求与展示顺序；未添加的内置服务在设置「可选服务」
+  // 区列出，点「添加」后进入该列表（移除则回到可选区）。全新安装默认添加：
+  // 微软、金山词霸词典、腾讯。目录全集见 shared/translate.ts 的
+  // TRANSLATE_SERVICE_IDS（含金山翻译/Yandex/DeepLX）。
+  services: Array<{ id: 'microsoft' | 'iciba' | 'icibaDict' | 'tencent' | 'yandex' | 'deeplx', enabled: boolean }>
+  deeplxEndpoint: string        // 默认 https://ts.203065.xyz（公共实例，上游故障时 503）
+  tencentClientKey: string      // 空 = 内置共享 key；腾讯轮换 key 时在设置中热更新
 }
 tts: { endpoint: string, voice: string, speed: 0.5–2, pitch: -50–50 }
 vocabulary: { autoRecord: boolean }   // 默认 false
@@ -79,6 +84,7 @@ translateWindowWidth?: number         // 仅宽度持久化
 
 - **`pnpm dev` 不带 `--watch`**：主进程/preload 改动不会自动重建，需重启 dev（渲染层走 vite HMR 不受影响）。
 - **词典卡片可见性**：仅 `isSingleWord(input)`（无空白、≤40 字符、含字母）；输入句子时该卡隐藏（占位条也隐藏），空输入时占位条恢复显示。
+- **服务分层（已添加 vs 可选）**：`services` 数组只存「已添加」服务，运行时全集是 `TRANSLATE_SERVICE_IDS`，差集即设置页「可选服务」区。归一化（`normalizeTranslateSettings`）**必须保留数组顺序**——曾因按默认顺序重建导致排序箭头失效；未知 id 会被过滤。0.8.0 的全目录顺序（microsoft,iciba,icibaDict,tencent,yandex,deeplx）会被一次性迁移为三服务默认，自定义过顺序的设置原样保留。
 - **微软 Edge auth 端点**（`edge.microsoft.com/translate/auth`）在部分地区已 404，因此 legacy 签名是主路径；若 401 优先排查签名 URL 是否带协议头（不应带）。
 - **DeepLX 公共实例**可能整体 503（Worker 活着但上游 DeepL 挂），客户端协议无问题；自建参考 `github.com/XD06/deeplx`。
 - **TTS `pitch` 必须是字符串**（`"0"` 而非 `0`），`speed` 是数字——edge-tts 桥接协议的约定。

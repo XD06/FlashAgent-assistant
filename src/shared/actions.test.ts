@@ -9,6 +9,74 @@ import {
 } from './actions'
 import { defaultSettings } from './defaults'
 
+describe('translate settings normalization', () => {
+  it('preserves the provided service order across a merge (reorder persists)', () => {
+    const merged = mergeSettings(defaultSettings, {
+      translate: {
+        ...defaultSettings.translate,
+        services: [
+          { id: 'tencent', enabled: true },
+          { id: 'microsoft', enabled: false },
+          { id: 'icibaDict', enabled: true }
+        ]
+      }
+    })
+    expect(merged.translate.services.map((service) => service.id)).toEqual(['tencent', 'microsoft', 'icibaDict'])
+    expect(merged.translate.services.map((service) => service.enabled)).toEqual([true, false, true])
+  })
+
+  it('collapses the legacy 0.8.0 full-catalog order to the curated default', () => {
+    const legacy = [
+      { id: 'microsoft', enabled: true },
+      { id: 'iciba', enabled: false },
+      { id: 'icibaDict', enabled: true },
+      { id: 'tencent', enabled: true },
+      { id: 'yandex', enabled: true },
+      { id: 'deeplx', enabled: false }
+    ]
+    const merged = mergeSettings(defaultSettings, {
+      translate: { ...defaultSettings.translate, services: legacy }
+    })
+    expect(merged.translate.services.map((service) => service.id)).toEqual(['microsoft', 'icibaDict', 'tencent'])
+  })
+
+  it('keeps customized orders untouched by the legacy migration', () => {
+    const customized = [
+      { id: 'deeplx', enabled: true },
+      { id: 'microsoft', enabled: true },
+      { id: 'iciba', enabled: true },
+      { id: 'icibaDict', enabled: true },
+      { id: 'tencent', enabled: true },
+      { id: 'yandex', enabled: true }
+    ]
+    const merged = mergeSettings(defaultSettings, {
+      translate: { ...defaultSettings.translate, services: customized }
+    })
+    expect(merged.translate.services.map((service) => service.id)).toEqual([
+      'deeplx',
+      'microsoft',
+      'iciba',
+      'icibaDict',
+      'tencent',
+      'yandex'
+    ])
+  })
+
+  it('drops unknown service ids and dedupes', () => {
+    const merged = mergeSettings(defaultSettings, {
+      translate: {
+        ...defaultSettings.translate,
+        services: [
+          { id: 'nope' as never, enabled: true },
+          { id: 'microsoft', enabled: true },
+          { id: 'microsoft', enabled: false }
+        ]
+      }
+    })
+    expect(merged.translate.services).toEqual([{ id: 'microsoft', enabled: true }])
+  })
+})
+
 describe('selection actions', () => {
   it('interpolates selected text into prompt templates', () => {
     expect(interpolatePrompt('Explain: {{text}}', ' hello ')).toBe('Explain: hello')

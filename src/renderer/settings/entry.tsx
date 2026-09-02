@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client'
 import { useSettings } from '../useSettings'
 import { Icon } from '../icons'
 import { defaultActions } from '@shared/defaults'
+import { TRANSLATE_SERVICE_IDS } from '@shared/translate'
 import { useThemeMode } from '../useThemeMode'
 import { useAppearance } from '../useAppearance'
 import { getActionLabel, getTranslator } from '../i18n'
@@ -815,6 +816,15 @@ function SettingsApp() {
     updateTranslate({ services })
   }
 
+  const removeTranslateService = (id: TranslateServiceId) => {
+    updateTranslate({ services: settings.translate.services.filter((service) => service.id !== id) })
+  }
+
+  const addTranslateService = (id: TranslateServiceId) => {
+    if (settings.translate.services.some((service) => service.id === id)) return
+    updateTranslate({ services: [...settings.translate.services, { id, enabled: true }] })
+  }
+
   const sections: SettingsSectionMeta[] = [
     { id: 'api', label: t('sectionApi'), icon: 'link' },
     { id: 'actions', label: t('sectionActions'), icon: 'mouse-pointer' },
@@ -1213,6 +1223,14 @@ function SettingsApp() {
                       disabled={index === settings.translate.services.length - 1}>
                       <Icon name="arrow-down" size={13} />
                     </button>
+                    <button
+                      className="inline-icon-button danger"
+                      type="button"
+                      title={t('removeService')}
+                      aria-label={t('removeService')}
+                      onClick={() => removeTranslateService(service.id)}>
+                      <Icon name="trash-2" size={14} />
+                    </button>
                     <Toggle
                       checked={service.enabled}
                       label={translateServiceName(service.id)}
@@ -1244,6 +1262,30 @@ function SettingsApp() {
               />
             </SettingRow>
           </SettingSection>
+
+          {(() => {
+            const addedIds = new Set(settings.translate.services.map((service) => service.id))
+            const optional = TRANSLATE_SERVICE_IDS.filter((id) => !addedIds.has(id))
+            if (!optional.length) return null
+            return (
+              <SettingSection title={t('optionalServicesGroup')}>
+                <div className="group-hint">{t('optionalServicesHint')}</div>
+                <div className="translate-service-list">
+                  {optional.map((id) => (
+                    <div className="translate-service-row translate-service-row--optional" key={id}>
+                      <span className="setting-title">{translateServiceName(id)}</span>
+                      <div className="translate-service-row-tools">
+                        <button type="button" className="pill" onClick={() => addTranslateService(id)}>
+                          <Icon name="plus" size={13} />
+                          {t('addService')}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </SettingSection>
+            )
+          })()}
 
           <SettingSection title={t('ttsGroup')}>
             <SettingRow title={t('ttsEndpoint')} description={t('ttsEndpointDesc')}>
