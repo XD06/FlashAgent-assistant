@@ -1043,9 +1043,31 @@ function SettingsApp() {
       )
     }
 
+    const toggleAssistantEnabled = async () => {
+      if (!settings.enabled) {
+        const trusted = await window.assistantLite.selection.getAccessibility()
+        setAccessibilityTrusted(trusted)
+        if (!trusted) {
+          await window.assistantLite.selection.requestAccessibility()
+          return
+        }
+      }
+      void update({ enabled: !settings.enabled })
+    }
+
     if (activeSection === 'selection') {
       return (
         <div className="settings-stack settings-stack--selection">
+          <SettingSection title={t('selectionMasterGroup')}>
+            <SettingRow title={t('selectionEnable')} description={t('selectionEnableDesc')}>
+              <Toggle
+                checked={settings.enabled}
+                label={t('selectionEnable')}
+                onChange={() => void toggleAssistantEnabled()}
+              />
+            </SettingRow>
+          </SettingSection>
+
           <SettingSection title={t('selectionTriggerGroup')}>
             <SettingRow title={t('triggerMode')}>
               <select value={settings.triggerMode} onChange={(event) => update({ triggerMode: event.target.value as TriggerMode })}>
