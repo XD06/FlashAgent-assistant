@@ -1,28 +1,44 @@
 import { clipboard, Notification } from 'electron'
-import { PaddleOcrService } from 'ppu-paddle-ocr'
 import type { AppSettings } from '@shared/types'
 
 // Offline OCR (PP-OCRv6 via ppu-paddle-ocr, pure TypeScript + onnxruntime).
 // The engine is heavy (~200MB RSS once loaded) but used in bursts, so the
 // singleton lazy-loads on first use and destroys itself after idle time.
+// ppu-paddle-ocr is ESM-only while the main bundle is CJS, so the module is
+// loaded through a runtime dynamic import (variable specifier + @vite-ignore
+// keeps the bundler from rewriting it into require()).
 
 const IDLE_DESTROY_MS = 3 * 60_000
 
-let service: PaddleOcrService | null = null
-let initPromise: Promise<PaddleOcrService> | null = null
+type PaddleOcrModule = typeof import('ppu-paddle-ocr')
+type PaddleOcrEngine = import('ppu-paddle-ocr').PaddleOcrService
+
+let modulePromise: Promise<PaddleOcrModule> | null = null
+
+async function loadModule(): Promise<PaddleOcrModule> {
+  modulePromise ??= (async () => {
+    const moduleName = 'ppu-paddle-ocr'
+    return (await import(/* @vite-ignore */ moduleName)) as PaddleOcrModule
+  })()
+  return modulePromise
+}
+
+let service: PaddleOcrEngine | null = null
+let initPromise: Promise<PaddleOcrEngine> | null = null
 let idleTimer: NodeJS.Timeout | null = null
 
-async function createService(): Promise<PaddleOcrService> {
-  const instance = new PaddleOcrService()
-  // v6-tiny: 6.4MB total, ~200ms per screenshot, 0.98 confidence on UI text —
+async function createService(): Promise<PaddleOcrEngine> {
+  const { PaddleOcrService } = await loadModule()
+  // v6-tiny: 6.4MB total, ~200ms per screenshot, 0.95+ confidence on UI text —
   // the right accuracy/size trade-off for quick copy-text (see
   // docs/OCR.md). Models are cached under ~/.cache/ppu-paddle-ocr after the
   // first download.
+  const instance = new PaddleOcrService()
   await instance.initialize()
   return instance
 }
 
-async function getOcr(): Promise<PaddleOcrService> {
+async function getOcr(): Promise<PaddleOcrEngine> {
   if (service) return service
   initPromise ??= createService()
     .then((instance) => {
