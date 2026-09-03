@@ -109,7 +109,11 @@ const api = {
   },
   tts: {
     /** Synthesize speech for the given text; resolves to an audio/mpeg data URL. */
-    synthesize: (text: string): Promise<string> => ipcRenderer.invoke(IPC.TtsSynthesize, text)
+    synthesize: (text: string): Promise<string> => ipcRenderer.invoke(IPC.TtsSynthesize, text),
+    /** Unified speech playback (main-managed hidden player) — used by the
+     * selection toolbar and type-in speak actions. */
+    play: (text: string): Promise<boolean> => ipcRenderer.invoke(IPC.TtsPlay, text),
+    stopPlayback: (): Promise<void> => ipcRenderer.invoke(IPC.TtsStopPlayback)
   },
   vocabulary: {
     list: (): Promise<VocabEntry[]> => ipcRenderer.invoke(IPC.VocabList),
@@ -137,10 +141,7 @@ const api = {
     ): Promise<{ ok: boolean; latencyMs?: number; via: 'manual' | 'system' | 'direct'; error?: string }> =>
       ipcRenderer.invoke(IPC.ProxyTest, proxyUrl)
   },
-  speech: {
-    speak: (text: string): Promise<boolean> => ipcRenderer.invoke(IPC.SpeechSpeak, text),
-    stop: (): Promise<void> => ipcRenderer.invoke(IPC.SpeechStop)
-  },
+
   windowControls: {
     close: (): Promise<void> => ipcRenderer.invoke(IPC.WindowClose),
     minimize: (): Promise<void> => ipcRenderer.invoke(IPC.WindowMinimize),

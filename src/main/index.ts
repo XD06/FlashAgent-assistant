@@ -24,8 +24,8 @@ import { isMcpToolName } from './mcp/mcpUtil'
 import { stripDocJunk, validateRecapDoc } from '@shared/recapDoc'
 import { ScreenshotService } from './ScreenshotService'
 import { SelectionService } from './SelectionService'
-import { SpeechService } from './SpeechService'
 import { registerTranslateIpc } from './translate'
+import { playTts, stopTtsPlayback, destroyTtsPlayer } from './ttsPlayer'
 import { initVocabulary, registerVocabularyIpc } from './vocabulary'
 import { destroyOcr } from './ocr'
 import { getSettings, onSettingsChanged, updateSettings } from './settingsStore'
@@ -107,7 +107,6 @@ const screenshotService = new ScreenshotService(
     })
   }
 )
-const speechService = new SpeechService()
 
 function getTrayIcon(): Electron.NativeImage {
   return trayIcon.resize({ width: 18, height: 18 })
@@ -346,7 +345,7 @@ function refreshTrayMenu(): void {
         }
       },
       { label: mainText('settings', settings.language), click: () => createSettingsWindow() },
-      { label: mainText('stopSpeech', settings.language), click: () => speechService.stop() },
+      { label: mainText('stopSpeech', settings.language), click: () => void stopTtsPlayback() },
       { type: 'separator' },
       {
         label: mainText('quit', settings.language),
@@ -584,8 +583,8 @@ function registerIpc(): void {
   ipcMain.handle(IPC.ExtMcpReconnect, (_event, id: string) => {
     if (typeof id === 'string') mcpManager.reconnect(getSettings().mcpServers, id)
   })
-  ipcMain.handle(IPC.SpeechSpeak, (_event, text: string) => speechService.speak(text))
-  ipcMain.handle(IPC.SpeechStop, () => speechService.stop())
+  ipcMain.handle(IPC.TtsPlay, (_event, text: string) => playTts(typeof text === 'string' ? text : '', getSettings, providerFetch))
+  ipcMain.handle(IPC.TtsStopPlayback, () => stopTtsPlayback())
 
   ipcMain.handle(IPC.AiStream, async (event, request: AiStreamRequest) => {
     const controller = new AbortController()
@@ -1148,7 +1147,7 @@ if (!app.requestSingleInstanceLock()) {
     globalShortcut.unregisterAll()
     selectionService.dispose()
     screenshotService.dispose()
-    speechService.dispose()
+    destroyTtsPlayer()
     void destroyOcr()
     mcpManager.closeAll()
   })

@@ -30,6 +30,8 @@
 - pnpm 10 默认拦截构建脚本：`pnpm-workspace.yaml` 的 `allowBuilds.onnxruntime-node: true` 必须保留，否则 `initialize()` 报找不到原生绑定
 - stderr 偶见 `The given version [29] is not supported` 告警——onnxruntime 版本协商噪音，不影响结果
 - 打包必须 asarUnpack 原生模块（electron-builder.yml 已配置 onnxruntime-node / ppu-ocv / @napi-rs）；分发体积约 +45MB（单平台二进制 + tiny 模型）
+- **经典坑：主进程 CJS 引入 ESM-only 包**——`ppu-paddle-ocr` 只有 ESM 产物，主进程 bundle 是 CJS，静态 import 会在启动时直接 `ERR_REQUIRE_ESM` 崩溃。解法：运行时动态导入，且用「变量模块名 + /* @vite-ignore */」防止 bundler 改写回 require（见 src/main/ocr/index.ts 的 loadModule），类型用 typeof import('ppu-paddle-ocr') 的类型-only 引入。
+- **经典坑：pnpm v10 默认拦截依赖构建脚本**——onnxruntime-node 的 postinstall 被拦截会导致原生绑定缺失、initialize() 直接失败；必须在 pnpm-workspace.yaml 的 allowBuilds 里放行（本项目已配置）。
 
 ## 扩展
 

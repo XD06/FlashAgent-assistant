@@ -581,7 +581,7 @@ function InputResult({ payload, settings, t, pinned, togglePin }: ResultProps) {
       return
     }
     if (payload.action.type === 'speak') {
-      void window.assistantLite.speech.speak(value)
+      void window.assistantLite.tts.play(value)
       void window.assistantLite.windowControls.close()
       return
     }

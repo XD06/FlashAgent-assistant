@@ -53,8 +53,8 @@ export const IPC = {
 
   ProxyTest: 'proxy:test',
 
-  SpeechSpeak: 'speech:speak',
-  SpeechStop: 'speech:stop',
+  TtsPlay: 'tts:play',
+  TtsStopPlayback: 'tts:stop-playback',
 
   WindowClose: 'window:close',
   WindowMinimize: 'window:minimize',

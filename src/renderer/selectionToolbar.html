@@ -145,7 +145,7 @@
               if (url) window.assistantLite.app.openExternal(url);
               window.assistantLite.selection.hideToolbar();
             } else if (action.type === 'speak') {
-              window.assistantLite.speech.speak(text);
+              window.assistantLite.tts.play(text);
               window.assistantLite.selection.hideToolbar();
             } else {
               window.assistantLite.selection.processAction({
