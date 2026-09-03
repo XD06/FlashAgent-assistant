@@ -13,6 +13,10 @@ extraResources:
     to: build/icon.png
 asarUnpack:
   - node_modules/selection-hook/**
+  # OCR engine native binaries (onnxruntime inference + canvas/image ops)
+  - node_modules/onnxruntime-node/**
+  - node_modules/ppu-ocv/**
+  - node_modules/@napi-rs/**
 electronLanguages:
   - zh-CN
   - en-US

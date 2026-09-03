@@ -163,7 +163,7 @@ const api = {
       height: number
       viewportWidth: number
       viewportHeight: number
-      action: 'explain' | 'save' | 'copy' | 'pin'
+      action: 'explain' | 'save' | 'copy' | 'pin' | 'ocr'
       imageDataUrl?: string
     }): Promise<void> => ipcRenderer.invoke(IPC.ScreenshotOverlayConfirm, payload),
     overlayCancel: (): Promise<void> => ipcRenderer.invoke(IPC.ScreenshotOverlayCancel),

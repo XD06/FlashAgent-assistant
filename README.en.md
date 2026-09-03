@@ -130,6 +130,7 @@ On the first launch after the project rename, the app copies the legacy `selecti
 
 - [CHANGELOG.md](./CHANGELOG.md): release history.
 - [docs/QUICK-TRANSLATE.md](./docs/QUICK-TRANSLATE.md): architecture notes for quick translate, TTS, and the vocabulary book.
+- [docs/OCR.md](./docs/OCR.md): selection and architecture notes for offline screenshot OCR.
 - [CONTRIBUTING.md](./CONTRIBUTING.md): development and contribution guidance.
 - [SECURITY.md](./SECURITY.md): private security reporting guidance.
 - [docs/ARCHIVE.md](./docs/ARCHIVE.md): historical design and implementation records.

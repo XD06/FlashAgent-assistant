@@ -2,4 +2,5 @@ nodeLinker: hoisted
 allowBuilds:
   electron: true
   esbuild: true
+  onnxruntime-node: true
   selection-hook: true

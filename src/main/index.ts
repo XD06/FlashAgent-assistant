@@ -27,6 +27,7 @@ import { SelectionService } from './SelectionService'
 import { SpeechService } from './SpeechService'
 import { registerTranslateIpc } from './translate'
 import { initVocabulary, registerVocabularyIpc } from './vocabulary'
+import { destroyOcr } from './ocr'
 import { getSettings, onSettingsChanged, updateSettings } from './settingsStore'
 import { isSupportedPlatform, isWin } from './platform'
 
@@ -1144,6 +1145,7 @@ if (!app.requestSingleInstanceLock()) {
     selectionService.dispose()
     screenshotService.dispose()
     speechService.dispose()
+    void destroyOcr()
     mcpManager.closeAll()
   })
 }

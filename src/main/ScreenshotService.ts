@@ -14,6 +14,8 @@ import { join } from 'node:path'
 import { IPC } from '@shared/ipc'
 import type { AppSettings } from '@shared/types'
 import { isMac } from './platform'
+import { recognizeAndCopy } from './ocr'
+import { applyPngDpi } from './pngDpi'
 
 export interface OverlayInitPayload {
   imageDataUrl: string
@@ -27,7 +29,7 @@ export interface OverlayInitPayload {
   imageHeight: number
 }
 
-export type OverlayAction = 'explain' | 'save' | 'copy' | 'pin'
+export type OverlayAction = 'explain' | 'save' | 'copy' | 'pin' | 'ocr'
 
 export interface OverlayConfirmPayload {
   displayId: number
@@ -60,6 +62,9 @@ interface PinState {
   scale: number
   minScale: number
   maxScale: number
+  /** DPI of the display the pin was created on — tags saved PNGs so viewers
+   * render them at the original logical size instead of upscaling. */
+  dpi: number
 }
 
 export class ScreenshotService {
@@ -268,7 +273,7 @@ export class ScreenshotService {
 
     switch (payload.action) {
       case 'save':
-        await this.saveImage(dataUrl)
+        await this.saveImage(dataUrl, capture.display.scaleFactor * 96)
         return
       case 'copy':
         this.copyImage(dataUrl)
@@ -276,13 +281,18 @@ export class ScreenshotService {
       case 'pin':
         this.pinImage(dataUrl)
         return
+      case 'ocr':
+        // Offline OCR runs in-process; the engine lazy-loads on first use and
+        // recycles after idle (see src/main/ocr).
+        void recognizeAndCopy(dataUrl, this.getSettings())
+        return
       case 'explain':
       default:
         this.onExplainImage(dataUrl)
     }
   }
 
-  private async saveImage(dataUrl: string): Promise<boolean> {
+  private async saveImage(dataUrl: string, dpi = 96): Promise<boolean> {
     const image = nativeImage.createFromDataURL(dataUrl)
     if (image.isEmpty()) {
       console.warn('[screenshot] saveImage: empty image')
@@ -390,7 +400,8 @@ export class ScreenshotService {
       aspectRatio: aspect,
       scale: initScale,
       minScale,
-      maxScale
+      maxScale,
+      dpi: sf * 96
     })
     pin.on('closed', () => this.pinWindows.delete(pin))
     this.loadRenderer(pin, 'screenshotPin.html')
@@ -448,7 +459,7 @@ export class ScreenshotService {
       },
       {
         label: labels.save,
-        click: () => void this.saveImage(state.dataUrl)
+        click: () => void this.saveImage(state.dataUrl, state.dpi)
       },
       { type: 'separator' },
       {

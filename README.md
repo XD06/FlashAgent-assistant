@@ -130,6 +130,7 @@ pnpm dist:win
 
 - [CHANGELOG.md](./CHANGELOG.md)：版本变更记录。
 - [docs/QUICK-TRANSLATE.md](./docs/QUICK-TRANSLATE.md)：快速翻译、语音合成与生词本的架构说明。
+- [docs/OCR.md](./docs/OCR.md)：截图离线 OCR 的选型与架构说明。
 - [CONTRIBUTING.md](./CONTRIBUTING.md)：开发与贡献约定。
 - [SECURITY.md](./SECURITY.md)：安全问题披露方式。
 - [docs/ARCHIVE.md](./docs/ARCHIVE.md)：历史方案与实施记录索引。

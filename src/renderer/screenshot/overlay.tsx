@@ -26,7 +26,7 @@ interface Point {
   y: number
 }
 
-type OverlayAction = 'explain' | 'save' | 'copy' | 'pin'
+type OverlayAction = 'explain' | 'save' | 'copy' | 'pin' | 'ocr'
 type Tool = 'select' | 'pen' | 'arrow'
 type HandleDir = 'n' | 's' | 'e' | 'w' | 'nw' | 'ne' | 'sw' | 'se'
 
@@ -201,6 +201,7 @@ function OverlayApp(): React.JSX.Element | null {
     pin: isZh ? '钉住' : 'Pin',
     save: isZh ? '保存' : 'Save',
     copy: isZh ? '复制' : 'Copy',
+    ocr: isZh ? '识别文字' : 'Copy text',
     explain: isZh ? 'AI 识图' : 'AI Explain',
     pen: isZh ? '画笔' : 'Pen',
     arrow: isZh ? '箭头' : 'Arrow',
@@ -641,6 +642,12 @@ function OverlayApp(): React.JSX.Element | null {
             onClick={() => void confirm(committed, 'copy')}
             title={labels.copy}>
             <Icon name="copy" />
+          </button>
+          <button
+            className="toolbar-button"
+            onClick={() => void confirm(committed, 'ocr')}
+            title={labels.ocr}>
+            <Icon name="scan-text" />
           </button>
           <button
             className="toolbar-button toolbar-button--primary"
