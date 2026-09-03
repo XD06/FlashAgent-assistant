@@ -647,8 +647,99 @@ function AgentToolGroup({
   )
 }
 
+/** Memoized body of an assistant turn (search status, thinking, text and
+ * tool blocks). The streaming setChat updates are immutable and only replace
+ * the LAST turn's object identity, so every settled turn bails out here
+ * instead of re-walking its whole block tree on each 50ms flush. The props
+ * this depends on are render-stable: `t` is memoized in ChatMode and
+ * `onRevert` is a useCallback. */
+const AssistantTurnBody = React.memo(function AssistantTurnBody({
+  turn,
+  isZh,
+  t,
+  onRevert
+}: {
+  turn: ChatTurn
+  isZh: boolean
+  t: (key: string) => string
+  onRevert: (callId: string) => void
+}) {
+  return (
+    <>
+      {turn.searchQuery && (
+        <div className={`search-tool-status${turn.searchQuery.startsWith('⚠️') ? ' search-tool-status--error' : ''}`}>
+          <Icon name="search" size={13} />
+          <span>{turn.searchQuery.startsWith('⚠️')
+            ? turn.searchQuery
+            : (isZh ? `联网搜索：${turn.searchQuery}` : `Web search: ${turn.searchQuery}`)}</span>
+        </div>
+      )}
+      {turn.reasoning && !turn.blocks?.some((block) => block.kind === 'thinking') && (
+        <ThinkingBlock text={turn.reasoning} pending={turn.reasoningPending ?? false} t={t} />
+      )}
+      {(turn.blocks?.length
+        ? turn.blocks
+        : turn.text
+          ? [{ kind: 'text' as const, text: turn.text }]
+          : []
+      ).map((block, blockIndex, blockList) => {
+        if (block.kind === 'text') {
+          // Display path also drops model-imitated tool-record blocks:
+          // the real execution blocks are rendered right here, so a
+          // hand-written ledger is pure noise (and often confusing).
+          const stripped = block.text ? stripForgedRecap(block.text) : ''
+          return stripped ? (
+            <MarkdownView key={blockIndex} pending={!!turn.pending}>
+              {stripped}
+            </MarkdownView>
+          ) : null
+        }
+        if (block.kind === 'thinking') {
+          return (
+            <ThinkingBlock
+              key={blockIndex}
+              text={block.text}
+              pending={!!block.pending && !!turn.pending}
+              t={t}
+            />
+          )
+        }
+        if (block.kind === 'injected') {
+          // Mid-task user note, shown right where the tool loop
+          // picked it up — same bubble style as a user message.
+          return (
+            <div key={blockIndex} className="chat-injected-note">
+              <span className="user-msg-injected-tag">
+                <Icon name="corner-down-right" size={11} />
+                {isZh ? '任务中追加' : 'Added mid-task'}
+              </span>
+              <div className="chat-injected-note__text">{block.text}</div>
+            </div>
+          )
+        }
+        return (
+          <AgentToolGroup
+            key={blockIndex}
+            events={block.events}
+            live={!!turn.pending}
+            current={!!turn.pending && blockIndex === blockList.length - 1}
+            isZh={isZh}
+            onRevert={onRevert}
+          />
+        )
+      })}
+      {!turn.text && !turn.blocks?.length && turn.pending ? (
+        <span className="thinking-indicator">{t('preparing')}</span>
+      ) : null}
+      {turn.error && <div className="error">{turn.error}</div>}
+    </>
+  )
+})
+
 export function ChatMode({ settings }: { settings: AppSettings }) {
-  const t = getTranslator(settings.language)
+  // Referentially stable across renders — AssistantTurnBody is memoized and
+  // its memo would be defeated by a fresh translator every render.
+  const t = React.useMemo(() => getTranslator(settings.language), [settings.language])
   const isZh = settings.language === 'zh-CN'
 
   // ---- Topics (persisted conversation history) ----
@@ -2130,72 +2221,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
             const showMessageActions = isLastAssistant && !turn.pending && !loading
             return (
               <div key={turn.id ?? index} className="result markdown-body">
-                {turn.searchQuery && (
-                  <div className={`search-tool-status${turn.searchQuery.startsWith('⚠️') ? ' search-tool-status--error' : ''}`}>
-                    <Icon name="search" size={13} />
-                    <span>{turn.searchQuery.startsWith('⚠️')
-                      ? turn.searchQuery
-                      : (isZh ? `联网搜索：${turn.searchQuery}` : `Web search: ${turn.searchQuery}`)}</span>
-                  </div>
-                )}
-                {turn.reasoning && !turn.blocks?.some((block) => block.kind === 'thinking') && (
-                  <ThinkingBlock text={turn.reasoning} pending={turn.reasoningPending ?? false} t={t} />
-                )}
-                {(turn.blocks?.length
-                  ? turn.blocks
-                  : turn.text
-                    ? [{ kind: 'text' as const, text: turn.text }]
-                    : []
-                ).map((block, blockIndex, blockList) => {
-                  if (block.kind === 'text') {
-                    // Display path also drops model-imitated tool-record blocks:
-                    // the real execution blocks are rendered right here, so a
-                    // hand-written ledger is pure noise (and often confusing).
-                    const stripped = block.text ? stripForgedRecap(block.text) : ''
-                    return stripped ? (
-                      <MarkdownView key={blockIndex} pending={!!turn.pending}>
-                        {stripped}
-                      </MarkdownView>
-                    ) : null
-                  }
-                  if (block.kind === 'thinking') {
-                    return (
-                      <ThinkingBlock
-                        key={blockIndex}
-                        text={block.text}
-                        pending={!!block.pending && !!turn.pending}
-                        t={t}
-                      />
-                    )
-                  }
-                  if (block.kind === 'injected') {
-                    // Mid-task user note, shown right where the tool loop
-                    // picked it up — same bubble style as a user message.
-                    return (
-                      <div key={blockIndex} className="chat-injected-note">
-                        <span className="user-msg-injected-tag">
-                          <Icon name="corner-down-right" size={11} />
-                          {isZh ? '任务中追加' : 'Added mid-task'}
-                        </span>
-                        <div className="chat-injected-note__text">{block.text}</div>
-                      </div>
-                    )
-                  }
-                  return (
-                    <AgentToolGroup
-                      key={blockIndex}
-                      events={block.events}
-                      live={!!turn.pending}
-                      current={!!turn.pending && blockIndex === blockList.length - 1}
-                      isZh={isZh}
-                      onRevert={revertTool}
-                    />
-                  )
-                })}
-                {!turn.text && !turn.blocks?.length && turn.pending ? (
-                  <span className="thinking-indicator">{t('preparing')}</span>
-                ) : null}
-                {turn.error && <div className="error">{turn.error}</div>}
+                <AssistantTurnBody turn={turn} isZh={isZh} t={t} onRevert={revertTool} />
                 {/* Message actions sit under the last assistant turn so they
                     read as part of the reply, not a floating middle bar. */}
                 {showMessageActions && (
