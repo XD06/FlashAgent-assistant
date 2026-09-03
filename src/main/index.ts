@@ -35,6 +35,10 @@ const preloadPath = join(__dirname, '../preload/index.cjs')
 const rendererDir = join(__dirname, '../renderer')
 
 if (isWin) app.commandLine.appendSwitch('wm-window-animations-disabled')
+// Windows native occlusion tracking misreports transparent always-on-top
+// windows (the screenshot overlay) as occluded, which downgrades their
+// raster to low-res tiles — the frozen frame then renders blurry.
+app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion')
 // Cap the V8 old space to keep memory bounded, but leave enough headroom for
 // large screenshot data URLs (a 4K capture is tens of MB as a base64 string).
 app.commandLine.appendSwitch('js-flags', '--max-old-space-size=512')

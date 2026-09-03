@@ -1673,6 +1673,9 @@ html[data-theme='dark'] .footer button:last-child {
      screen appear to "pop" larger than the underlying desktop. */
   height: 100%;
   object-fit: fill;
+  /* The overlay image is a 1:1 capture of this very display — disable any
+     resampling so the frozen frame stays pixel-crisp on scaled displays. */
+  image-rendering: pixelated;
   pointer-events: none;
 }
 .screenshot-overlay__mask {

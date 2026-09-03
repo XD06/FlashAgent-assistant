@@ -2,7 +2,6 @@ import {
   app,
   BrowserWindow,
   clipboard,
-  desktopCapturer,
   dialog,
   ipcMain,
   Menu,
@@ -14,6 +13,7 @@ import { join } from 'node:path'
 import { IPC } from '@shared/ipc'
 import type { AppSettings } from '@shared/types'
 import { isMac } from './platform'
+import { captureDisplay } from './capture'
 import { recognizeAndCopy } from './ocr'
 import { applyPngDpi } from './pngDpi'
 
@@ -142,26 +142,15 @@ export class ScreenshotService {
     try {
       const cursor = screen.getCursorScreenPoint()
       const display = screen.getDisplayNearestPoint(cursor)
-      const scale = display.scaleFactor || 1
-      const { width, height } = display.size
-
-      const sources = await desktopCapturer.getSources({
-        types: ['screen'],
-        thumbnailSize: {
-          width: Math.round(width * scale),
-          height: Math.round(height * scale)
-        }
-      })
-      const source =
-        sources.find((item) => item.display_id === String(display.id)) ?? sources[0]
-      if (!source || source.thumbnail.isEmpty()) {
-        throw new Error('No screen source available')
-      }
+      // Native-resolution frame (GDI helper / screencapture); the
+      // desktopCapturer thumbnail path can return an upscaled lower-res
+      // frame, which read as a blurry overlay during region selection.
+      const image = await captureDisplay(display)
 
       this.currentCapture = {
         display,
-        image: source.thumbnail,
-        dataUrl: source.thumbnail.toDataURL()
+        image,
+        dataUrl: image.toDataURL()
       }
       this.openOverlay(display)
     } catch (error) {
@@ -181,8 +170,12 @@ export class ScreenshotService {
       width,
       height,
       frame: false,
-      transparent: true,
-      backgroundColor: '#00000000',
+      // Windows: transparent windows rasterize at 1x and get upscaled on
+      // scaled displays (~1.5x blur on the frozen frame). The overlay shows a
+      // frozen capture anyway, so it is opaque on Windows. macOS transparent
+      // panels render correctly and keep transparency.
+      transparent: isMac,
+      backgroundColor: isMac ? '#00000000' : '#000000',
       hasShadow: false,
       alwaysOnTop: true,
       skipTaskbar: true,
@@ -192,14 +185,15 @@ export class ScreenshotService {
       maximizable: false,
       fullscreenable: false,
       autoHideMenuBar: true,
-      enableLargerThanScreen: true,
       ...(isMac ? { type: 'panel' as const, hiddenInMissionControl: true, acceptFirstMouse: true } : {}),
       webPreferences: {
         preload: this.preloadPath,
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
-        backgroundThrottling: true
+        // The overlay must keep rastering at full resolution while visible:
+        // throttling low-res tiles are what make the frozen frame look blurry.
+        backgroundThrottling: false
       }
     })
     this.overlayWindow.setAlwaysOnTop(true, 'screen-saver')
@@ -213,17 +207,6 @@ export class ScreenshotService {
     this.loadRenderer(overlay, 'screenshotOverlay.html')
     overlay.once('ready-to-show', () => {
       overlay.show()
-      // On Windows the taskbar will otherwise float above a normal
-      // top-most window. Re-asserting bounds + simple fullscreen
-      // forces the overlay to truly cover the whole display.
-      if (!isMac) {
-        overlay.setBounds(display.bounds)
-        try {
-          overlay.setSimpleFullScreen(true)
-        } catch {
-          // ignore — older Electron may not support it
-        }
-      }
       overlay.focus()
     })
   }
