@@ -1,6 +1,28 @@
 # Changelog
 
-## Unreleased
+## 0.8.2 - 2026-09-04
+
+### Added
+
+- OCR 双引擎：默认使用 Windows 系统引擎（Windows.Media.Ocr，零下载、约 100-300ms；C# helper 由本机 .NET Framework csc.exe 现场编译，与截屏辅助程序同一零依赖模式；PNG 走 stdin 不落盘；小图自动 2x 双三次放大提升小字识别，并清理 WinRT 在中日韩字符间插入的空格）。实测：英文/数字基本全对，中文 gist 级可读（见 ocr-winrt-test-result.md）。
+- 原 PP-OCRv6 引擎转为「高精度 OCR」可选组件：不再随安装包分发，在 设置 → 功能模型 中按需下载（约 130MB；npm registry 拉取 + 逐包 sha512 校验 + npmmirror 兜底，走应用代理链；含下载进度/取消/删除管理）。模型缓存（~/.cache/ppu-paddle-ocr）与引擎包分离，更新应用无需重新下载模型。未下载时使用高精度引擎会得到明确指引 toast。
+- 设置 → 功能模型 显示本机系统 OCR 可用语言列表（如 zh-Hans-CN / en-US），便于发现系统缺少中文识别器的情况。
+
+### Changed
+
+- 安装体积大幅缩减：便携版 195.8MB → 约 70MB，win-unpacked 591MB → 252MB，app.asar 文件数 4,277 → 3,566；开发机 node_modules 1.1GB → 783MB。
+- react / react-dom / marked 移至 devDependencies（仅渲染器使用、Vite 已打包，不再被 electron-builder 拷入 app.asar）；删除与 CI（pnpm --frozen-lockfile）不一致的多余 package-lock.json。
+- 高精度 OCR 引擎空闲自动回收从 3 分钟缩短到 90 秒。
+- docs/OCR.md 更新为双引擎架构说明；新增 docs/NEW-FEATURE-PAGE-GUIDE.md（新功能页面接入的性能守则）与 docs/PERF-EXECUTION-PLAN-2026-09-03.md（四份独立性能审查的核查整合与执行结果）。
+
+### Fixed
+
+- 修复 cleanupCaptureTemp 从未被调用导致整屏截图 last-capture.png 永久残留在用户数据目录的问题（磁盘占用与隐私残留）；现在截屏像素读入内存后立即删除临时文件，应用退出时兜底再清一次。
+- 截图遮罩初始化完成后立即释放主进程侧的全分辨率 dataUrl（多 MB 字符串），保留 image 供无标注裁剪路径使用，降低截图会话内存峰值。
+- 设置窗口关闭转隐藏后闲置 60 秒自动销毁渲染进程（保留秒开体验；托盘点击/二次启动自动重建），不再常驻几十 MB 内存。
+- 长对话流式回复不再每个 50ms flush 全量重渲染整个转录：助手消息体 React.memo 化（翻译函数引用稳定化），历史消息在流式期间跳过子树重渲染。
+
+## 0.8.1 - 2026-09-03
 
 ### Added
 
