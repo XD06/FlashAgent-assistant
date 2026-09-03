@@ -109,6 +109,7 @@ export const defaultSettings: AppSettings = {
   compressModel: '',
   contextWindowTokens: 128_000,
   visionModel: '',
+  ocrEngine: 'system',
   agentFullAccess: false,
   commandShell: 'auto',
   shortcuts: {

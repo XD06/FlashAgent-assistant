@@ -14,6 +14,7 @@ import type {
   AppLanguage,
   AppSettings,
   FilterMode,
+  OcrEngineId,
   ProviderTemplate,
   ReasoningMode,
   ShortcutSettings,
@@ -24,6 +25,9 @@ import type {
 } from '@shared/types'
 
 type SettingsSectionId = 'api' | 'actions' | 'selection' | 'translate' | 'vocabulary' | 'window'
+
+// The system OCR engine wraps Windows.Media.Ocr; it cannot exist elsewhere.
+const isWindows = navigator.platform.toLowerCase().includes('win')
 
 type SettingsSectionMeta = {
   id: SettingsSectionId
@@ -1003,6 +1007,17 @@ function SettingsApp() {
                 placeholder="gpt-4o"
                 onChange={(event) => update({ visionModel: event.target.value.trim() })}
               />
+            </SettingRow>
+            <SettingRow title={t('ocrEngine')} description={t('ocrEngineDesc')}>
+              <select
+                value={settings.ocrEngine}
+                onChange={(event) => update({ ocrEngine: event.target.value as OcrEngineId })}
+              >
+                <option value="system" disabled={!isWindows}>
+                  {t('ocrEngineSystem')}
+                </option>
+                <option value="paddle">{t('ocrEnginePaddle')}</option>
+              </select>
             </SettingRow>
             <SettingRow title={t('compressModel')} description={t('compressModelDesc')}>
               <input

@@ -6,6 +6,7 @@ import type {
   AppLanguage,
   AppSettings,
   CommandShell,
+  OcrEngineId,
   FilterMode,
   McpServerConfig,
   ProviderApiType,
@@ -113,6 +114,7 @@ export function mergeSettings(current: AppSettings, patch: SettingsPatch): AppSe
     triggerMode: normalizeTriggerMode(rest.triggerMode ?? current.triggerMode),
     filterMode: normalizeFilterMode(rest.filterMode ?? current.filterMode),
     commandShell: normalizeCommandShell(rest.commandShell ?? current.commandShell),
+    ocrEngine: normalizeOcrEngine(rest.ocrEngine ?? current.ocrEngine),
     filterList: normalizeStringArray(rest.filterList ?? current.filterList),
     mcpServers: normalizeMcpServers(rest.mcpServers ?? current.mcpServers),
     disabledSkills: normalizeStringArray(rest.disabledSkills ?? current.disabledSkills),
@@ -165,6 +167,10 @@ function normalizeFilterMode(mode: unknown): FilterMode {
 
 function normalizeCommandShell(shell: unknown): CommandShell {
   return shell === 'gitbash' || shell === 'pwsh' || shell === 'powershell' || shell === 'cmd' ? shell : 'auto'
+}
+
+function normalizeOcrEngine(engine: unknown): OcrEngineId {
+  return engine === 'paddle' ? 'paddle' : 'system'
 }
 
 function normalizeStringArray(value: unknown): string[] {

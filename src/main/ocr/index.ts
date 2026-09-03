@@ -1,105 +1,47 @@
 import { clipboard } from 'electron'
 import type { AppSettings } from '@shared/types'
 import { showResultToast } from '../toast'
+import { isWin } from '../platform'
+import { recognizeWithSystem } from './winrt'
+import { destroyPaddleOcr, recognizeWithPaddle } from './paddle'
 
-// Offline OCR (PP-OCRv6 via ppu-paddle-ocr, pure TypeScript + onnxruntime).
-// The engine is heavy (~200MB RSS once loaded) but used in bursts, so the
-// singleton lazy-loads on first use and destroys itself after idle time.
-// ppu-paddle-ocr is ESM-only while the main bundle is CJS, so the module is
-// loaded through a runtime dynamic import (variable specifier + @vite-ignore
-// keeps the bundler from rewriting it into require()).
-
-const IDLE_DESTROY_MS = 3 * 60_000
-
-type PaddleOcrModule = typeof import('ppu-paddle-ocr')
-type PaddleOcrEngine = import('ppu-paddle-ocr').PaddleOcrService
-
-let modulePromise: Promise<PaddleOcrModule> | null = null
-
-async function loadModule(): Promise<PaddleOcrModule> {
-  modulePromise ??= (async () => {
-    const moduleName = 'ppu-paddle-ocr'
-    return (await import(/* @vite-ignore */ moduleName)) as PaddleOcrModule
-  })()
-  return modulePromise
-}
-
-let service: PaddleOcrEngine | null = null
-let initPromise: Promise<PaddleOcrEngine> | null = null
-let idleTimer: NodeJS.Timeout | null = null
-
-async function createService(): Promise<PaddleOcrEngine> {
-  const { PaddleOcrService } = await loadModule()
-  // v6-tiny: 6.4MB total, ~200ms per screenshot, 0.95+ confidence on UI text —
-  // the right accuracy/size trade-off for quick copy-text (see
-  // docs/OCR.md). Models are cached under ~/.cache/ppu-paddle-ocr after the
-  // first download.
-  const instance = new PaddleOcrService()
-  await instance.initialize()
-  return instance
-}
-
-async function getOcr(): Promise<PaddleOcrEngine> {
-  if (service) return service
-  initPromise ??= createService()
-    .then((instance) => {
-      service = instance
-      return instance
-    })
-    .catch((error) => {
-      initPromise = null
-      throw error
-    })
-  return initPromise
-}
-
-function scheduleIdleDestroy(): void {
-  if (idleTimer) clearTimeout(idleTimer)
-  idleTimer = setTimeout(() => {
-    idleTimer = null
-    void destroyOcr()
-  }, IDLE_DESTROY_MS)
-}
-
-export async function destroyOcr(): Promise<void> {
-  if (idleTimer) {
-    clearTimeout(idleTimer)
-    idleTimer = null
-  }
-  const instance = service
-  service = null
-  initPromise = null
-  if (instance) {
-    try {
-      await instance.destroy()
-    } catch {
-      // Engine already gone — nothing to clean up.
-    }
-  }
-}
+// OCR entry point for the screenshot "copy text" action. Two engines:
+//  - 'system': Windows.Media.Ocr via the on-demand compiled helper — zero
+//    download, fastest, gist-level accuracy (see ocr-winrt-test-result.md).
+//  - 'paddle': offline PP-OCRv6 via ppu-paddle-ocr — high accuracy, heavy
+//    runtime, kept as the opt-in engine and on non-Windows platforms.
 
 export interface OcrResult {
   text: string
-  confidence: number
+  /** Engine confidence in [0,1]; null when the engine does not report one. */
+  confidence: number | null
   elapsedMs: number
+  engine: 'system' | 'paddle'
+}
+
+function resolveEngine(settings: AppSettings): 'system' | 'paddle' {
+  if (settings.ocrEngine === 'paddle') return 'paddle'
+  // The system engine is Windows-only; other platforms keep the paddle engine.
+  return isWin ? 'system' : 'paddle'
 }
 
 /** Recognize a PNG data URL and return the flattened text. */
-export async function recognizeDataUrl(dataUrl: string): Promise<OcrResult> {
-  const started = Date.now()
+export async function recognizeDataUrl(dataUrl: string, settings: AppSettings): Promise<OcrResult> {
   const base64 = dataUrl.slice(dataUrl.indexOf(',') + 1)
   const png = Buffer.from(base64, 'base64')
-  const arrayBuffer = png.buffer.slice(png.byteOffset, png.byteOffset + png.byteLength)
 
-  const ocr = await getOcr()
-  const result = await ocr.recognize(arrayBuffer, { flatten: true })
-  scheduleIdleDestroy()
-
-  return {
-    text: (result.text ?? '').trim(),
-    confidence: typeof result.confidence === 'number' ? result.confidence : 0,
-    elapsedMs: Date.now() - started
+  if (resolveEngine(settings) === 'system') {
+    const { text, elapsedMs } = await recognizeWithSystem(png, settings.language)
+    return { text, confidence: null, elapsedMs, engine: 'system' }
   }
+  const { text, confidence, elapsedMs } = await recognizeWithPaddle(png)
+  return { text, confidence, elapsedMs, engine: 'paddle' }
+}
+
+export async function destroyOcr(): Promise<void> {
+  // The system helper is a short-lived process — only the paddle engine holds
+  // resident state worth releasing.
+  await destroyPaddleOcr()
 }
 
 /** Recognize the image and copy the text to the clipboard, confirming via a
@@ -107,27 +49,33 @@ export async function recognizeDataUrl(dataUrl: string): Promise<OcrResult> {
 export async function recognizeAndCopy(dataUrl: string, settings: AppSettings): Promise<void> {
   const isZh = settings.language === 'zh-CN'
   try {
-    const result = await recognizeDataUrl(dataUrl)
+    const result = await recognizeDataUrl(dataUrl, settings)
     if (!result.text) {
       showResultToast(isZh ? '文字识别' : 'OCR', isZh ? '未识别到文字' : 'No text recognized', 'error')
       return
     }
     clipboard.writeText(result.text)
+    const quality =
+      result.confidence != null
+        ? `${(result.confidence * 100).toFixed(0)}%`
+        : isZh
+          ? '系统引擎'
+          : 'system engine'
     showResultToast(
       isZh ? '文字识别' : 'OCR',
       isZh
-        ? `已复制 ${result.text.length} 个字符 · 置信度 ${(result.confidence * 100).toFixed(0)}% · ${result.elapsedMs}ms`
-        : `Copied ${result.text.length} characters · confidence ${(result.confidence * 100).toFixed(0)}% · ${result.elapsedMs}ms`,
+        ? `已复制 ${result.text.length} 个字符 · ${quality} · ${result.elapsedMs}ms`
+        : `Copied ${result.text.length} characters · ${quality} · ${result.elapsedMs}ms`,
       'ok'
     )
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    showResultToast(
-      isZh ? '文字识别失败' : 'OCR failed',
-      isZh
-        ? `${message}（首次使用需下载模型，请检查网络或代理）`
-        : `${message} (first use downloads models — check network or proxy)`,
-      'error'
-    )
+    const hint =
+      resolveEngine(settings) === 'paddle'
+        ? isZh
+          ? `${message}（首次使用需下载模型，请检查网络或代理）`
+          : `${message} (first use downloads models — check network or proxy)`
+        : message
+    showResultToast(isZh ? '文字识别失败' : 'OCR failed', hint, 'error')
   }
 }

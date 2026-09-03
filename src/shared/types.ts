@@ -5,6 +5,10 @@ export type FilterMode = 'default' | 'whitelist' | 'blacklist'
 export type CommandShell = 'auto' | 'gitbash' | 'pwsh' | 'powershell' | 'cmd'
 export type ActionType = 'copy' | 'search' | 'prompt' | 'speak'
 export type AppLanguage = 'zh-CN' | 'en'
+/** OCR engine for the screenshot "copy text" action. 'system' = built-in
+ * Windows.Media.Ocr helper (zero download, fastest); 'paddle' = offline
+ * high-accuracy PP-OCR engine. */
+export type OcrEngineId = 'system' | 'paddle'
 export type ThemeMode = 'system' | 'light' | 'dark'
 export type ProviderApiType = 'openai' | 'anthropic'
 /** 'on' lets the model use its default; other values request explicit reasoning control. */
@@ -158,6 +162,8 @@ export interface AppSettings {
   contextWindowTokens: number
   /** Model used for screenshot AI vision. Empty = current chat model. */
   visionModel: string
+  /** Engine used by the screenshot "copy text" action (see OcrEngineId). */
+  ocrEngine: OcrEngineId
   /** Full-access mode: agent tools run without per-call approval; dangerous
    * commands still pause for confirmation and forbidden ones are blocked. */
   agentFullAccess: boolean
