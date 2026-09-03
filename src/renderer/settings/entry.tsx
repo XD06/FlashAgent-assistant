@@ -41,13 +41,11 @@ type SettingRowProps = {
 function SettingsNav({
   sections,
   activeSection,
-  onChange,
-  tools
+  onChange
 }: {
   sections: SettingsSectionMeta[]
   activeSection: SettingsSectionId
   onChange: (section: SettingsSectionId) => void
-  tools?: React.ReactNode
 }) {
   return (
     <aside className="settings-sidebar" aria-label="Settings sections">
@@ -61,7 +59,6 @@ function SettingsNav({
           <span>{section.label}</span>
         </button>
       ))}
-      {tools && <div className="settings-sidebar-tools">{tools}</div>}
     </aside>
   )
 }
@@ -835,18 +832,6 @@ function SettingsApp() {
   ]
   const defaultActionById = new Map(defaultActions.map((action) => [action.id, action]))
   const filterText = settings.filterList.join('\n')
-  const toggleAssistantEnabled = async () => {
-    if (!settings.enabled) {
-      const trusted = await window.assistantLite.selection.getAccessibility()
-      setAccessibilityTrusted(trusted)
-      if (!trusted) {
-        await window.assistantLite.selection.requestAccessibility()
-        return
-      }
-    }
-    void update({ enabled: !settings.enabled })
-  }
-
   const cycleTheme = () => {
     const nextTheme: Record<ThemeMode, ThemeMode> = {
       system: 'light',
@@ -861,8 +846,6 @@ function SettingsApp() {
     light: 'sun',
     dark: 'moon'
   }
-
-  const sidebarMasterToggle = <Toggle checked={settings.enabled} label={t('shortcutToggleAssistant')} onChange={() => void toggleAssistantEnabled()} />
 
   const renderSection = () => {
     if (activeSection === 'api') {
@@ -1479,7 +1462,7 @@ function SettingsApp() {
         )}
 
         <div className="settings-layout">
-          <SettingsNav sections={sections} activeSection={activeSection} onChange={setActiveSection} tools={sidebarMasterToggle} />
+          <SettingsNav sections={sections} activeSection={activeSection} onChange={setActiveSection} />
 
           <section className="settings-content">
             {renderSection()}

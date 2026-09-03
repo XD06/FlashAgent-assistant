@@ -210,7 +210,7 @@ label {
   --settings-line: rgba(24, 24, 22, 0.055);
   --settings-line-strong: rgba(24, 24, 22, 0.075);
   --settings-focus: rgba(16, 163, 127, 0.32);
-  --settings-success: #0f8f70;
+  --settings-success: #34c759;
   color: var(--settings-text);
   background: var(--settings-bg);
   /* Fixed viewport shell: only the content column scrolls. */
@@ -230,7 +230,7 @@ html[data-theme='dark'] .settings-page {
   --settings-line: rgba(255, 255, 255, 0.045);
   --settings-line-strong: rgba(255, 255, 255, 0.055);
   --settings-focus: rgba(16, 163, 127, 0.38);
-  --settings-success: #21b393;
+  --settings-success: #30d158;
 }
 
 .settings-shell {
@@ -342,14 +342,6 @@ html[data-theme='dark'] .settings-page {
   box-shadow: none;
 }
 
-.settings-sidebar-tools {
-  width: 100%;
-  display: flex;
-  justify-content: flex-start;
-  margin-top: auto;
-  padding-top: 10px;
-  border-top: 1px solid var(--settings-line);
-}
 
 .settings-nav-button {
   width: 100%;
@@ -796,13 +788,14 @@ html[data-theme='dark'] .inline-icon-button:hover {
 }
 
 .toggle.checked {
-  border-color: color-mix(in srgb, var(--settings-success) 36%, transparent);
-  background: color-mix(in srgb, var(--settings-success) 18%, transparent);
+  border-color: transparent;
+  /* iOS switch green */
+  background: var(--settings-success);
 }
 
 .toggle.checked span {
   transform: translateX(14px);
-  background: var(--settings-success);
+  background: #ffffff;
 }
 
 .shortcut-recorder {
