@@ -364,3 +364,24 @@ export interface VocabEntry {
   exchange: DictEntry['exchange']
 }
 import type { ContextMeasurement } from './contextMeter'
+
+/** State of the optional high-accuracy OCR engine pack (see main/ocr/enginePack). */
+export interface OcrEnginePackState {
+  installed: boolean
+  /** Unpacked size on disk in bytes, when known. */
+  bytes: number | null
+}
+
+export type OcrEngineProgress =
+  | { phase: 'download'; index: number; count: number; name: string; receivedBytes: number; totalBytes: number | null }
+  | { phase: 'extract'; index: number; count: number; name: string }
+
+export interface OcrEngineStatusPayload {
+  /** Windows system OCR helper availability (csc + WinRT metadata present). */
+  systemAvailable: boolean
+  /** Installed recognizer tags; empty when unavailable or unknown. */
+  systemLanguages: string[]
+  paddle: OcrEnginePackState
+  downloading: boolean
+  progress: OcrEngineProgress | null
+}

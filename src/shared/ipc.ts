@@ -53,6 +53,13 @@ export const IPC = {
 
   ProxyTest: 'proxy:test',
 
+  OcrEngineStatus: 'ocr:engine-status',
+  OcrEngineDownload: 'ocr:engine-download',
+  OcrEngineDownloadCancel: 'ocr:engine-download-cancel',
+  OcrEngineDelete: 'ocr:engine-delete',
+  OcrEngineProgress: 'ocr:engine-progress',
+  OcrEngineChanged: 'ocr:engine-changed',
+
   TtsPlay: 'tts:play',
   TtsStopPlayback: 'tts:stop-playback',
 

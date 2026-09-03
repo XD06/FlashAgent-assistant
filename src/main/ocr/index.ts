@@ -1,15 +1,22 @@
-import { clipboard } from 'electron'
-import type { AppSettings } from '@shared/types'
+import { BrowserWindow, clipboard, ipcMain } from 'electron'
+import { IPC } from '@shared/ipc'
+import type { AppSettings, OcrEngineStatusPayload } from '@shared/types'
 import { showResultToast } from '../toast'
 import { isWin } from '../platform'
-import { recognizeWithSystem } from './winrt'
-import { destroyPaddleOcr, recognizeWithPaddle } from './paddle'
+import { isSystemOcrAvailable, listSystemOcrLanguages, recognizeWithSystem } from './winrt'
+import {
+  EngineNotInstalledError,
+  destroyPaddleOcr,
+  paddleEngineRoot,
+  recognizeWithPaddle
+} from './paddle'
+import { deleteEnginePack, downloadEnginePack, getEngineState } from './enginePack'
 
 // OCR entry point for the screenshot "copy text" action. Two engines:
 //  - 'system': Windows.Media.Ocr via the on-demand compiled helper — zero
 //    download, fastest, gist-level accuracy (see ocr-winrt-test-result.md).
-//  - 'paddle': offline PP-OCRv6 via ppu-paddle-ocr — high accuracy, heavy
-//    runtime, kept as the opt-in engine and on non-Windows platforms.
+//  - 'paddle': offline PP-OCRv6 via the optional engine pack — high accuracy,
+//    downloads on demand into userData, kept on non-Windows platforms.
 
 export interface OcrResult {
   text: string
@@ -69,6 +76,16 @@ export async function recognizeAndCopy(dataUrl: string, settings: AppSettings): 
       'ok'
     )
   } catch (error) {
+    if (error instanceof EngineNotInstalledError) {
+      showResultToast(
+        isZh ? '高精度OCR未安装' : 'OCR engine missing',
+        isZh
+          ? '请在 设置 → 功能模型 中下载高精度OCR引擎'
+          : 'Download the high-accuracy OCR engine in Settings → Feature models first',
+        'error'
+      )
+      return
+    }
     const message = error instanceof Error ? error.message : String(error)
     const hint =
       resolveEngine(settings) === 'paddle'
@@ -78,4 +95,76 @@ export async function recognizeAndCopy(dataUrl: string, settings: AppSettings): 
         : message
     showResultToast(isZh ? '文字识别失败' : 'OCR failed', hint, 'error')
   }
+}
+
+// --- Engine pack management IPC (settings UI) ---
+
+let systemLanguagesCache: string[] | null = null
+
+async function getSystemLanguages(): Promise<string[]> {
+  if (!isSystemOcrAvailable()) return []
+  if (systemLanguagesCache) return systemLanguagesCache
+  try {
+    systemLanguagesCache = await listSystemOcrLanguages()
+  } catch {
+    systemLanguagesCache = []
+  }
+  return systemLanguagesCache
+}
+
+let downloadAbort: AbortController | null = null
+
+function broadcast(channel: string, payload: unknown): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.send(channel, payload)
+  }
+}
+
+function engineStatusPayload(downloading: boolean): OcrEngineStatusPayload {
+  const state = getEngineState(paddleEngineRoot())
+  return {
+    systemAvailable: isSystemOcrAvailable(),
+    systemLanguages: [],
+    paddle: { installed: state.installed, bytes: state.bytes },
+    downloading,
+    progress: null
+  }
+}
+
+export function registerOcrIpc(): void {
+  ipcMain.handle(IPC.OcrEngineStatus, async (): Promise<OcrEngineStatusPayload> => {
+    const payload = engineStatusPayload(!!downloadAbort)
+    payload.systemLanguages = await getSystemLanguages()
+    return payload
+  })
+
+  ipcMain.handle(IPC.OcrEngineDownload, async () => {
+    if (downloadAbort) return false
+    downloadAbort = new AbortController()
+    broadcast(IPC.OcrEngineChanged, engineStatusPayload(true))
+    try {
+      await downloadEnginePack(
+        paddleEngineRoot(),
+        (progress) => broadcast(IPC.OcrEngineProgress, progress),
+        downloadAbort.signal
+      )
+      return true
+    } finally {
+      downloadAbort = null
+      broadcast(IPC.OcrEngineChanged, engineStatusPayload(false))
+    }
+  })
+
+  ipcMain.handle(IPC.OcrEngineDownloadCancel, () => {
+    downloadAbort?.abort()
+    return true
+  })
+
+  ipcMain.handle(IPC.OcrEngineDelete, async () => {
+    if (downloadAbort) downloadAbort.abort()
+    await destroyPaddleOcr()
+    deleteEnginePack(paddleEngineRoot())
+    broadcast(IPC.OcrEngineChanged, engineStatusPayload(false))
+    return true
+  })
 }

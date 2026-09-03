@@ -27,7 +27,7 @@ import { SelectionService } from './SelectionService'
 import { registerTranslateIpc } from './translate'
 import { playTts, stopTtsPlayback, destroyTtsPlayer } from './ttsPlayer'
 import { initVocabulary, registerVocabularyIpc } from './vocabulary'
-import { destroyOcr } from './ocr'
+import { destroyOcr, registerOcrIpc } from './ocr'
 import { getSettings, onSettingsChanged, updateSettings } from './settingsStore'
 import { isSupportedPlatform, isWin } from './platform'
 
@@ -479,6 +479,7 @@ function argsJsonForEvent(args: Record<string, unknown>): string {
 function registerIpc(): void {
   selectionService.registerIpc()
   screenshotService.registerIpc()
+  registerOcrIpc()
   registerTranslateIpc(providerFetch)
   initVocabulary(app.getPath('userData'))
   registerVocabularyIpc()

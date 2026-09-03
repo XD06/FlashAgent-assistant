@@ -15,6 +15,7 @@ import type {
   AppSettings,
   FilterMode,
   OcrEngineId,
+  OcrEngineStatusPayload,
   ProviderTemplate,
   ReasoningMode,
   ShortcutSettings,
@@ -656,6 +657,8 @@ function SettingsApp() {
   const [busyTemplate, setBusyTemplate] = React.useState<{ id: string; kind: 'list' | 'test' } | null>(null)
   const [proxyTesting, setProxyTesting] = React.useState(false)
   const [proxyStatus, setProxyStatus] = React.useState<string | null>(null)
+  const [ocrEngine, setOcrEngine] = React.useState<OcrEngineStatusPayload | null>(null)
+  const [ocrEngineError, setOcrEngineError] = React.useState<string | null>(null)
   const t = getTranslator(settings.language)
   useThemeMode(settings.theme)
   useAppearance(settings)
@@ -677,6 +680,64 @@ function SettingsApp() {
     document.documentElement.lang = settings.language
     document.title = t('appTitle')
   }, [settings.language])
+
+  const refreshOcrEngine = React.useCallback(() => {
+    window.assistantLite.ocr
+      .engineStatus()
+      .then(setOcrEngine)
+      .catch(() => setOcrEngine(null))
+  }, [])
+
+  React.useEffect(() => {
+    refreshOcrEngine()
+    const offProgress = window.assistantLite.ocr.onEngineProgress((progress) => {
+      setOcrEngine((prev) => (prev ? { ...prev, downloading: true, progress } : prev))
+    })
+    const offChanged = window.assistantLite.ocr.onEngineChanged(() => {
+      setOcrEngineError(null)
+      refreshOcrEngine()
+    })
+    return () => {
+      offProgress()
+      offChanged()
+    }
+  }, [refreshOcrEngine])
+
+  const downloadOcrEnginePack = async () => {
+    setOcrEngineError(null)
+    try {
+      await window.assistantLite.ocr.downloadEngine()
+    } catch (error) {
+      setOcrEngineError(error instanceof Error ? error.message : String(error))
+      refreshOcrEngine()
+    }
+  }
+
+  const cancelOcrEnginePack = () => {
+    void window.assistantLite.ocr.cancelEngineDownload()
+  }
+
+  const deleteOcrEnginePack = async () => {
+    await window.assistantLite.ocr.deleteEngine()
+  }
+
+  const ocrEnginePackPercent = (() => {
+    const progress = ocrEngine?.progress
+    if (!progress) return null
+    if (progress.phase !== 'download') return Math.round(((progress.index + 1) / progress.count) * 100)
+    if (!progress.totalBytes) return null
+    const within = Math.min(1, progress.receivedBytes / progress.totalBytes)
+    return Math.round(((progress.index + within) / progress.count) * 100)
+  })()
+
+  const ocrEnginePackDescription = (() => {
+    if (ocrEngineError) return `${t('ocrEngineFailed')}: ${ocrEngineError}`
+    if (ocrEngine?.paddle.installed) {
+      const mb = ocrEngine.paddle.bytes ? ` · ${Math.round(ocrEngine.paddle.bytes / 1_048_576)} MB` : ''
+      return `${t('ocrEngineInstalledDesc')}${mb}`
+    }
+    return null
+  })()
 
   if (!loaded) return <main className="page">{t('loading')}</main>
 
@@ -1008,7 +1069,14 @@ function SettingsApp() {
                 onChange={(event) => update({ visionModel: event.target.value.trim() })}
               />
             </SettingRow>
-            <SettingRow title={t('ocrEngine')} description={t('ocrEngineDesc')}>
+            <SettingRow
+              title={t('ocrEngine')}
+              description={
+                ocrEngine?.systemLanguages.length
+                  ? `${t('ocrEngineDesc')} · ${t('ocrEngineSystemLangs')}: ${ocrEngine.systemLanguages.join(', ')}`
+                  : t('ocrEngineDesc')
+              }
+            >
               <select
                 value={settings.ocrEngine}
                 onChange={(event) => update({ ocrEngine: event.target.value as OcrEngineId })}
@@ -1018,6 +1086,42 @@ function SettingsApp() {
                 </option>
                 <option value="paddle">{t('ocrEnginePaddle')}</option>
               </select>
+            </SettingRow>
+            <SettingRow
+              title={t('ocrEnginePack')}
+              description={ocrEnginePackDescription ?? t('ocrEnginePackDesc')}
+            >
+              <div className="ocr-engine-actions">
+                {ocrEngine?.downloading ? (
+                  <>
+                    <div className="ocr-engine-progress" aria-hidden={!ocrEnginePackPercent}>
+                      <div style={{ width: `${ocrEnginePackPercent ?? 0}%` }} />
+                    </div>
+                    <span className="ocr-engine-progress-label">
+                      {ocrEnginePackPercent != null ? `${ocrEnginePackPercent}%` : t('ocrEnginePreparing')}
+                    </span>
+                    <button type="button" className="pill" onClick={() => void cancelOcrEnginePack()}>
+                      {t('ocrEngineCancel')}
+                    </button>
+                  </>
+                ) : ocrEngine?.paddle.installed ? (
+                  <>
+                    <span className="ocr-engine-state ok">{t('ocrEngineInstalled')}</span>
+                    <button type="button" className="pill" onClick={() => void deleteOcrEnginePack()}>
+                      {t('ocrEngineDelete')}
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    className="pill"
+                    onClick={() => void downloadOcrEnginePack()}
+                    disabled={ocrEngine?.systemAvailable === false && !isWindows}
+                  >
+                    {t('ocrEngineDownload')}
+                  </button>
+                )}
+              </div>
             </SettingRow>
             <SettingRow title={t('compressModel')} description={t('compressModelDesc')}>
               <input

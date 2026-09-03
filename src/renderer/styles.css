@@ -4163,3 +4163,37 @@ padding: 4px;
   color: var(--settings-muted);
   font-weight: 500;
 }
+
+/* OCR engine pack row: status + download/cancel/delete controls */
+.ocr-engine-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+}
+
+.ocr-engine-progress {
+  width: 120px;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--settings-line-strong);
+  overflow: hidden;
+}
+
+.ocr-engine-progress > div {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--settings-success);
+  transition: width 0.2s ease;
+}
+
+.ocr-engine-progress-label {
+  font-size: 11px;
+  color: var(--settings-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.ocr-engine-state.ok {
+  font-size: 11px;
+  color: var(--settings-success);
+}

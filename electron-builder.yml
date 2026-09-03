@@ -13,9 +13,8 @@ extraResources:
     to: build/icon.png
 asarUnpack:
   - node_modules/selection-hook/**
-  # OCR engine native binaries (onnxruntime inference + canvas/image ops)
-  - node_modules/onnxruntime-node/**
-  - node_modules/@napi-rs/**
+  # The high-accuracy OCR engine (onnxruntime + paddle) is no longer bundled:
+  # it downloads on demand into the user data directory (src/main/ocr/enginePack.ts).
 electronLanguages:
   - zh-CN
   - en-US

@@ -6,6 +6,8 @@ import type {
   AiStreamRequest,
   AppSettings,
   DictEntry,
+  OcrEngineProgress,
+  OcrEngineStatusPayload,
   McpServerStatus,
   SelectedTextPayload,
   SettingsPatch,
@@ -140,6 +142,30 @@ const api = {
       proxyUrl: string
     ): Promise<{ ok: boolean; latencyMs?: number; via: 'manual' | 'system' | 'direct'; error?: string }> =>
       ipcRenderer.invoke(IPC.ProxyTest, proxyUrl)
+  },
+
+  ocr: {
+    /** Engine availability: system helper + optional paddle pack state. */
+    engineStatus: (): Promise<OcrEngineStatusPayload> => ipcRenderer.invoke(IPC.OcrEngineStatus),
+    /** Download the high-accuracy engine pack; progress via onEngineProgress. */
+    downloadEngine: (): Promise<boolean> => ipcRenderer.invoke(IPC.OcrEngineDownload),
+    cancelEngineDownload: (): Promise<boolean> => ipcRenderer.invoke(IPC.OcrEngineDownloadCancel),
+    /** Unload and remove the downloaded engine pack. */
+    deleteEngine: (): Promise<boolean> => ipcRenderer.invoke(IPC.OcrEngineDelete),
+    onEngineProgress: (callback: (progress: OcrEngineProgress) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, progress: OcrEngineProgress) => callback(progress)
+      ipcRenderer.on(IPC.OcrEngineProgress, listener)
+      return () => {
+        ipcRenderer.off(IPC.OcrEngineProgress, listener)
+      }
+    },
+    onEngineChanged: (callback: () => void) => {
+      const listener = () => callback()
+      ipcRenderer.on(IPC.OcrEngineChanged, listener)
+      return () => {
+        ipcRenderer.off(IPC.OcrEngineChanged, listener)
+      }
+    }
   },
 
   windowControls: {
