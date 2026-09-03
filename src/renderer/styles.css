@@ -771,17 +771,25 @@ html[data-theme='dark'] .inline-icon-button:hover {
   height: 22px;
   min-height: 22px;
   padding: 2px;
+  /* Flex centering keeps the knob mathematically centered — the plain block
+     child sat flush against the content edge and looked off-center on
+     fractional-DPI displays. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
   border: 1px solid var(--settings-line-strong);
   border-radius: 999px;
   background: var(--settings-surface-soft);
 }
 
 .toggle span {
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
   display: block;
   border-radius: 999px;
   background: var(--settings-muted);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
   transition:
     transform 140ms ease,
     background 140ms ease;
@@ -794,7 +802,7 @@ html[data-theme='dark'] .inline-icon-button:hover {
 }
 
 .toggle.checked span {
-  transform: translateX(14px);
+  transform: translateX(16px);
   background: #ffffff;
 }
 
