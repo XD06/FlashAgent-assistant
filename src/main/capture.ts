@@ -108,17 +108,26 @@ export async function captureDisplay(display: Display): Promise<Electron.NativeI
     try {
       const exe = await ensureHelper()
       if (exe) {
-        return await execCapture(exe, [tmpPath, String(pickScreenIndex(display))], tmpPath, 8000)
+        const image = await execCapture(exe, [tmpPath, String(pickScreenIndex(display))], tmpPath, 8000)
+        // The helper writes the frame to disk for IPC-free transfer; the file
+        // has served its purpose once the pixels are in memory. Left in place
+        // it is both a disk leak and a privacy residue (full-screen capture).
+        cleanupCaptureTemp()
+        return image
       }
     } catch (error) {
       console.warn('[capture] GDI helper failed, falling back to desktopCapturer:', error)
+      cleanupCaptureTemp()
     }
   } else if (process.platform === 'darwin') {
     try {
       const index = screen.getAllDisplays().findIndex((item) => item.id === display.id) + 1
-      return await execCapture('screencapture', ['-x', `-D${index}`, tmpPath], tmpPath, 8000)
+      const image = await execCapture('screencapture', ['-x', `-D${index}`, tmpPath], tmpPath, 8000)
+      cleanupCaptureTemp()
+      return image
     } catch (error) {
       console.warn('[capture] screencapture failed, falling back to desktopCapturer:', error)
+      cleanupCaptureTemp()
     }
   }
 

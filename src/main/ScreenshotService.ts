@@ -97,6 +97,9 @@ export class ScreenshotService {
           imageHeight: imageSize.height
         }
         event.sender.send(IPC.ScreenshotOverlayInit, payload)
+        // The renderer owns its copy now; main only still needs `image` for
+        // the no-annotation crop path. Drop the multi-MB string immediately.
+        this.currentCapture.dataUrl = ''
       }
     })
     ipcMain.handle(IPC.ScreenshotOverlayConfirm, (_event, payload: OverlayConfirmPayload) =>

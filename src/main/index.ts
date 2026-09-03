@@ -23,6 +23,7 @@ import { applyProxy, testProxy } from './proxy'
 import { isMcpToolName } from './mcp/mcpUtil'
 import { stripDocJunk, validateRecapDoc } from '@shared/recapDoc'
 import { ScreenshotService } from './ScreenshotService'
+import { cleanupCaptureTemp } from './capture'
 import { SelectionService } from './SelectionService'
 import { registerTranslateIpc } from './translate'
 import { playTts, stopTtsPlayback, destroyTtsPlayer } from './ttsPlayer'
@@ -149,6 +150,31 @@ function loadRenderer(win: BrowserWindow, page: string): void {
   }
 }
 
+// The settings window is the app's home surface, but a hidden renderer is
+// tens of MB of resident memory. Keep the close-to-hide instant-show UX and
+// destroy the renderer once it has stayed hidden for a while — tray click /
+// second-instance recreate it on demand.
+const SETTINGS_IDLE_DESTROY_MS = 60_000
+let settingsIdleTimer: NodeJS.Timeout | null = null
+
+function scheduleSettingsIdleDestroy(): void {
+  if (settingsIdleTimer) clearTimeout(settingsIdleTimer)
+  settingsIdleTimer = setTimeout(() => {
+    settingsIdleTimer = null
+    if (settingsWindow && !settingsWindow.isDestroyed() && !settingsWindow.isVisible()) {
+      settingsWindow.destroy()
+      settingsWindow = null
+    }
+  }, SETTINGS_IDLE_DESTROY_MS)
+}
+
+function cancelSettingsIdleDestroy(): void {
+  if (settingsIdleTimer) {
+    clearTimeout(settingsIdleTimer)
+    settingsIdleTimer = null
+  }
+}
+
 function createSettingsWindow(): BrowserWindow {
   if (settingsWindow && !settingsWindow.isDestroyed()) {
     app.dock?.show()
@@ -156,6 +182,7 @@ function createSettingsWindow(): BrowserWindow {
     settingsWindow.focus()
     return settingsWindow
   }
+  cancelSettingsIdleDestroy()
 
   settingsWindow = new BrowserWindow({
     // Open at the minimum working size — the shell layout is densest there;
@@ -180,8 +207,12 @@ function createSettingsWindow(): BrowserWindow {
     event.preventDefault()
     settingsWindow?.hide()
     app.dock?.hide()
+    scheduleSettingsIdleDestroy()
   })
-  settingsWindow.on('show', () => app.dock?.show())
+  settingsWindow.on('show', () => {
+    app.dock?.show()
+    cancelSettingsIdleDestroy()
+  })
   settingsWindow.on('closed', () => {
     settingsWindow = null
   })
@@ -1148,6 +1179,7 @@ if (!app.requestSingleInstanceLock()) {
     globalShortcut.unregisterAll()
     selectionService.dispose()
     screenshotService.dispose()
+    cleanupCaptureTemp()
     destroyTtsPlayer()
     void destroyOcr()
     mcpManager.closeAll()
