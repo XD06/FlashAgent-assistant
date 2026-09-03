@@ -14,7 +14,7 @@ import { deleteEnginePack, downloadEnginePack, getEngineState } from './enginePa
 
 // OCR entry point for the screenshot "copy text" action. Two engines:
 //  - 'system': Windows.Media.Ocr via the on-demand compiled helper — zero
-//    download, fastest, gist-level accuracy (see ocr-winrt-test-result.md).
+//    download, fastest, gist-level accuracy (see docs/ocr-winrt-test-result.md).
 //  - 'paddle': offline PP-OCRv6 via the optional engine pack — high accuracy,
 //    downloads on demand into userData, kept on non-Windows platforms.
 

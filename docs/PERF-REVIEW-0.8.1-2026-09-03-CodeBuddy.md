@@ -1,5 +1,7 @@
 # FlashAgent-assistant 性能审查报告 v0.8.1
 
+> **[已归档 · 已消化]** 四份独立审查之四。红线清单经核查全部有效；个别数据错误（react-dom 文件数等）已修正。结论并入执行计划，0.8.2 已落地。
+
 > **审查日期**：2026-09-03
 > **审查者**：CodeBuddy
 > **审查基准**：commit `e5fd9af` (main) · v0.8.1 · Electron 33 · React 18 · electron-vite 2.3

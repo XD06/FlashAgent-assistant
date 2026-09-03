@@ -1,5 +1,7 @@
 # FlashAgent-assistant 独立性能审查报告（v0.8.1）
 
+> **[已归档 · 已消化]** 四份独立审查之二。「已优化勿回改」清单经核查全部有效；问题 5/6 的主张被证伪修正（见执行文档第三节）。结论已并入执行计划，0.8.2 落地。
+
 > **审查日期**：2026-09-03
 > **审查者**：Cline
 > **审查基准**：`git HEAD = e5fd9af`（main 分支）· Electron 33.2.1 · React 18.3.1 · electron-vite 2.3.0 · TypeScript 5
@@ -42,7 +44,8 @@
 | `@techstark`（builder 相关） | 14.0 MB | 开发依赖 | ❌ |
 | `7zip-bin` | 11.7 MB | 开发依赖 | ❌ |
 | `@mermaid-js` | 11.7 MB | 开发依赖 | 仅 renderer 分包 |
-| `@modelcontextprotocol/sdk` 整树（含 zod/hono/ajv） | ≈ 12 MB | 生产依赖 | ✅ 全量进入 asar |
+| `@modelcontextprotocol/sdk` 整树（含 zod/hono/ajv） | ≈ 12 MB | 生产依赖 | ✅ 全量进入 asar |
+
 ---
 
 ## 二、问题清单（按「收益 / 风险」排序）
@@ -70,7 +73,8 @@
 2. **可选**：进一步验证纯 CPU 路径不加载 DML 后，删除 `DirectML.dll` / `dxcompiler.dll` / `dxil.dll`（再省 **37.9 MB**）。运行时 OCR 走 CPU EP，ONNX Runtime 只在请求 DML EP 时才加载这些 DLL；但必须用真实截图回归一次「OCR 复制文字」后才可落地。
 3. macOS / Linux 打包同样要加对等的 prune（当前 macOS 产物会把 Windows/Linux 二进制一并带入，只是还没人量过）。
 
-**收益**：`app.asar.unpacked` 从 319.7 MB → 约 90 MB；`win-unpacked` 从 589.7 MB → 约 350 MB；`Portable-0.8.1.exe` 预计从 186.8 MB →约 95~100 MB（回到 0.8.0 量级）。`node_modules` 安装占用同时减少约 250 MB。
+**收益**：`app.asar.unpacked` 从 319.7 MB → 约 90 MB；`win-unpacked` 从 589.7 MB → 约 350 MB；`Portable-0.8.1.exe` 预计从 186.8 MB →约 95~100 MB（回到 0.8.0 量级）。`node_modules` 安装占用同时减少约 250 MB。
+
 ---
 
 ### 问题 2【P0 / 体积 + 启动速度】app.asar 40.8 MB、4,277 个散碎文件：生产依赖整包进包

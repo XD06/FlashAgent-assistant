@@ -1,5 +1,7 @@
 # 系统原生 OCR（Windows.Media.Ocr）试跑结果
 
+> **[已归档 · 已落地]** 本文的试跑结论已实现为 0.8.2 的系统 OCR 默认引擎（见 [OCR.md](./OCR.md) 与 `src/main/ocr/winrtHelper.ts`）。
+
 - 方法：`WinRtOcrTest.exe`，C# 调用系统内置 `Windows.Media.Ocr`，用本机自带 `csc.exe` 现场编译，**零第三方依赖、零下载**
 - 引擎：`zh-Hans-CN`（本机可用语言：`en-US, zh-Hans-CN`）
 - 耗时含引擎首次加载；二次调用会更快

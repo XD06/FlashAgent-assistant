@@ -1,6 +1,6 @@
 // WinRT OCR inserts a space between adjacent CJK glyphs ("关 于 我"), while
 // PP-OCR does not. Collapsing those spaces is the single biggest readability
-// win from the WinRT trial (see ocr-winrt-test-result.md). Only spaces with
+// win from the WinRT trial (see docs/ocr-winrt-test-result.md). Only spaces with
 // CJK on BOTH sides are removed — Latin/CJK word boundaries keep theirs.
 
 // CJK radicals through Unified Ideographs, Hangul, CJK compatibility

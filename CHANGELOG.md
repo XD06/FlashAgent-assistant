@@ -4,7 +4,7 @@
 
 ### Added
 
-- OCR 双引擎：默认使用 Windows 系统引擎（Windows.Media.Ocr，零下载、约 100-300ms；C# helper 由本机 .NET Framework csc.exe 现场编译，与截屏辅助程序同一零依赖模式；PNG 走 stdin 不落盘；小图自动 2x 双三次放大提升小字识别，并清理 WinRT 在中日韩字符间插入的空格）。实测：英文/数字基本全对，中文 gist 级可读（见 ocr-winrt-test-result.md）。
+- OCR 双引擎：默认使用 Windows 系统引擎（Windows.Media.Ocr，零下载、约 100-300ms；C# helper 由本机 .NET Framework csc.exe 现场编译，与截屏辅助程序同一零依赖模式；PNG 走 stdin 不落盘；小图自动 2x 双三次放大提升小字识别，并清理 WinRT 在中日韩字符间插入的空格）。实测：英文/数字基本全对，中文 gist 级可读（见 docs/ocr-winrt-test-result.md）。
 - 原 PP-OCRv6 引擎转为「高精度 OCR」可选组件：不再随安装包分发，在 设置 → 功能模型 中按需下载（约 130MB；npm registry 拉取 + 逐包 sha512 校验 + npmmirror 兜底，走应用代理链；含下载进度/取消/删除管理）。模型缓存（~/.cache/ppu-paddle-ocr）与引擎包分离，更新应用无需重新下载模型。未下载时使用高精度引擎会得到明确指引 toast。
 - 设置 → 功能模型 显示本机系统 OCR 可用语言列表（如 zh-Hans-CN / en-US），便于发现系统缺少中文识别器的情况。
 
