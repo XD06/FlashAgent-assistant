@@ -3784,9 +3784,11 @@ padding: 4px;
   display: flex;
   flex: 1;
   min-height: 0;
+  min-width: 0;
   flex-direction: column;
   gap: 8px;
   overflow-y: auto;
+  overflow-x: hidden;
   padding-right: 2px;
   /* Tall result sets scroll inside the window instead of growing it forever. */
   max-height: 420px;
@@ -3795,6 +3797,8 @@ padding: 4px;
 .tr-card {
   display: flex;
   flex-direction: column;
+  min-width: 0;
+  max-width: 100%;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--panel);
@@ -3844,10 +3848,17 @@ padding: 4px;
 }
 
 .tr-card__body {
+  min-width: 0;
+  max-width: 100%;
   padding: 8px 10px;
   color: var(--text);
   font-size: var(--app-font-size, 13.5px);
   line-height: 1.55;
+}
+
+.tr-dict {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .tr-card__text {
@@ -3947,6 +3958,7 @@ padding: 4px;
 
 .tr-dict__means {
   color: var(--text);
+  overflow-wrap: anywhere;
 }
 
 .tr-dict__exchange {
@@ -3988,13 +4000,14 @@ padding: 4px;
 }
 
 .tr-dict__phrase {
+  /* A chip wraps internally at word boundaries when it cannot fit a line:
+     for long zh→en glosses, seeing the whole entry beats atomicity. */
   display: inline-flex;
+  flex-wrap: wrap;
   align-items: baseline;
-  gap: 5px;
-  white-space: nowrap;
-  /* Chips stay atomic via nowrap; a chip wider than the whole card (long
-     zh→en glosses) may still break internally rather than clip forever. */
-  overflow-wrap: anywhere;
+  gap: 2px 5px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .tr-dict__phrase-en {
@@ -4003,6 +4016,7 @@ padding: 4px;
 
 .tr-dict__phrase-zh {
   color: var(--muted);
+  overflow-wrap: anywhere;
 }
 
 .tr-dict__sentences {
