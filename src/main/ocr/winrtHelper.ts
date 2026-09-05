@@ -10,7 +10,7 @@ import { dirname, join } from 'node:path'
 //
 // The helper reads a PNG from stdin, upscales small images 2x with bicubic
 // interpolation (WinRT OCR misreads small glyphs — 2x fixed several error
-// classes in testing, see docs/ocr-winrt-test-result.md) and prints the recognized
+// classes in testing, see docs/archive/2026-09-03-ocr-winrt-test-result.md) and prints the recognized
 // lines as UTF-8. `--list-langs` prints the installed recognizer tags.
 //
 // WinRT interop notes: the helper deliberately avoids the await extensions in

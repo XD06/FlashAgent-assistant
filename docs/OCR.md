@@ -9,7 +9,7 @@
 
 | 引擎 | 实现 | 精度 | 成本 |
 |---|---|---|---|
-| `system`（默认，仅 Windows） | `Windows.Media.Ocr`，C# helper 由本机 .NET Framework csc.exe 现场编译（`src/main/ocr/winrtHelper.ts`），与 CaptureScreen.exe 同一套零依赖模式 | 英文/数字基本全对；中文 gist 级可用，小字有部首级误识（实测见 `docs/ocr-winrt-test-result.md`） | +0 MB、~100-300ms、无常驻内存（每次识别一个短命进程，PNG 走 stdin 不落盘） |
+| `system`（默认，仅 Windows） | `Windows.Media.Ocr`，C# helper 由本机 .NET Framework csc.exe 现场编译（`src/main/ocr/winrtHelper.ts`），与 CaptureScreen.exe 同一套零依赖模式 | 英文/数字基本全对；中文 gist 级可用，小字有部首级误识（实测见 `docs/archive/2026-09-03-ocr-winrt-test-result.md`（本地归档）） | +0 MB、~100-300ms、无常驻内存（每次识别一个短命进程，PNG 走 stdin 不落盘） |
 | `paddle`（可选下载） | `ppu-paddle-ocr@6.4.3` + `onnxruntime-node@1.29.0`，进程内 CPU 推理（`src/main/ocr/paddle.ts`） | 逐字复制可靠，中文 UI 文本置信度 0.95+ | 引擎包约 130 MB 下载 / 334 MB 装在 userData；运行峰值 ~365MB、稳态 ~233MB——单例懒加载 + 90 秒空闲自动销毁 |
 
 非 Windows 平台 `system` 不可用，运行时自动回落 `paddle`（未下载则 toast 提示去设置下载）。

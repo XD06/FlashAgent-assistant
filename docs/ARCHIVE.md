@@ -9,7 +9,6 @@
 | [OCR.md](./OCR.md) | 截图「识别文字」双引擎（Windows 系统 OCR / 高精度 PP-OCR 引擎包）的选型与架构。 |
 | [QUICK-TRANSLATE.md](./QUICK-TRANSLATE.md) | 快速翻译窗口、各翻译服务、有道词典、TTS 与生词本的实现结构。 |
 | [NEW-FEATURE-PAGE-GUIDE.md](./NEW-FEATURE-PAGE-GUIDE.md) | 新功能页面/面板接入的性能守则与自检清单。 |
-| [ocr-winrt-test-result.md](./ocr-winrt-test-result.md) | Windows 系统 OCR 试跑数据（已被 `src/main/ocr` 源码注释引用，保留原位）。 |
 | [README.en.md](./README.en.md) | 英文版项目说明。 |
 | [CONTRIBUTING.md](./CONTRIBUTING.md) | 开发与贡献约定。 |
 | [SECURITY.md](./SECURITY.md) | 安全问题披露方式。 |
@@ -18,6 +17,7 @@
 
 | 文档 | 归档日期 | 说明 |
 | --- | --- | --- |
+| `2026-09-03-ocr-winrt-test-result.md` | 2026-09-05 | Windows 系统 OCR 试跑数据；结论已实现为系统 OCR 引擎（`src/main/ocr` 源码注释引用）。 |
 | `2026-09-03-PERF-AUDIT-AND-REFACTOR-0.8.1.md` | 2026-09-05 | 四份独立 AI 性能审查之一；结论已核查落地。 |
 | `2026-09-03-PERF-INDEPENDENT-AUDIT-2026-09-03-Cline.md` | 2026-09-05 | 四份独立 AI 性能审查之二。 |
 | `2026-09-03-PERF-REVIEW-0.8.0.md` | 2026-09-05 | 四份独立 AI 性能审查之三。 |

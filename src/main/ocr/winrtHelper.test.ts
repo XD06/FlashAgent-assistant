@@ -29,7 +29,7 @@ describe.runIf(onWindows)('WinRT OCR helper', () => {
       const raw = await runWinRtOcr(exe, png, 'zh-Hans-CN')
 
       // The 1x sample contains "Ding's DevLog 关于我" (see
-      // docs/ocr-winrt-test-result.md); assert on the stable Latin part only —
+      // docs/archive/2026-09-03-ocr-winrt-test-result.md); assert on the stable Latin part only —
       // CJK glyph accuracy varies by Windows recognizer version.
       expect(cleanupOcrSpaces(raw)).toContain('DevLog')
     },
