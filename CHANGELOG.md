@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- 文档结构整理：根目录只保留 README / ARCHITECTURE / CHANGELOG（AGENTS.md 为 AI 协作规范，仅本地维护不入库）；CONTRIBUTING、SECURITY、行为准则与英文版说明移入 docs/（GitHub 仍可正常发现）；历史性能审查与已完成的设计/计划文档移入本地归档 docs/archive/（不再随仓库分发，Git 历史可查）；新增 ARCHITECTURE.md 架构全景文档。
+
 ## 0.8.4 - 2026-09-05
 
 ### Added

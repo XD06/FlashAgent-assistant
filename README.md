@@ -14,7 +14,7 @@
     <img src="https://img.shields.io/badge/License-MIT-c9a227?style=flat-square" alt="MIT License" />
   </p>
 
-  <p><a href="./README.en.md">English</a> | <strong>中文</strong></p>
+  <p><a href="./docs/README.en.md">English</a> | <strong>中文</strong></p>
 
   <p>
     <a href="https://github.com/XD06/FlashAgent-assistant/releases/latest"><img src="https://img.shields.io/github/v/release/XD06/FlashAgent-assistant?style=for-the-badge&label=Latest%20Release&color=2f6fed" alt="最新版本" /></a>
@@ -22,16 +22,16 @@
   </p>
 </div>
 
-FlashAgent-assistant 是面向快速问答与轻量 Agent 工作流的桌面 AI 助手，运行在菜单栏或系统托盘中。选中任意文本即可翻译、解释、总结、润色、搜索、复制或朗读，无需在应用间反复复制粘贴；区域截图可直接标注、保存、复制、钉在桌面，或交给 AI 识图。独立对话窗口支持多话题、本地历史、流式输出、追问和 Markdown 导出。
+FlashAgent-assistant 是面向快速问答与轻量 Agent 工作流的桌面 AI 助手，运行在菜单栏或系统托盘中。选中任意文本即可翻译、解释、总结、润色、搜索、复制或朗读，无需在应用间反复复制粘贴；区域截图可直接标注、保存、复制、钉在桌面，或一键识别文字 / 交给 AI 识图。独立对话窗口支持多话题、本地历史、流式输出、追问和 Markdown 导出。
 
 本项目基于 [zcx960/AIA-selection-assistan](https://github.com/zcx960/AIA-selection-assistan) 二次开发。FlashAgent-assistant 在保留划词工作流的基础上，扩展了可配置的模型服务、视觉识图、Agent 工作流、上下文压缩、联网搜索、Skills 与 MCP 集成等能力。上游项目的授权与鸣谢信息保留在本文档和 [LICENSE](./LICENSE) 中。
 
 ## 核心能力
 
 - **快速问答与划词操作**：浮动工具栏、内置和自定义动作、动作专属快捷键、系统 TTS，以及紧凑模式；选中内容即可就地提问。
-- **快速翻译与生词本**：快捷键呼出轻量翻译窗，内置微软 / 金山 / DeepLX 免 Key 引擎并行翻译、金山词霸词典与 Edge TTS 朗读（无需大模型接口）；查过的英文单词可自动或手动收进生词本，支持网格预览、词典详情、搜索与 Markdown 导出。
+- **快速翻译与生词本**：快捷键呼出轻量翻译窗，微软 / 金山 / 腾讯 / Yandex / DeepLX 等免 Key 或可选引擎并行翻译；金山词霸与有道词典卡片（音标发音、分词性释义、词形、短语、双语例句）；查过的英文单词可自动或手动收进生词本。
+- **截图与识图**：区域截图支持画笔和箭头标注，可保存、复制、钉图，一键「识别文字」（默认 Windows 系统引擎零下载即用，可选下载高精度 PP-OCR 引擎），或交给 AI 视觉对话。
 - **多模型配置**：支持 OpenAI-compatible 与 Anthropic API；可维护多个服务商模板，并为动作、识图和压缩分别指定模型。
-- **截图与识图**：区域截图支持画笔和箭头标注，可保存、复制、钉图和送入 AI 视觉对话；原图可在结果窗中展开查看。
 - **对话与上下文**：多话题本地历史、自动命名、Markdown 导出和 token 驱动的长对话压缩；压缩摘要保留任务、事实、文件状态和下一步。
 - **轻量 Agent 与扩展**：需要处理文件、目录、命令或联网搜索时，可在独立对话中快速进入 Agent 流程；工具调用逐项确认，危险命令分级拦截，文件改动可回退；支持记忆、Skills 与 MCP 服务器。
 - **桌面体验**：亮色、暗色和跟随系统主题，中英双语，结果窗口大小和字体可调，macOS 与 Windows 均可使用。
@@ -79,7 +79,7 @@ FlashAgent-assistant 是面向快速问答与轻量 Agent 工作流的桌面 AI 
 
 ### Windows
 
-- 支持系统托盘驻留，关闭主窗口不会直接退出应用。
+- 支持系统托盘驻留，关闭所有窗口后应用仍驻留托盘。
 - 划词监听效果可能受目标应用、管理员权限或输入法状态影响。
 - 未安装 Git Bash 时，Agent 命令工具会自动回退到 PowerShell。
 
@@ -128,16 +128,18 @@ pnpm dist:win
 
 ## 项目文档
 
+- [ARCHITECTURE.md](./ARCHITECTURE.md)：系统架构全景（进程模型、模块边界、关键数据流）。
 - [CHANGELOG.md](./CHANGELOG.md)：版本变更记录。
-- [docs/QUICK-TRANSLATE.md](./docs/QUICK-TRANSLATE.md)：快速翻译、语音合成与生词本的架构说明。
-- [docs/OCR.md](./docs/OCR.md)：截图离线 OCR 的选型与架构说明。
-- [CONTRIBUTING.md](./CONTRIBUTING.md)：开发与贡献约定。
-- [SECURITY.md](./SECURITY.md)：安全问题披露方式。
-- [docs/ARCHIVE.md](./docs/ARCHIVE.md)：历史方案与实施记录索引。
+- [docs/QUICK-TRANSLATE.md](./docs/QUICK-TRANSLATE.md)：快速翻译、各翻译服务、有道词典、语音合成与生词本的架构说明。
+- [docs/OCR.md](./docs/OCR.md)：截图文字识别双引擎的选型与架构说明。
+- [docs/NEW-FEATURE-PAGE-GUIDE.md](./docs/NEW-FEATURE-PAGE-GUIDE.md)：新功能页面接入的性能守则。
+- [docs/CONTRIBUTING.md](./docs/CONTRIBUTING.md)：开发与贡献约定。
+- [docs/SECURITY.md](./docs/SECURITY.md)：安全问题披露方式。
+- [docs/ARCHIVE.md](./docs/ARCHIVE.md)：文档索引与历史归档说明。
 
 ## 贡献、致谢与许可证
 
-欢迎提交 issue 和 pull request。提交前请阅读 [CONTRIBUTING.md](./CONTRIBUTING.md)。
+欢迎提交 issue 和 pull request。提交前请阅读 [docs/CONTRIBUTING.md](./docs/CONTRIBUTING.md)。
 
 - 上游项目：[zcx960/AIA-selection-assistan](https://github.com/zcx960/AIA-selection-assistan)，感谢原作者的工作。
 - 社区支持：[LINUX DO](https://linux.do/)。

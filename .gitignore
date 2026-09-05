@@ -28,3 +28,7 @@ sandbox-e2e/agent-context-result.json
 # 个人笔记（不入库）
 使用bug.txt
 tmp/
+
+# 本地文档（永不提交）：AI 协作规范与历史归档
+AGENTS.md
+docs/archive/

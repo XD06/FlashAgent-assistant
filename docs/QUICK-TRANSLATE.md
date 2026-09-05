@@ -5,7 +5,7 @@
 
 ## 功能总览
 
-- **快速翻译窗口**：全局快捷键呼出（默认 `Command/Ctrl+Shift+T`，`shortcuts.translate` 可配）。输入回车翻译（Shift+Enter 换行），源/目标语言下拉 + 交换；内置多个免费翻译服务**并行**请求，结果按设置顺序以卡片展示；单词场景附加词典卡片；窗口高度随内容自适应。
+- **快速翻译窗口**：全局快捷键呼出（默认 `Command/Ctrl+Shift+T`，`shortcuts.translate` 可配）。输入回车翻译（Shift+Enter 换行），源/目标语言下拉 + 交换；内置多个免费翻译服务**并行**请求，结果按设置顺序以卡片展示；单词场景附加词典卡片（金山词霸 / 有道，后者含短语与双语例句，例句可播放原始录音、无原音回退 TTS）；窗口高度随内容自适应。
 - **语音合成**：OpenAI `/v1/audio/speech` 兼容端点（Edge TTS 音色），翻译窗口的输入框与各译文卡片可一键朗读。
 - **生词本**：查询英文单词时可自动或手动收录（存单词 + 金山词典数据快照），设置侧边栏「生词本」子页预览 / 搜索 / 详情弹层 / 导出 Markdown / 清空。
 
@@ -16,9 +16,10 @@
 | `src/shared/translate.ts` | 语言表（`TRANSLATE_LANGUAGES`，code + 原生名）、各服务语言码映射（微软 `zh-Hans`、金山 `cht`、DeepLX 大写）、`isSingleWord`（词典触发条件）、`detectLanguageHeuristic`（脚本启发式识别，仅用于展示） |
 | `src/main/translate/microsoft.ts` | 微软翻译。**主模式 = legacy HMAC-SHA256 签名**（`api.cognitive.microsofttranslator.com`，签名只覆盖**不带 `https://` 的路径**，密钥硬编码见文件内注释）；Edge Token 模式（`edge.microsoft.com/translate/auth`）作回退，**失败后退避 10 分钟**（该端点部分地区已 404） |
 | `src/main/translate/iciba.ts` | 金山翻译（`dictionary.iciba.com/dictionary/fy/batch`，MD5 固定盐签名 + Origin/Referer/UA 三头必带）与词典（抓 `iciba.com/word?w=` 解析 `__NEXT_DATA__`，校验返回词与查询一致） |
+| `src/main/translate/youdao.ts` | 有道词典（0.8.4，可选服务）：`dict.youdao.com/jsonapi` POST 查词，零依赖移植自有道词典 API 参考实现；返回音标/分词性释义（每词性取前 3 条、最多 3 行）/词形/短语（前 3）/双语例句（前 2，含原始配音地址）。dictvoice 音频被有道阻断直链，经 `translate:youdao-audio` 主进程代理换 data URL（LRU 50） |
 | `src/main/translate/deeplx.ts` | DeepLX 兼容端点（LibreTranslate 格式 `POST {base}/v1/translate`），端点在设置中配置 |
 | `src/main/translate/tts.ts` | TTS 合成：`POST {tts.endpoint}`，body `{ input, voice, speed(数字), pitch(必须字符串!), style }` → MP3 → data URL |
-| `src/main/translate/index.ts` | `registerTranslateIpc`：并行跑所有启用服务（每服务 15s 超时、独立 AbortController，重跑自动中止旧请求），按服务回传 chunk；**生词本自动记录钩子**在 icibaDict 成功分支内 |
+| `src/main/translate/index.ts` | `registerTranslateIpc`：并行跑所有启用服务（每服务 15s 超时、独立 AbortController，重跑自动中止旧请求），按服务回传 chunk；**生词本自动记录钩子**在 icibaDict / youdaoDict 成功分支内 |
 | `src/main/vocabulary.ts` | 生词本存储（`userData/vocabulary.json`，内存索引去重）、Markdown 导出构建、IPC 注册（list/add/remove/clear/export） |
 | `src/renderer/translate/entry.tsx` | 翻译窗口 UI：回车翻译、语言选择/交换（localStorage 记忆）、服务卡片（占位条→加载→结果）、词典卡（含生词本按钮 + toast）、`ResizeObserver` 上报内容高度 |
 | `src/renderer/settings/entry.tsx` | 设置「翻译」分区（服务开关/排序、DeepLX 端点、TTS、自动记录开关、快捷键）与「生词本」子页（网格 chips、搜索、详情弹层、导出/清空） |
@@ -31,6 +32,7 @@
 | `translate:run` | R→M | `{ requestId, text, from, to }`；主进程读设置里启用的服务并行执行 |
 | `translate:chunk` | M→R | `{ requestId, serviceId, state: done/error, text?, dict?, detected?, vocabSaved?, vocabJustSaved?, error?, elapsedMs? }`，按服务粒度推送 |
 | `translate:abort` | R→M | 中止该 requestId 的全部服务请求 |
+| `translate:youdao-audio` | R→M | 有道 dictvoice 音频代理：校验 URL 白名单 → 主进程带 UA/Referer 拉取 → base64 data URL（例句原音与单词发音共用） |
 | `tts:synthesize` | R→M | 文本 → audio/mpeg data URL（渲染层 `<audio>` 播放；主进程请求以继承代理链） |
 | `vocab:list/add/remove/clear/export` | R→M | 生词本 CRUD；export 弹保存对话框写 Markdown 并在资源管理器定位 |
 | `window:adjust-height` | R→M | 翻译窗口高度自适应：渲染层上报文档高度，主进程夹取 [380, 工作区-40] 后 `setBounds`（顶边固定） |
