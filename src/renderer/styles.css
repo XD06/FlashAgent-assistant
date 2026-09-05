@@ -3992,6 +3992,9 @@ padding: 4px;
   align-items: baseline;
   gap: 5px;
   white-space: nowrap;
+  /* Chips stay atomic via nowrap; a chip wider than the whole card (long
+     zh→en glosses) may still break internally rather than clip forever. */
+  overflow-wrap: anywhere;
 }
 
 .tr-dict__phrase-en {
@@ -4028,6 +4031,17 @@ padding: 4px;
   align-items: center;
   justify-content: center;
   border-radius: 50%;
+}
+
+/* Sense rows with a play button (Youdao zh→en cards). */
+.tr-dict__meaning {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+}
+
+.tr-dict__meaning .tr-dict__sentence-play {
+  align-self: center;
 }
 
 .tr-dict__sentence-body {

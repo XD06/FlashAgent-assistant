@@ -12,7 +12,7 @@ import {
   isSingleWord,
   translateLanguageLabel
 } from '@shared/translate'
-import type { DictEntry, DictSentence, TranslateChunkPayload, TranslateServiceId } from '@shared/types'
+import type { DictEntry, DictMeaning, DictSentence, TranslateChunkPayload, TranslateServiceId } from '@shared/types'
 
 const PREFS_KEY = 'fa-translate-prefs'
 
@@ -95,6 +95,7 @@ function DictCard({
   onToggleSave,
   onSpeakUrl,
   onSpeakSentence,
+  onSpeakMeaning,
   t
 }: {
   dict: DictEntry
@@ -103,6 +104,8 @@ function DictCard({
   onSpeakUrl: (url: string) => void
   /** Speak a sentence: original voice when present, TTS fallback otherwise. */
   onSpeakSentence: (sentence: DictSentence) => void
+  /** Speak a sense row: original voice when present, TTS fallback otherwise. */
+  onSpeakMeaning: (meaning: DictMeaning) => void
   t: (key: string) => string
 }) {
   return (
@@ -145,6 +148,16 @@ function DictCard({
       <div className="tr-dict__meanings">
         {dict.meanings.slice(0, 3).map((meaning, index) => (
           <div className="tr-dict__meaning" key={index}>
+            {meaning.audioUrl && (
+              <button
+                type="button"
+                className="tr-tool-button tr-dict__sentence-play"
+                aria-label={t('speak')}
+                title={t('speak')}
+                onClick={() => onSpeakMeaning(meaning)}>
+                <Icon name="volume-2" size={12} />
+              </button>
+            )}
             {meaning.partOfSpeech && <span className="tr-dict__pos">{meaning.partOfSpeech}</span>}
             <span className="tr-dict__means" title={meaning.means.join('；')}>
               {meaning.means.slice(0, 3).join('；')}
@@ -214,6 +227,7 @@ function ServiceCard({
   onToggleSave,
   onSpeakUrl,
   onSpeakSentence,
+  onSpeakMeaning,
   t
 }: {
   serviceId: TranslateServiceId
@@ -224,6 +238,7 @@ function ServiceCard({
   onToggleSave: () => void
   onSpeakUrl: (url: string) => void
   onSpeakSentence: (sentence: DictSentence) => void
+  onSpeakMeaning: (meaning: DictMeaning) => void
   t: (key: string) => string
 }) {
   const isDict = DICT_SERVICES.has(serviceId) && !!card.dict
@@ -247,6 +262,7 @@ function ServiceCard({
             onToggleSave={onToggleSave}
             onSpeakUrl={onSpeakUrl}
             onSpeakSentence={onSpeakSentence}
+            onSpeakMeaning={onSpeakMeaning}
             t={t}
           />
         ) : card.status === 'error' ? (
@@ -661,6 +677,10 @@ function TranslateWindow() {
                 onSpeakSentence={(sentence) => {
                   if (sentence.audioUrl) speakUrl(sentence.audioUrl)
                   else void speak(sentence.en, `dict-sentence:${serviceId}:${sentence.en}`)
+                }}
+                onSpeakMeaning={(meaning) => {
+                  if (meaning.audioUrl) speakUrl(meaning.audioUrl)
+                  else void speak(meaning.means[0] ?? '', `dict-meaning:${serviceId}:${meaning.means[0] ?? ''}`)
                 }}
                 t={t}
               />

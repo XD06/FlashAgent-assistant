@@ -164,7 +164,7 @@ describe('lookupYoudaoWord (Chinese)', () => {
       word: {
         trs: [
           { '#text': 'company', '#tran': '公司；陪伴，同伴；宾客，来宾', voice: 'company&type=2' },
-          { '#text': 'corporation', '#tran': '社团，公司，法人（团体）；市政当局' },
+          { '#text': 'corporation', '#tran': '社团，公司，法人（团体）；市政当局', voice: 'corporation&type=2' },
           { '#text': 'firm', '#tran': '公司，商行' }
         ]
       }
@@ -201,10 +201,19 @@ describe('lookupYoudaoWord (Chinese)', () => {
         audioUrl: 'https://dict.youdao.com/dictvoice?audio=%E5%85%AC%E5%8F%B8&le=zh-CHS'
       }
     ])
-    // English term first, up to two Chinese glosses after it.
+    // English term first, up to two Chinese glosses after it; the upstream
+    // voice rides along as the row's original audio.
     expect(entry!.meanings).toEqual([
-      { partOfSpeech: '', means: ['company', '公司', '陪伴，同伴'] },
-      { partOfSpeech: '', means: ['corporation', '社团，公司，法人（团体）', '市政当局'] },
+      {
+        partOfSpeech: '',
+        means: ['company', '公司', '陪伴，同伴'],
+        audioUrl: 'https://dict.youdao.com/dictvoice?audio=company&type=2'
+      },
+      {
+        partOfSpeech: '',
+        means: ['corporation', '社团，公司，法人（团体）', '市政当局'],
+        audioUrl: 'https://dict.youdao.com/dictvoice?audio=corporation&type=2'
+      },
       { partOfSpeech: '', means: ['firm', '公司，商行'] }
     ])
     expect(entry!.exchange).toEqual({})

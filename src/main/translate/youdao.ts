@@ -136,7 +136,8 @@ async function lookupZh(q: string, fetchImpl: ProviderFetch, signal: AbortSignal
     ? [{ label: 'zh', phonetic: pinyin, audioUrl: `https://dict.youdao.com/dictvoice?audio=${encodeURIComponent(q)}&le=zh-CHS` }]
     : []
 
-  // Each ce sense: #text is the English term, #tran the Chinese glosses.
+  // Each ce sense: #text is the English term, #tran the Chinese glosses and
+  // voice the recorded pronunciation of the English term ("company&type=2").
   // Lead with the English translation (that is what a zh→en lookup wants)
   // and keep two glosses after it; the display cap trims the rest.
   const meanings: DictMeaning[] = []
@@ -147,19 +148,33 @@ async function lookupZh(q: string, fetchImpl: ProviderFetch, signal: AbortSignal
       .map((x) => x.trim())
       .filter(Boolean)
     const means = [...(en ? [en] : []), ...zhParts.slice(0, 2)]
-    if (means.length) meanings.push({ partOfSpeech: '', means })
+    if (means.length) {
+      meanings.push({
+        partOfSpeech: '',
+        means,
+        ...(t.voice ? { audioUrl: `https://dict.youdao.com/dictvoice?audio=${t.voice}` } : {})
+      })
+    }
   }
 
-  // web-translation[0] echoes the queried word — take the next three.
+  // web-translation[0] echoes the queried word — take the next three. The
+  // English values repeat heavily; dedupe and keep two so each phrase chip
+  // stays short enough to flow-wrap instead of clipping.
   const phrases: DictPhrase[] = (data.web_trans?.['web-translation'] ?? [])
     .slice(1, 4)
-    .map((w) => ({
-      en: w.key ?? '',
-      zh: (w.trans ?? [])
-        .map((x) => x.value)
-        .filter(Boolean)
-        .join('；')
-    }))
+    .map((w) => {
+      const seen = new Set<string>()
+      const values: string[] = []
+      for (const x of w.trans ?? []) {
+        const v = (x.value ?? '').trim()
+        const key = v.toLowerCase()
+        if (!v || seen.has(key)) continue
+        seen.add(key)
+        values.push(v)
+        if (values.length === 2) break
+      }
+      return { en: w.key ?? '', zh: values.join('；') }
+    })
     .filter((p) => p.en)
 
   // ZH examples: `sentence` is the Chinese sentence (with <b> markup),

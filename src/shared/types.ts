@@ -333,11 +333,6 @@ export interface DictPhonetic {
   audioUrl: string
 }
 
-export interface DictMeaning {
-  partOfSpeech: string
-  means: string[]
-}
-
 /** iciba dictionary lookup result for a single word. */
 /** A dictionary phrase (词组) — en term with its Chinese gloss. */
 export interface DictPhrase {
@@ -351,6 +346,14 @@ export interface DictSentence {
   en: string
   zh: string
   source?: string
+  audioUrl?: string
+}
+
+/** One part-of-speech row of a dictionary card. audioUrl carries the
+ * upstream voice for this sense (Youdao zh→en senses), when provided. */
+export interface DictMeaning {
+  partOfSpeech: string
+  means: string[]
   audioUrl?: string
 }
 
