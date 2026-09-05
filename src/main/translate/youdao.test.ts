@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { lookupYoudaoWord, parseYoudaoSense } from './youdao'
+import { isZhQuery, lookupYoudaoWord, parseYoudaoSense } from './youdao'
 import type { ProviderFetch } from '../ai/OpenAICompatibleClient'
 
 // Fixture mirrors the real dict.youdao.com/jsonapi response shape for
@@ -143,5 +143,95 @@ describe('lookupYoudaoWord', () => {
     expect(entry).not.toBeNull()
     expect(entry!.phrases).toBeUndefined()
     expect(entry!.sentences).toBeUndefined()
+  })
+})
+
+describe('isZhQuery', () => {
+  it('detects CJK input and leaves Latin alone', () => {
+    expect(isZhQuery('公司')).toBe(true)
+    expect(isZhQuery('参考')).toBe(true)
+    expect(isZhQuery('flash')).toBe(false)
+    expect(isZhQuery('  ')).toBe(false)
+  })
+})
+
+describe('lookupYoudaoWord (Chinese)', () => {
+  // Fixture mirrors the real jsonapi_s response for "公司" (trimmed).
+  const ZH_PAYLOAD = {
+    meta: { isHasSimpleDict: '1' },
+    simple: { word: [{ phone: 'gōng sī' }] },
+    ce: {
+      word: {
+        trs: [
+          { '#text': 'company', '#tran': '公司；陪伴，同伴；宾客，来宾', voice: 'company&type=2' },
+          { '#text': 'corporation', '#tran': '社团，公司，法人（团体）；市政当局' },
+          { '#text': 'firm', '#tran': '公司，商行' }
+        ]
+      }
+    },
+    web_trans: {
+      'web-translation': [
+        { key: '公司', trans: [{ value: 'COMPANY' }] },
+        { key: '英国广播公司', trans: [{ value: 'BBC' }, { value: 'British Broadcasting Corporation' }] },
+        { key: '公司法', trans: [{ value: 'the Company Law' }] },
+        { key: '跨国公司', trans: [{ value: 'multinational corporation' }] }
+      ]
+    },
+    blng_sents_part: {
+      'sentence-pair': [
+        {
+          sentence: '公司是由三家小<b>公司</b>合并组成的。',
+          'sentence-translation': 'The company was formed by merging three smaller firms.',
+          source: '《牛津词典》',
+          'sentence-translation-speech': 'The+company+was+formed'
+        },
+        { sentence: '这家<b>公司</b>倒闭了。', 'sentence-translation': 'The firm has gone bankrupt.' }
+      ]
+    }
+  }
+
+  it('maps the ce dict into the shared card shape', async () => {
+    const entry = await lookupYoudaoWord('公司', fetchJson(ZH_PAYLOAD), AbortSignal.timeout(1000))
+    expect(entry).not.toBeNull()
+    expect(entry!.word).toBe('公司')
+    expect(entry!.phonetics).toEqual([
+      {
+        label: 'zh',
+        phonetic: 'gōng sī',
+        audioUrl: 'https://dict.youdao.com/dictvoice?audio=%E5%85%AC%E5%8F%B8&le=zh-CHS'
+      }
+    ])
+    // English term first, up to two Chinese glosses after it.
+    expect(entry!.meanings).toEqual([
+      { partOfSpeech: '', means: ['company', '公司', '陪伴，同伴'] },
+      { partOfSpeech: '', means: ['corporation', '社团，公司，法人（团体）', '市政当局'] },
+      { partOfSpeech: '', means: ['firm', '公司，商行'] }
+    ])
+    expect(entry!.exchange).toEqual({})
+    // web-translation[0] echoes the query — entries start at [1].
+    expect(entry!.phrases).toEqual([
+      { en: '英国广播公司', zh: 'BBC；British Broadcasting Corporation' },
+      { en: '公司法', zh: 'the Company Law' },
+      { en: '跨国公司', zh: 'multinational corporation' }
+    ])
+    // Markup stripped; original voice wired from -speech.
+    expect(entry!.sentences).toEqual([
+      {
+        en: 'The company was formed by merging three smaller firms.',
+        zh: '公司是由三家小公司合并组成的。',
+        source: '《牛津词典》',
+        audioUrl: 'https://dict.youdao.com/dictvoice?audio=The+company+was+formed'
+      },
+      { en: 'The firm has gone bankrupt.', zh: '这家公司倒闭了。' }
+    ])
+  })
+
+  it('returns null for unknown Chinese words (no ce dict)', async () => {
+    const entry = await lookupYoudaoWord(
+      '龘鱻麤',
+      fetchJson({ meta: { isHasSimpleDict: '1' } }),
+      AbortSignal.timeout(1000)
+    )
+    expect(entry).toBeNull()
   })
 })
