@@ -6,6 +6,7 @@ import type { ProviderFetch } from '../ai/OpenAICompatibleClient'
 import { getSettings } from '../settingsStore'
 import { translateDeeplx } from './deeplx'
 import { lookupIcibaWord, translateIciba } from './iciba'
+import { lookupYoudaoWord } from './youdao'
 import { translateMicrosoft } from './microsoft'
 import { synthesizeSpeech } from './tts'
 import { translateTencent } from './tencent'
@@ -60,6 +61,24 @@ async function runService(
           // report both the save state and whether THIS lookup inserted the
           // word (only then does the renderer show the save toast — looking
           // up an already-saved word must stay silent).
+          const english = isEnglishWord(request.text)
+          const justSaved = english && getSettings().vocabulary.autoRecord ? addVocabulary(dict) : false
+          return {
+            state: 'done' as const,
+            dict,
+            vocabSaved: english ? hasVocabulary(dict.word) : undefined,
+            vocabJustSaved: justSaved
+          }
+        })
+      )
+    }
+    case 'youdaoDict': {
+      // Dictionary only for single words — the renderer hides the card
+      // otherwise, so skip the network entirely for phrases.
+      if (!isSingleWord(text)) return { state: 'done' }
+      return withElapsed(
+        lookupYoudaoWord(text, fetchImpl, timedSignal).then((dict) => {
+          if (!dict) throw new Error('No dictionary result')
           const english = isEnglishWord(request.text)
           const justSaved = english && getSettings().vocabulary.autoRecord ? addVocabulary(dict) : false
           return {
@@ -154,5 +173,29 @@ export function registerTranslateIpc(providerFetch: ProviderFetch): void {
   ipcMain.handle(IPC.TtsSynthesize, (_event, text: string) => {
     if (typeof text !== 'string' || !text.trim()) throw new Error('TTS: empty text')
     return synthesizeSpeech(text, getSettings().tts, providerFetch, AbortSignal.timeout(TTS_TIMEOUT_MS))
+  })
+
+  // Youdao blocks direct hotlinking of its dictvoice audio, so the renderer
+  // asks main to fetch it (headers below satisfy the check) and gets back a
+  // data URL. Small files; an LRU keeps repeat word lookups instant.
+  const audioCache = new Map<string, string>()
+  ipcMain.handle(IPC.YoudaoAudio, async (_event, url: string): Promise<string> => {
+    if (typeof url !== 'string' || !/^https:\/\/dict\.youdao\.com\/dictvoice\?/.test(url)) {
+      throw new Error('youdao audio: bad url')
+    }
+    const cached = audioCache.get(url)
+    if (cached) return cached
+    const res = await providerFetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)', Referer: 'https://dict.youdao.com/' },
+      signal: AbortSignal.timeout(TTS_TIMEOUT_MS)
+    })
+    if (!res.ok) throw new Error(`youdao audio ${res.status}`)
+    const buffer = Buffer.from(await res.arrayBuffer())
+    const dataUrl = `data:audio/mpeg;base64,${buffer.toString('base64')}`
+    audioCache.set(url, dataUrl)
+    if (audioCache.size > 50) {
+      audioCache.delete(audioCache.keys().next().value as string)
+    }
+    return dataUrl
   })
 }

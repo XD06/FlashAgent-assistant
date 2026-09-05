@@ -101,6 +101,9 @@ const api = {
     run: (request: { requestId: string; text: string; from: string; to: string }): Promise<void> =>
       ipcRenderer.invoke(IPC.TranslateRun, request),
     abort: (requestId: string): Promise<void> => ipcRenderer.invoke(IPC.TranslateAbort, requestId),
+    /** Fetch Youdao dictvoice audio via main (upstream blocks direct
+     * hotlinking) — resolves to a data URL for `new Audio()`. */
+    youdaoAudio: (url: string): Promise<string> => ipcRenderer.invoke(IPC.YoudaoAudio, url),
     onChunk: (callback: (payload: TranslateChunkPayload) => void) => {
       const listener = (_event: Electron.IpcRendererEvent, payload: TranslateChunkPayload) => callback(payload)
       ipcRenderer.on(IPC.TranslateChunk, listener)

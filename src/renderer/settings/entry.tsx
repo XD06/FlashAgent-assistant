@@ -1310,6 +1310,8 @@ function SettingsApp() {
             return t('serviceIciba')
           case 'icibaDict':
             return t('serviceIcibaDict')
+    case 'youdaoDict':
+      return t('serviceYoudaoDict')
           case 'tencent':
             return t('serviceTencent')
           case 'yandex':

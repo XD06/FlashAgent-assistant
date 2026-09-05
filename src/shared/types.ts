@@ -40,7 +40,7 @@ export interface ShortcutSettings {
 }
 
 /** Built-in quick-translate services, all key-free. */
-export type TranslateServiceId = 'microsoft' | 'iciba' | 'icibaDict' | 'tencent' | 'yandex' | 'deeplx'
+export type TranslateServiceId = 'microsoft' | 'iciba' | 'icibaDict' | 'youdaoDict' | 'tencent' | 'yandex' | 'deeplx'
 
 export interface TranslateServiceConfig {
   id: TranslateServiceId
@@ -313,7 +313,7 @@ export interface TranslateChunkPayload {
   state: 'done' | 'error'
   /** Translated text (state=done). */
   text?: string
-  /** Dictionary entry for the icibaDict service. */
+  /** Dictionary entry for a dictionary service (icibaDict / youdaoDict). */
   dict?: DictEntry
   /** Whether the word is already in the vocabulary book (dict chunks only). */
   vocabSaved?: boolean
@@ -339,6 +339,21 @@ export interface DictMeaning {
 }
 
 /** iciba dictionary lookup result for a single word. */
+/** A dictionary phrase (词组) — en term with its Chinese gloss. */
+export interface DictPhrase {
+  en: string
+  zh: string
+}
+
+/** A bilingual example sentence (双语例句). audioUrl is the upstream voice
+ * for the original recording, when the service provides one. */
+export interface DictSentence {
+  en: string
+  zh: string
+  source?: string
+  audioUrl?: string
+}
+
 export interface DictEntry {
   word: string
   phonetics: DictPhonetic[]
@@ -352,6 +367,10 @@ export interface DictEntry {
     comparative?: string[]
     superlative?: string[]
   }
+  /** Common phrases (Youdao phrs); absent on services that don't provide them. */
+  phrases?: DictPhrase[]
+  /** Bilingual example sentences (Youdao blng, first two); absent when unknown. */
+  sentences?: DictSentence[]
 }
 
 /** One saved vocabulary word (生词本). Snapshot of the dict data at save time

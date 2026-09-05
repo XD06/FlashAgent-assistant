@@ -12,7 +12,7 @@ import {
   isSingleWord,
   translateLanguageLabel
 } from '@shared/translate'
-import type { DictEntry, TranslateChunkPayload, TranslateServiceId } from '@shared/types'
+import type { DictEntry, DictSentence, TranslateChunkPayload, TranslateServiceId } from '@shared/types'
 
 const PREFS_KEY = 'fa-translate-prefs'
 
@@ -63,6 +63,9 @@ const EXCHANGE_LABEL_KEYS: Array<[keyof DictEntry['exchange'], string]> = [
   ['superlative', 'dictSuperlative']
 ]
 
+/** Services that render the dictionary card (single-word lookups). */
+const DICT_SERVICES: ReadonlySet<TranslateServiceId> = new Set<TranslateServiceId>(['icibaDict', 'youdaoDict'])
+
 function serviceDisplayName(serviceId: TranslateServiceId, t: (key: string) => string): string {
   switch (serviceId) {
     case 'microsoft':
@@ -71,6 +74,8 @@ function serviceDisplayName(serviceId: TranslateServiceId, t: (key: string) => s
       return t('serviceIciba')
     case 'icibaDict':
       return t('serviceIcibaDict')
+    case 'youdaoDict':
+      return t('serviceYoudaoDict')
     case 'tencent':
       return t('serviceTencent')
     case 'yandex':
@@ -89,12 +94,15 @@ function DictCard({
   saved,
   onToggleSave,
   onSpeakUrl,
+  onSpeakSentence,
   t
 }: {
   dict: DictEntry
   saved: boolean
   onToggleSave: () => void
   onSpeakUrl: (url: string) => void
+  /** Speak a sentence: original voice when present, TTS fallback otherwise. */
+  onSpeakSentence: (sentence: DictSentence) => void
   t: (key: string) => string
 }) {
   return (
@@ -130,11 +138,17 @@ function DictCard({
           ))}
         </div>
       )}
+      {/* Compact by design: the full list is a wall of text on common words
+          (Youdao "flash" has 9 senses under v. alone) — show the frequent
+          first three senses of each pos, max three pos rows; hover reveals
+          the complete list, and the saved vocabulary entry keeps everything. */}
       <div className="tr-dict__meanings">
-        {dict.meanings.map((meaning, index) => (
+        {dict.meanings.slice(0, 3).map((meaning, index) => (
           <div className="tr-dict__meaning" key={index}>
             {meaning.partOfSpeech && <span className="tr-dict__pos">{meaning.partOfSpeech}</span>}
-            <span className="tr-dict__means">{meaning.means.join('；')}</span>
+            <span className="tr-dict__means" title={meaning.means.join('；')}>
+              {meaning.means.slice(0, 3).join('；')}
+            </span>
           </div>
         ))}
       </div>
@@ -144,6 +158,46 @@ function DictCard({
             <span className="tr-dict__exchange-item" key={key}>
               {t(labelKey)}：{dict.exchange[key]!.join('、')}
             </span>
+          ))}
+        </div>
+      )}
+      {/* exchange/phrases render as an inline flow: chips wrap as whole units
+          (white-space: nowrap on the item) so a form like "复数：flashes"
+          never splits across lines. */}
+      {dict.phrases && dict.phrases.length > 0 && (
+        <div className="tr-dict__phrases">
+          <div className="tr-dict__section-label">{t('dictPhrasesLabel')}</div>
+          <div className="tr-dict__phrase-flow">
+            {dict.phrases.map((phrase) => (
+              <span className="tr-dict__phrase" key={phrase.en} title={`${phrase.en} ${phrase.zh}`}>
+                <span className="tr-dict__phrase-en">{phrase.en}</span>
+                <span className="tr-dict__phrase-zh">{phrase.zh}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+      {dict.sentences && dict.sentences.length > 0 && (
+        <div className="tr-dict__sentences">
+          <div className="tr-dict__section-label">{t('dictSentenceLabel')}</div>
+          {dict.sentences.map((sentence, index) => (
+            <div className="tr-dict__sentence" key={index}>
+              <button
+                type="button"
+                className="tr-tool-button tr-dict__sentence-play"
+                aria-label={t('speak')}
+                title={t('speak')}
+                onClick={() => onSpeakSentence(sentence)}>
+                <Icon name="volume-2" size={12} />
+              </button>
+              <div className="tr-dict__sentence-body">
+                <div className="tr-dict__sentence-en">{sentence.en}</div>
+                <div className="tr-dict__sentence-zh">
+                  {sentence.zh}
+                  {sentence.source && <span className="tr-dict__sentence-source">{sentence.source}</span>}
+                </div>
+              </div>
+            </div>
           ))}
         </div>
       )}
@@ -158,6 +212,8 @@ function ServiceCard({
   onSpeak,
   onCopy,
   onToggleSave,
+  onSpeakUrl,
+  onSpeakSentence,
   t
 }: {
   serviceId: TranslateServiceId
@@ -166,9 +222,11 @@ function ServiceCard({
   onSpeak: () => void
   onCopy: () => void
   onToggleSave: () => void
+  onSpeakUrl: (url: string) => void
+  onSpeakSentence: (sentence: DictSentence) => void
   t: (key: string) => string
 }) {
-  const isDict = serviceId === 'icibaDict' && !!card.dict
+  const isDict = DICT_SERVICES.has(serviceId) && !!card.dict
   return (
     <div className="tr-card">
       <div className="tr-card__head">
@@ -187,10 +245,8 @@ function ServiceCard({
             dict={card.dict!}
             saved={!!card.vocabSaved}
             onToggleSave={onToggleSave}
-            onSpeakUrl={(url) => {
-              const audio = new Audio(url)
-              void audio.play().catch(() => {})
-            }}
+            onSpeakUrl={onSpeakUrl}
+            onSpeakSentence={onSpeakSentence}
             t={t}
           />
         ) : card.status === 'error' ? (
@@ -358,8 +414,8 @@ function TranslateWindow() {
       requestIdRef.current = requestId
       const loading: Partial<Record<TranslateServiceId, CardState>> = {}
       for (const serviceId of enabledServices) {
-        // The dictionary card only participates for single-word input.
-        if (serviceId === 'icibaDict' && !isSingleWord(trimmed)) continue
+        // Dictionary cards only participate for single-word input.
+        if (DICT_SERVICES.has(serviceId) && !isSingleWord(trimmed)) continue
         loading[serviceId] = { status: 'loading' }
       }
       setCards(loading)
@@ -411,12 +467,24 @@ function TranslateWindow() {
   const speakUrl = React.useCallback(
     (url: string) => {
       stopAudio()
-      const audio = new Audio(url)
-      audioRef.current = audio
-      audio.onended = () => {
-        if (audioRef.current === audio) setPlayingKey(null)
+      // Youdao dictvoice rejects direct hotlinking — main fetches it into a
+      // data URL; other services' URLs play directly.
+      const play = (src: string) => {
+        const audio = new Audio(src)
+        audioRef.current = audio
+        audio.onended = () => {
+          if (audioRef.current === audio) setPlayingKey(null)
+        }
+        void audio.play().catch(() => {})
       }
-      void audio.play().catch(() => {})
+      if (/^https:\/\/dict\.youdao\.com\/dictvoice\?/.test(url)) {
+        void window.assistantLite.translate
+          .youdaoAudio(url)
+          .then(play)
+          .catch(() => {})
+      } else {
+        play(url)
+      }
     },
     [stopAudio]
   )
@@ -570,8 +638,8 @@ function TranslateWindow() {
             // The dictionary card only materializes for single-word input;
             // its bar stays visible while idle so the service list matches
             // the settings (STranslate-style stubs).
-            if (serviceId === 'icibaDict' && card && !isSingleWord(input)) return null
-            if (serviceId === 'icibaDict' && !card && input.trim() && !isSingleWord(input)) return null
+            if (DICT_SERVICES.has(serviceId) && card && !isSingleWord(input)) return null
+            if (DICT_SERVICES.has(serviceId) && !card && input.trim() && !isSingleWord(input)) return null
             if (!card) {
               return (
                 <div className="tr-card tr-card--stub" key={serviceId}>
@@ -589,6 +657,11 @@ function TranslateWindow() {
                 onSpeak={() => void speak(card.text ?? '', `card:${serviceId}`)}
                 onCopy={() => copy(card.text)}
                 onToggleSave={() => toggleVocab(serviceId)}
+                onSpeakUrl={speakUrl}
+                onSpeakSentence={(sentence) => {
+                  if (sentence.audioUrl) speakUrl(sentence.audioUrl)
+                  else void speak(sentence.en, `dict-sentence:${serviceId}:${sentence.en}`)
+                }}
                 t={t}
               />
             )

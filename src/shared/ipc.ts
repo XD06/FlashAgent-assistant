@@ -32,6 +32,7 @@ export const IPC = {
 
   TranslateRun: 'translate:run',
   TranslateAbort: 'translate:abort',
+  YoudaoAudio: 'translate:youdao-audio',
   TranslateChunk: 'translate:chunk',
 
   TtsSynthesize: 'tts:synthesize',

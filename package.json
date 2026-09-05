@@ -1,6 +1,6 @@
 {
   "name": "flashagent-assistant",
-  "version": "0.8.3",
+  "version": "0.8.4",
   "description": "FlashAgent-assistant: fast answers and lightweight Agent workflows｜快速划词问答、截图识图与轻量 Agent 工作流。",
   "main": "out/main/index.cjs",
   "author": "XD06",

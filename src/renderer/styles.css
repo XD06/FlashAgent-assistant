@@ -3951,13 +3951,100 @@ padding: 4px;
 
 .tr-dict__exchange {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  flex-wrap: wrap;
+  gap: 2px 14px;
   margin-top: 8px;
   padding-top: 8px;
   border-top: 1px dashed var(--divider);
   color: var(--muted);
   font-size: 12px;
+}
+
+/* Atomic chip: the label+value pair never breaks across lines. */
+.tr-dict__exchange-item {
+  white-space: nowrap;
+}
+
+.tr-dict__section-label {
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 3px;
+}
+
+.tr-dict__phrases {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--divider);
+  font-size: 12px;
+}
+
+.tr-dict__phrase-flow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 14px;
+}
+
+.tr-dict__phrase {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.tr-dict__phrase-en {
+  font-weight: 600;
+}
+
+.tr-dict__phrase-zh {
+  color: var(--muted);
+}
+
+.tr-dict__sentences {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--divider);
+  font-size: 12px;
+}
+
+/* One example: play button left, text wraps fully (no ellipsis). */
+.tr-dict__sentence {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.tr-dict__sentence-play {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+}
+
+.tr-dict__sentence-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tr-dict__sentence-zh {
+  color: var(--muted);
+}
+
+.tr-dict__sentence-source {
+  margin-left: 6px;
+  font-size: 11px;
+  opacity: 0.72;
 }
 
 /* ---------- Settings: translate section ---------- */
