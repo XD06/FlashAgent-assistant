@@ -1,7 +1,5 @@
 # FlashAgent-assistant v0.8.1 性能深度审查与架构重构建议
 
-> **[已归档 · 已消化]** 四份独立审查之一。逐条核查结论并入 [PERF-EXECUTION-PLAN-2026-09-03.md](./PERF-EXECUTION-PLAN-2026-09-03.md)，0.8.2 已落地；本文含已证伪建议（如 `setVisualSearchActive`，Electron 33 无此 API），勿直接采信，见执行文档第三节。
-
 > **审查基准**：v0.8.1 · Electron 33 · React 18 · electron-vite  
 > **审查日期**：2026-09-03  
 > **审查专家**：Antigravity (Google DeepMind)  

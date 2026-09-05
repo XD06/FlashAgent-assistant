@@ -1174,6 +1174,15 @@ if (!app.requestSingleInstanceLock()) {
 
   app.on('second-instance', () => createSettingsWindow())
   app.on('activate', () => createSettingsWindow())
+  // Tray-resident app: stay alive when the last window goes away. The settings
+  // window idle-destroys after 60s hidden (scheduleSettingsIdleDestroy) and
+  // users may close every window — the tray, selection hook, global shortcuts
+  // and IPC all keep working, and windows are recreated on demand (tray click,
+  // shortcuts, second-instance). Merely subscribing suppresses Electron's
+  // default "quit when all windows are closed".
+  app.on('window-all-closed', () => {
+    // Intentionally keep running.
+  })
   app.on('will-quit', () => {
     isQuitting = true
     globalShortcut.unregisterAll()
