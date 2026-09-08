@@ -17,7 +17,7 @@ delete process.env.ELECTRON_RUN_AS_NODE
 // memory"). Default to a low level unless explicitly overridden — see
 // ELECTRON_BUILDER_COMPRESSION_LEVEL in app-builder-lib targets/archive.js.
 if (!process.env.ELECTRON_BUILDER_COMPRESSION_LEVEL) {
-  process.env.ELECTRON_BUILDER_COMPRESSION_LEVEL = '1'
+  process.env.ELECTRON_BUILDER_COMPRESSION_LEVEL = '9'
 }
 
 const args = process.argv.slice(2)
