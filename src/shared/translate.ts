@@ -61,6 +61,28 @@ export function detectLanguageHeuristic(text: string): string {
   return 'en'
 }
 
+/**
+ * Automatically resolve target language when source is 'auto':
+ * - When input is Chinese, target switches to English ('en').
+ * - When input is English or non-Chinese and target matches source, target switches to Chinese ('zh').
+ * Explicit foreign target selections (e.g. 'ja') are preserved unless the input matches that target.
+ */
+export function getAutoTargetLanguage(text: string, currentFrom: string, currentTo: string): string {
+  if (currentFrom !== 'auto' || !text.trim()) return currentTo
+  const detected = detectLanguageHeuristic(text)
+  const isZhDetected = detected === 'zh' || detected === 'zh-tw'
+  const isZhTarget = currentTo === 'zh' || currentTo === 'zh-tw'
+
+  if (isZhDetected && isZhTarget) {
+    return 'en'
+  }
+  if (!isZhDetected && (currentTo === 'en' || currentTo === detected)) {
+    return 'zh'
+  }
+  return currentTo
+}
+
+
 /** Microsoft Translator: zh-Hans / zh-Hant, others pass through. */
 export function microsoftLanguageCode(code: string): string {
   if (code === 'zh') return 'zh-Hans'

@@ -125,10 +125,14 @@ export const defaultSettings: AppSettings = {
     tencentClientKey: ''
   },
   tts: {
+    service: 'openai',
     endpoint: 'https://tts.wangwangit.com/v1/audio/speech',
     voice: 'zh-CN-XiaoxiaoNeural',
     speed: 1,
-    pitch: 0
+    pitch: 0,
+    mimoApiKey: '',
+    mimoModel: 'mimo-v2.5-tts',
+    mimoVoice: '冰糖'
   },
   vocabulary: {
     autoRecord: false

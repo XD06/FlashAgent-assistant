@@ -57,15 +57,25 @@ export interface TranslateSettings {
   tencentClientKey: string
 }
 
+export type TtsServiceId = 'openai' | 'mimo'
+
 export interface TtsSettings {
+  /** Speech synthesis provider: 'openai' (Edge-TTS / OpenAI compatible) or 'mimo' (Xiaomi MiMo). */
+  service: TtsServiceId
   /** OpenAI-compatible /v1/audio/speech endpoint. */
   endpoint: string
   /** Edge TTS voice, e.g. zh-CN-XiaoxiaoNeural. */
   voice: string
   /** 0.5 – 2.0. */
   speed: number
-  /** -50 – 50. */
+  /** -50 – 50 (used by Edge TTS). */
   pitch: number
+  /** Xiaomi MiMo API Key from platform.xiaomimimo.com. */
+  mimoApiKey: string
+  /** Xiaomi MiMo model ID, defaults to mimo-v2.5-tts. */
+  mimoModel: string
+  /** Xiaomi MiMo preset voice, defaults to 冰糖. */
+  mimoVoice: string
 }
 
 export type McpTransport = 'stdio' | 'http'

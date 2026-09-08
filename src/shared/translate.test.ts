@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   deeplxLanguageCode,
   detectLanguageHeuristic,
+  getAutoTargetLanguage,
   icibaLanguageCode,
   isSingleWord,
   microsoftLanguageCode,
@@ -69,3 +70,36 @@ describe('translateLanguageLabel', () => {
     expect(translateLanguageLabel('xx')).toBe('xx')
   })
 })
+
+describe('getAutoTargetLanguage', () => {
+  it('switches target to en when input is Chinese and target is Chinese', () => {
+    expect(getAutoTargetLanguage('如果我想让它移动呢？', 'auto', 'zh')).toBe('en')
+    expect(getAutoTargetLanguage('你好世界', 'auto', 'zh-tw')).toBe('en')
+  })
+
+  it('preserves target as en when input is Chinese and target is already en', () => {
+    expect(getAutoTargetLanguage('如果我想让它移动呢？', 'auto', 'en')).toBe('en')
+  })
+
+  it('switches target to zh when input is English and target is en', () => {
+    expect(getAutoTargetLanguage('What if I want it to move?', 'auto', 'en')).toBe('zh')
+    expect(getAutoTargetLanguage('hello world', 'auto', 'en')).toBe('zh')
+  })
+
+  it('preserves target as zh when input is English and target is already zh', () => {
+    expect(getAutoTargetLanguage('What if I want it to move?', 'auto', 'zh')).toBe('zh')
+  })
+
+  it('preserves explicit foreign targets unless matching the input language', () => {
+    expect(getAutoTargetLanguage('如果我想让它移动呢？', 'auto', 'ja')).toBe('ja')
+    expect(getAutoTargetLanguage('hello world', 'auto', 'ja')).toBe('ja')
+    expect(getAutoTargetLanguage('こんにちは', 'auto', 'ja')).toBe('zh')
+  })
+
+  it('does nothing when input is empty or source is not auto', () => {
+    expect(getAutoTargetLanguage('', 'auto', 'zh')).toBe('zh')
+    expect(getAutoTargetLanguage('   ', 'auto', 'zh')).toBe('zh')
+    expect(getAutoTargetLanguage('你好', 'zh', 'zh')).toBe('zh')
+  })
+})
+

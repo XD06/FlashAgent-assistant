@@ -177,6 +177,7 @@ function cancelSettingsIdleDestroy(): void {
 
 function createSettingsWindow(): BrowserWindow {
   if (settingsWindow && !settingsWindow.isDestroyed()) {
+    if (settingsWindow.isMinimized()) settingsWindow.restore()
     app.dock?.show()
     settingsWindow.show()
     settingsWindow.focus()
@@ -218,6 +219,14 @@ function createSettingsWindow(): BrowserWindow {
   })
   loadRenderer(settingsWindow, 'settings.html')
   return settingsWindow
+}
+
+function toggleSettingsWindow(): void {
+  if (settingsWindow && !settingsWindow.isDestroyed() && settingsWindow.isVisible() && settingsWindow.isFocused()) {
+    settingsWindow.hide()
+    return
+  }
+  createSettingsWindow()
 }
 
 function openChatWindow(): void {
@@ -396,8 +405,7 @@ function registerShortcuts(): void {
     {
       accelerator: settings.shortcuts.toggleAssistant,
       action: () => {
-        const next = updateSettings({ enabled: !getSettings().enabled })
-        applySelectionState(next)
+        toggleSettingsWindow()
       }
     },
     {

@@ -62,7 +62,7 @@ graph TD
 
 - **划词问答**：`selection-hook`（原生全局钩子）→ `SelectionService`（主进程）→ 划词工具栏窗口 → 用户选动作 → `SelectionProcessAction` IPC → 复用 action 窗口（`selectionAction.html`）→ `AiStream` IPC → 主进程 Agent 循环调 AI 服务商 → chunk 流式回传。
 - **截图识别文字**：热键 → `ScreenshotService.startCapture` → GDI helper exe（`csc.exe` 现场编译，写临时 PNG，读入内存后立即删除）→ 全屏遮罩选区 → confirm 后主进程裁剪 → 按 `settings.ocrEngine` 分发：系统引擎（`WinRtOcr.exe`，PNG 走 stdin）或 paddle 引擎包（userData 内按需下载）→ 文本进剪贴板 + toast。
-- **快速翻译**：回车 → `translate:run` → 主进程**并行**执行所有启用服务（每服务独立 15s 超时与 AbortController）→ 逐服务回 `translate:chunk` → 渲染层按 `serviceId` 更新卡片；词典卡片附带生词本自动收录钩子。
+- **快速翻译与语音合成**：回车 → `translate:run` → 主进程**并行**执行所有启用服务（每服务独立 15s 超时与 AbortController）→ 逐服务回 `translate:chunk` → 渲染层按 `serviceId` 更新卡片；中英文双向智能互切；词典卡片附带生词本自动收录钩子；全局语音合成（TTS）根据设置调度 Edge TTS 或小米 MiMo 大模型规范播音服务。
 - **Agent 工具调用**：模型工具调用 → `validateAgentToolArgs` → 风险分级（forbidden 直接拦截 / dangerous 强制审批）→ 审批卡片（IPC 等待用户决定）→ 执行并落盘快照（可回退）与工具输出（截断至 12k 回传）。
 
 ## 4. 核心抽象与设计模式
@@ -76,7 +76,7 @@ graph TD
 ## 5. 外部依赖与集成点
 
 - **AI 服务商**：OpenAI-compatible（`/chat/completions` 流式）与 Anthropic；代理链（手动 > 系统 > 直连）统一在 `proxy.ts` 应用，Node 侧走 undici 全局 dispatcher。
-- **翻译/词典上游**：均为逆向 Web API（无官方 SLA），各自需要签名或固定请求头；有道 dictvoice 音频有防盗链，经主进程代理换 data URL。
+- **翻译/词典/TTS 上游**：均为 Web API，各自需要签名或固定请求头；Edge TTS 补充请求头防盗链绕过，小米 MiMo TTS 走 OpenAI 兼容聊天补全端点合成音频；有道 dictvoice 音频有防盗链，经主进程代理换 data URL。
 - **MCP**：`@modelcontextprotocol/sdk` 懒加载（首次连接才 import），远程 MCP 走 undici 代理。
 - **OS 集成**：`selection-hook`（划词，Windows/macOS 双实现）、`csc.exe` 编译的 helper、`Windows.Media.Ocr`、系统托盘与全局快捷键。
 

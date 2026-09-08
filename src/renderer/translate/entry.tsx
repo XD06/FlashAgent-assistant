@@ -9,6 +9,7 @@ import { Icon } from '../icons'
 import {
   TRANSLATE_LANGUAGES,
   detectLanguageHeuristic,
+  getAutoTargetLanguage,
   isSingleWord,
   translateLanguageLabel
 } from '@shared/translate'
@@ -314,6 +315,7 @@ function TranslateWindow() {
   const audioRef = React.useRef<HTMLAudioElement | null>(null)
   const noticeTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
   const inputRef = React.useRef<HTMLTextAreaElement>(null)
+  const isComposingRef = React.useRef(false)
 
   React.useEffect(() => {
     playingKeyRef.current = playingKey
@@ -426,6 +428,10 @@ function TranslateWindow() {
         setDetected(null)
         return
       }
+      const resolvedTo = getAutoTargetLanguage(trimmed, runFrom, runTo)
+      if (resolvedTo !== runTo) {
+        setTo(resolvedTo)
+      }
       const requestId = crypto.randomUUID()
       requestIdRef.current = requestId
       const loading: Partial<Record<TranslateServiceId, CardState>> = {}
@@ -436,15 +442,38 @@ function TranslateWindow() {
       }
       setCards(loading)
       setDetected(null)
-      void window.assistantLite.translate.run({ requestId, text: trimmed, from: runFrom, to: runTo })
+      void window.assistantLite.translate.run({ requestId, text: trimmed, from: runFrom, to: resolvedTo })
     },
     [enabledServices]
   )
 
+  const handleInputChange = (value: string) => {
+    setInput(value)
+    if (!isComposingRef.current) {
+      const nextTo = getAutoTargetLanguage(value, from, to)
+      if (nextTo !== to) {
+        setTo(nextTo)
+      }
+    }
+  }
+
+  const handleCompositionEnd = (event: React.CompositionEvent<HTMLTextAreaElement>) => {
+    isComposingRef.current = false
+    const value = event.currentTarget.value
+    const nextTo = getAutoTargetLanguage(value, from, to)
+    if (nextTo !== to) {
+      setTo(nextTo)
+    }
+  }
+
   const onInputKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
       event.preventDefault()
-      runTranslate(input, from, to)
+      const nextTo = getAutoTargetLanguage(input, from, to)
+      if (nextTo !== to) {
+        setTo(nextTo)
+      }
+      runTranslate(input, from, nextTo)
     }
   }
 
@@ -476,7 +505,9 @@ function TranslateWindow() {
       await audio.play()
     } catch (error) {
       if (playingKeyRef.current === key) setPlayingKey(null)
-      showNotice(`⚠️ ${error instanceof Error ? error.message : String(error)}`)
+      const raw = error instanceof Error ? error.message : String(error)
+      const message = raw.replace(/^Error invoking remote method '[^']+':\s*(?:Error:\s*)?/, '')
+      showNotice(`⚠️ ${message}`)
     }
   }
 
@@ -587,9 +618,11 @@ function TranslateWindow() {
             autoFocus
             value={input}
             placeholder={t('trInputPlaceholder')}
-            onChange={(event) => {
-              setInput(event.target.value)
+            onChange={(event) => handleInputChange(event.target.value)}
+            onCompositionStart={() => {
+              isComposingRef.current = true
             }}
+            onCompositionEnd={handleCompositionEnd}
             onKeyDown={onInputKeyDown}
           />
           <div className="tr-input-tools">

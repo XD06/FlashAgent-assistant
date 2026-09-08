@@ -345,10 +345,15 @@ function normalizeTtsSettings(value: unknown): TtsSettings {
   const raw = value && typeof value === 'object' ? (value as Partial<TtsSettings>) : {}
   const speed = typeof raw.speed === 'number' && Number.isFinite(raw.speed) ? raw.speed : defaultSettings.tts.speed
   const pitch = typeof raw.pitch === 'number' && Number.isFinite(raw.pitch) ? raw.pitch : defaultSettings.tts.pitch
+  const service = raw.service === 'mimo' ? 'mimo' : 'openai'
   return {
+    service,
     endpoint: typeof raw.endpoint === 'string' ? raw.endpoint : defaultSettings.tts.endpoint,
     voice: typeof raw.voice === 'string' && raw.voice.trim() ? raw.voice : defaultSettings.tts.voice,
     speed: Math.min(2, Math.max(0.5, speed)),
-    pitch: Math.round(Math.min(50, Math.max(-50, pitch)))
+    pitch: Math.round(Math.min(50, Math.max(-50, pitch))),
+    mimoApiKey: typeof raw.mimoApiKey === 'string' ? raw.mimoApiKey : '',
+    mimoModel: typeof raw.mimoModel === 'string' && raw.mimoModel.trim() ? raw.mimoModel : 'mimo-v2.5-tts',
+    mimoVoice: typeof raw.mimoVoice === 'string' && raw.mimoVoice.trim() ? raw.mimoVoice : '冰糖'
   }
 }

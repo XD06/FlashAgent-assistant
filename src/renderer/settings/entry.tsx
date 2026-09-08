@@ -251,6 +251,17 @@ const TTS_VOICE_CHOICES: Array<{ value: string; labelKey: string }> = [
   { value: 'ko-KR-SunHiNeural', labelKey: 'ttsVoiceSunHi' }
 ]
 
+const MIMO_VOICE_CHOICES: Array<{ value: string; labelKey: string }> = [
+  { value: '冰糖', labelKey: 'ttsMimoVoiceBingtang' },
+  { value: '茉莉', labelKey: 'ttsMimoVoiceMoli' },
+  { value: '苏打', labelKey: 'ttsMimoVoiceSuda' },
+  { value: '白桦', labelKey: 'ttsMimoVoiceBaihua' },
+  { value: 'Mia', labelKey: 'ttsMimoVoiceMia' },
+  { value: 'Chloe', labelKey: 'ttsMimoVoiceChloe' },
+  { value: 'Milo', labelKey: 'ttsMimoVoiceMilo' },
+  { value: 'Dean', labelKey: 'ttsMimoVoiceDean' }
+]
+
 const ACTION_ICON_CHOICES = [
   'sparkles',
   'languages',
@@ -1197,7 +1208,10 @@ function SettingsApp() {
           </SettingSection>
 
           <SettingSection title={t('selectionShortcutGroup')}>
-            <SettingRow title={t('shortcutToggleAssistant')} description={t('shortcutRecordHint')} className="shortcut-row">
+            <SettingRow
+              title={t('shortcutToggleAssistant')}
+              description={t('shortcutToggleAssistantDesc')}
+              className="shortcut-row">
               <ShortcutRecorder
                 value={settings.shortcuts.toggleAssistant}
                 label={t('shortcutToggleAssistant')}
@@ -1323,6 +1337,9 @@ function SettingsApp() {
       const voiceChoices = TTS_VOICE_CHOICES.some((choice) => choice.value === settings.tts.voice)
         ? TTS_VOICE_CHOICES
         : [{ value: settings.tts.voice, labelKey: '' }, ...TTS_VOICE_CHOICES]
+      const mimoVoiceChoices = MIMO_VOICE_CHOICES.some((choice) => choice.value === settings.tts.mimoVoice)
+        ? MIMO_VOICE_CHOICES
+        : [{ value: settings.tts.mimoVoice, labelKey: '' }, ...MIMO_VOICE_CHOICES]
 
       return (
         <div className="settings-stack settings-stack--translate">
@@ -1418,34 +1435,94 @@ function SettingsApp() {
           })()}
 
           <SettingSection title={t('ttsGroup')}>
-            <SettingRow title={t('ttsEndpoint')} description={t('ttsEndpointDesc')}>
-              <input
-                value={settings.tts.endpoint}
-                placeholder="https://tts.example.com/v1/audio/speech"
-                onChange={(event) => updateTts({ endpoint: event.target.value.trim() })}
-              />
-            </SettingRow>
-            <SettingRow title={t('ttsVoice')}>
-              <select value={settings.tts.voice} onChange={(event) => updateTts({ voice: event.target.value })}>
-                {voiceChoices.map((choice) => (
-                  <option key={choice.value} value={choice.value}>
-                    {choice.labelKey ? t(choice.labelKey) : choice.value}
-                  </option>
-                ))}
+            <SettingRow title={t('ttsService')} description={t('ttsServiceDesc')}>
+              <select
+                value={settings.tts.service || 'openai'}
+                onChange={(event) => updateTts({ service: event.target.value as 'openai' | 'mimo' })}>
+                <option value="openai">{t('ttsServiceOpenAi')}</option>
+                <option value="mimo">{t('ttsServiceMimo')}</option>
               </select>
             </SettingRow>
-            <SettingRow title={t('ttsSpeed')} description={t('ttsSpeedDesc')}>
-              <select value={String(settings.tts.speed)} onChange={(event) => updateTts({ speed: Number(event.target.value) })}>
-                {['0.5', '0.75', '1', '1.25', '1.5', '2'].map((value) => (
-                  <option key={value} value={value}>
-                    {value}×
-                  </option>
-                ))}
-              </select>
-            </SettingRow>
-            <SettingRow title={t('ttsPitch')} description={t('ttsPitchDesc')}>
-              <NumberField value={settings.tts.pitch} min={-50} max={50} onCommit={(pitch) => updateTts({ pitch })} />
-            </SettingRow>
+
+            {settings.tts.service === 'mimo' ? (
+              <>
+                <SettingRow title={t('ttsMimoApiKey')} description={t('ttsMimoApiKeyDesc')}>
+                  <input
+                    type="password"
+                    value={settings.tts.mimoApiKey}
+                    placeholder="sk-..."
+                    onChange={(event) => updateTts({ mimoApiKey: event.target.value.trim() })}
+                  />
+                </SettingRow>
+                <SettingRow title={t('ttsMimoModel')} description={t('ttsMimoModelDesc')}>
+                  <input
+                    value={settings.tts.mimoModel}
+                    placeholder="mimo-v2.5-tts"
+                    onChange={(event) => updateTts({ mimoModel: event.target.value.trim() })}
+                  />
+                </SettingRow>
+                <SettingRow title={t('ttsMimoVoice')}>
+                  <select
+                    value={settings.tts.mimoVoice}
+                    onChange={(event) => updateTts({ mimoVoice: event.target.value })}>
+                    {mimoVoiceChoices.map((choice) => (
+                      <option key={choice.value} value={choice.value}>
+                        {choice.labelKey ? t(choice.labelKey) : choice.value}
+                      </option>
+                    ))}
+                  </select>
+                </SettingRow>
+                <SettingRow title={t('ttsSpeed')} description={t('ttsSpeedDesc')}>
+                  <select
+                    value={String(settings.tts.speed)}
+                    onChange={(event) => updateTts({ speed: Number(event.target.value) })}>
+                    {['0.5', '0.75', '1', '1.25', '1.5', '2'].map((value) => (
+                      <option key={value} value={value}>
+                        {value}×
+                      </option>
+                    ))}
+                  </select>
+                </SettingRow>
+              </>
+            ) : (
+              <>
+                <SettingRow title={t('ttsEndpoint')} description={t('ttsEndpointDesc')}>
+                  <input
+                    value={settings.tts.endpoint}
+                    placeholder="https://tts.example.com/v1/audio/speech"
+                    onChange={(event) => updateTts({ endpoint: event.target.value.trim() })}
+                  />
+                </SettingRow>
+                <SettingRow title={t('ttsVoice')}>
+                  <select value={settings.tts.voice} onChange={(event) => updateTts({ voice: event.target.value })}>
+                    {voiceChoices.map((choice) => (
+                      <option key={choice.value} value={choice.value}>
+                        {choice.labelKey ? t(choice.labelKey) : choice.value}
+                      </option>
+                    ))}
+                  </select>
+                </SettingRow>
+                <SettingRow title={t('ttsSpeed')} description={t('ttsSpeedDesc')}>
+                  <select
+                    value={String(settings.tts.speed)}
+                    onChange={(event) => updateTts({ speed: Number(event.target.value) })}>
+                    {['0.5', '0.75', '1', '1.25', '1.5', '2'].map((value) => (
+                      <option key={value} value={value}>
+                        {value}×
+                      </option>
+                    ))}
+                  </select>
+                </SettingRow>
+                <SettingRow title={t('ttsPitch')} description={t('ttsPitchDesc')}>
+                  <NumberField
+                    value={settings.tts.pitch}
+                    min={-50}
+                    max={50}
+                    onCommit={(pitch) => updateTts({ pitch })}
+                  />
+                </SettingRow>
+              </>
+            )}
           </SettingSection>
 
           <SettingSection title={t('translateShortcut')}>
