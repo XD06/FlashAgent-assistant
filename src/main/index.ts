@@ -9,6 +9,7 @@ import { IPC } from '@shared/ipc'
 import { APP_ICON_DATA_URL, APP_TRAY_DATA_URL } from '@shared/brand'
 import type { AgentToolEvent, AiStreamRequest, SettingsPatch } from '@shared/types'
 import { listModels, streamChatMessages, testModel, type ProviderFetch } from './ai/OpenAICompatibleClient'
+import { extractPartialProperty, parseStreamingToolArgs } from './ai/streamingArgsParser'
 import { formatSearchContext, searchWithFallback, webSearchTool } from './ai/WebSearch'
 import { agentToolDefinitionsForShell, assessCommandRisk, executeAgentTool, isReadOnlyTool, parseTodoTasks, requiresApproval, resolveCommandShell, restoreSnapshot, shellSyntaxLabel, snapshotForMutation, summarizeToolCall } from './agent/AgentTools'
 import { buildAgentSystemPrompt } from './agent/AgentPrompt'
@@ -31,6 +32,14 @@ import { initVocabulary, registerVocabularyIpc } from './vocabulary'
 import { destroyOcr, registerOcrIpc } from './ocr'
 import { getSettings, onSettingsChanged, updateSettings } from './settingsStore'
 import { isSupportedPlatform, isWin } from './platform'
+
+// Global crash prevention for uncaught background errors
+process.on('uncaughtException', (err) => {
+  console.error('[Main process uncaughtException]:', err)
+})
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[Main process unhandledRejection]:', reason, promise)
+})
 
 const preloadPath = join(__dirname, '../preload/index.cjs')
 const rendererDir = join(__dirname, '../renderer')
@@ -634,11 +643,15 @@ function registerIpc(): void {
     // If the requesting window dies mid-stream, stop the request instead of
     // sending chunks into a destroyed WebContents.
     const sendChunk = (payload: Record<string, unknown>): void => {
-      if (event.sender.isDestroyed()) {
-        controller.abort()
-        return
+      try {
+        if (event.sender.isDestroyed()) {
+          controller.abort()
+          return
+        }
+        event.sender.send(IPC.AiChunk, { requestId: request.requestId, ...payload })
+      } catch (err) {
+        console.error('[AiChunk] send error:', err)
       }
-      event.sender.send(IPC.AiChunk, { requestId: request.requestId, ...payload })
     }
     event.sender.once('destroyed', () => controller.abort())
     try {
@@ -703,9 +716,30 @@ function registerIpc(): void {
       }
 
       const activeEdits = new Map<string, 'edited' | 'created'>()
-
-      const runAgentTool = async (name: string, args: Record<string, unknown>): Promise<string> => {
+      const toolCallIdMap = new Map<string, string>()
+      const resolveCallId = (round: number, index: number, metaId?: string): string => {
+        const roundKey = `r${round}_i${index}`
+        const metaKey = metaId ? `r${round}_id_${metaId}` : null
+        if (metaKey && toolCallIdMap.has(metaKey)) {
+          return toolCallIdMap.get(metaKey)!
+        }
+        if (toolCallIdMap.has(roundKey)) {
+          const existing = toolCallIdMap.get(roundKey)!
+          if (metaKey) toolCallIdMap.set(metaKey, existing)
+          return existing
+        }
         const callId = randomUUID()
+        toolCallIdMap.set(roundKey, callId)
+        if (metaKey) toolCallIdMap.set(metaKey, callId)
+        return callId
+      }
+
+      const runAgentTool = async (
+        name: string,
+        args: Record<string, unknown>,
+        explicitCallId?: string
+      ): Promise<string> => {
+        const callId = explicitCallId || randomUUID()
         const summary = summarizeToolCall(name, args, workingDir)
         const argsJson = argsJsonForEvent(args)
         // For write/edit ship the proposed content so the renderer can show a diff.
@@ -799,8 +833,12 @@ function registerIpc(): void {
 
       // External MCP tools: auto-allow in full-access / always-allow mode,
       // but pause for dangerous operations and block catastrophic ones.
-      const runMcpTool = async (name: string, args: Record<string, unknown>): Promise<string> => {
-        const callId = randomUUID()
+      const runMcpTool = async (
+        name: string,
+        args: Record<string, unknown>,
+        explicitCallId?: string
+      ): Promise<string> => {
+        const callId = explicitCallId || randomUUID()
         const summary = `${mcpManager.describeTool(name)} · ${JSON.stringify(args).slice(0, 160)}`
         const argsJson = argsJsonForEvent(args)
         const sendTool = (patch: Partial<AgentToolEvent>): void => {
@@ -894,17 +932,48 @@ function registerIpc(): void {
           onUsage: (usage) => sendChunk({ type: 'usage', usage }),
           onContextMeasured: (context) => sendChunk({ type: 'context', context: { ...context, taskRoundId: request.taskRoundId } }),
           shadowBudget: { contextWindowTokens: settings.contextWindowTokens },
-          onToolCall: async (name: string, args: Record<string, unknown>) => {
+          onToolStreaming: (streamTool) => {
+            try {
+              if (streamTool.name === webSearchTool.name) {
+                const query = extractPartialProperty(streamTool.rawArguments, 'query')
+                if (query) sendChunk({ type: 'status', text: query })
+                return
+              }
+              const callId = resolveCallId(streamTool.round, streamTool.index, streamTool.id)
+              const parsed = parseStreamingToolArgs(streamTool.name, streamTool.rawArguments, workingDir)
+              sendChunk({
+                type: 'tool',
+                tool: {
+                  callId,
+                  toolName: streamTool.name,
+                  summary: parsed.summary || '...',
+                  oldText: parsed.oldText ? parsed.oldText.slice(0, 4000) : undefined,
+                  newText: parsed.content ? parsed.content.slice(0, 4000) : undefined,
+                  streamingCharCount: parsed.charCount,
+                  liveOutput: parsed.command ? parsed.command.slice(0, 4000) : undefined,
+                  state: 'streaming'
+                }
+              })
+            } catch (err) {
+              console.error('[onToolStreaming] Error:', err)
+            }
+          },
+          onToolCall: async (
+            name: string,
+            args: Record<string, unknown>,
+            meta?: { id?: string; index?: number; round?: number }
+          ) => {
             if (name === webSearchTool.name) {
               const query = typeof args.query === 'string' ? args.query : ''
               if (!query) return 'No search query provided.'
               const results = await searchWithFallback(query, controller.signal, 10, providerFetch)
               return formatSearchContext(query, results, settings.language)
             }
+            const callId = resolveCallId(meta?.round ?? 0, meta?.index ?? 0, meta?.id)
             if (isMcpToolName(name) && injectedMcpToolNames.has(name) && mcpManager.ownsTool(name)) {
-              return runMcpTool(name, args)
+              return runMcpTool(name, args, callId)
             }
-            return runAgentTool(name, args)
+            return runAgentTool(name, args, callId)
           }
         }
       )

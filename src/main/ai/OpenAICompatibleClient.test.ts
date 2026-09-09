@@ -620,6 +620,112 @@ describe('OpenAI-compatible stream parser', () => {
     expect(toolMsg?.content).toContain('Re-issue the tool call with valid JSON arguments')
   })
 
+  it('emits onToolStreaming events as tool arguments stream in and passes meta to onToolCall', async () => {
+    const encoder = new TextEncoder()
+    const streamedToolBody = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          encoder.encode('data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c_stream","function":{"name":"write_file","arguments":"{\\"path\\": "}}]}}]}\n\n')
+        )
+        controller.enqueue(
+          encoder.encode('data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\\"test.ts\\", \\"content\\": \\"hello\\""}}]}}]}\n\n')
+        )
+        controller.enqueue(
+          encoder.encode('data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"}"}}]}}]}\n\n')
+        )
+        controller.close()
+      }
+    })
+
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(streamedToolBody, { status: 200 }))
+      .mockResolvedValueOnce(streamingTextResponse('done'))
+
+    const streamedEvents: Array<{ round: number; index: number; id: string; name: string; rawArguments: string }> = []
+    const onToolCall = vi.fn(async (_name, _args, meta) => {
+      expect(meta?.id).toBe('c_stream')
+      expect(meta?.index).toBe(0)
+      expect(meta?.round).toBe(0)
+      return 'written'
+    })
+
+    await streamChatMessages(
+      provider,
+      [{ role: 'user', text: 'write' }],
+      'system',
+      new AbortController().signal,
+      () => {},
+      'off',
+      {
+        tools: [{ name: 'write_file', description: 'write', parameters: { type: 'object', properties: {} } }],
+        onToolCall,
+        onToolStreaming: (evt) => streamedEvents.push(evt),
+        maxToolRounds: 2
+      }
+    )
+
+    expect(streamedEvents.length).toBeGreaterThan(0)
+    expect(streamedEvents[0].name).toBe('write_file')
+    expect(streamedEvents[0].round).toBe(0)
+    expect(streamedEvents[streamedEvents.length - 1].rawArguments).toBe('{"path": "test.ts", "content": "hello"}')
+    expect(onToolCall).toHaveBeenCalledTimes(1)
+  })
+
+  it('tracks distinct rounds for tool streaming when index is reused across rounds', async () => {
+    const streamedEvents: Array<{ round: number; index: number; name: string }> = []
+    const onToolCall = vi.fn(async (name: string, _args, meta) => {
+      if (name === 'list_dir') {
+        expect(meta?.round).toBe(0)
+        expect(meta?.index).toBe(0)
+        return 'file1.ts'
+      }
+      expect(meta?.round).toBe(1)
+      expect(meta?.index).toBe(0)
+      return 'file content'
+    })
+
+    const encoder = new TextEncoder()
+    const r0Body = new ReadableStream({
+      start(c) {
+        c.enqueue(encoder.encode('data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"list_dir","arguments":"{}"}}]}}]}\n\n'))
+        c.close()
+      }
+    })
+    const r1Body = new ReadableStream({
+      start(c) {
+        c.enqueue(encoder.encode('data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"read_file","arguments":"{}"}}]}}]}\n\n'))
+        c.close()
+      }
+    })
+
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(r0Body, { status: 200 }))
+      .mockResolvedValueOnce(new Response(r1Body, { status: 200 }))
+      .mockResolvedValueOnce(streamingTextResponse('all done'))
+
+    await streamChatMessages(
+      provider,
+      [{ role: 'user', text: 'do work' }],
+      'system',
+      new AbortController().signal,
+      () => {},
+      'off',
+      {
+        tools: [
+          { name: 'list_dir', description: 'list', parameters: { type: 'object', properties: {} } },
+          { name: 'read_file', description: 'read', parameters: { type: 'object', properties: {} } }
+        ],
+        onToolCall,
+        onToolStreaming: (evt) => streamedEvents.push({ round: evt.round, index: evt.index, name: evt.name }),
+        maxToolRounds: 3
+      }
+    )
+
+    expect(streamedEvents.some((e) => e.round === 0 && e.name === 'list_dir' && e.index === 0)).toBe(true)
+    expect(streamedEvents.some((e) => e.round === 1 && e.name === 'read_file' && e.index === 0)).toBe(true)
+    expect(onToolCall).toHaveBeenCalledTimes(2)
+  })
+
   it('parallelizes consecutive read-only tool calls and preserves result order', async () => {
     const encoder = new TextEncoder()
     const multiToolBody = new ReadableStream({

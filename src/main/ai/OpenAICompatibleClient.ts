@@ -466,15 +466,24 @@ export interface ToolDefinition {
 }
 
 interface AccumulatedToolCall {
+  index?: number
   id: string
   name: string
   arguments: string
 }
 
+export interface ToolCallMeta {
+  id?: string
+  index?: number
+  round?: number
+}
+
 export interface ToolCallStreamOptions extends ProviderRequestOptions {
   tools?: ToolDefinition[]
-  onToolCall?: (name: string, args: Record<string, unknown>) => Promise<string>
+  onToolCall?: (name: string, args: Record<string, unknown>, meta?: ToolCallMeta) => Promise<string>
   onStatus?: (text: string, toolName?: string) => void
+  /** Fired periodically as arguments are being streamed from the model before the tool call completes. */
+  onToolStreaming?: (tool: { round: number; index: number; id: string; name: string; rawArguments: string }) => void
   /** Identify whether a tool is read-only so consecutive read-only calls can be parallelized. */
   isReadOnlyTool?: (name: string) => boolean
   /** Active edits ledger (paths modified/created in current task) to maintain memory. */
@@ -581,7 +590,8 @@ function extractOpenAIToolCalls(
       if (!Array.isArray(toolCalls)) continue
       for (const tc of toolCalls) {
         const idx = tc.index ?? 0
-        const existing = map.get(idx) ?? { id: '', name: '', arguments: '' }
+        const existing = map.get(idx) ?? { index: idx, id: '', name: '', arguments: '' }
+        existing.index = idx
         if (tc.id) existing.id = tc.id
         if (tc.function?.name) existing.name = tc.function.name
         if (tc.function?.arguments) existing.arguments += tc.function.arguments
@@ -900,29 +910,90 @@ export async function streamChatMessages(
     const usageAcc: Partial<TokenUsage> = {}
     let roundText = ''
 
-    const handleEvent = (event: string): void => {
-      const delta = parseProviderStreamEvent(apiType, event)
-      if (delta) {
-        if (delta.content) roundText += delta.content
-        onDelta(delta)
+    const lastStreamingEmitMap = new Map<number, number>()
+    const emitToolStreaming = (tc: { index: number; id: string; name: string; rawArguments: string }, force = false) => {
+      if (!options.onToolStreaming || !tc.name) return
+      const now = Date.now()
+      const last = lastStreamingEmitMap.get(tc.index) ?? 0
+      if (force || now - last >= 50) {
+        lastStreamingEmitMap.set(tc.index, now)
+        try {
+          options.onToolStreaming({ ...tc, round })
+        } catch (err) {
+          console.error('[onToolStreaming] Callback error:', err)
+        }
       }
-      collectUsage(event, usageAcc)
-      if (apiType === 'anthropic') {
-        extractAnthropicBlocks(event, anthropicBlocks)
-      } else {
-        extractOpenAIToolCalls(event, toolCallMap)
+    }
+
+    const handleEvent = (event: string): void => {
+      try {
+        const delta = parseProviderStreamEvent(apiType, event)
+        if (delta) {
+          if (delta.content) roundText += delta.content
+          onDelta(delta)
+        }
+        collectUsage(event, usageAcc)
+        if (apiType === 'anthropic') {
+          const prevLengths = new Map<number, number>()
+          for (const [idx, b] of anthropicBlocks.entries()) prevLengths.set(idx, b.json.length)
+          extractAnthropicBlocks(event, anthropicBlocks)
+          if (options.onToolStreaming) {
+            for (const [idx, b] of anthropicBlocks.entries()) {
+              if (b.type === 'tool_use' && b.name) {
+                const prev = prevLengths.get(idx) ?? -1
+                if (b.json.length !== prev) {
+                  emitToolStreaming({ index: idx, id: b.id, name: b.name, rawArguments: b.json })
+                }
+              }
+            }
+          }
+        } else {
+          const prevLengths = new Map<number, number>()
+          for (const [idx, tc] of toolCallMap.entries()) prevLengths.set(idx, tc.arguments.length)
+          extractOpenAIToolCalls(event, toolCallMap)
+          if (options.onToolStreaming) {
+            for (const [idx, tc] of toolCallMap.entries()) {
+              if (tc.name) {
+                const prev = prevLengths.get(idx) ?? -1
+                if (tc.arguments.length !== prev) {
+                  emitToolStreaming({ index: idx, id: tc.id, name: tc.name, rawArguments: tc.arguments })
+                }
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.error('[handleEvent] SSE parse error:', err)
       }
     }
 
     await readSseStream(response.body, handleEvent)
     emitUsage(usageAcc)
 
+    if (options.onToolStreaming) {
+      if (apiType === 'anthropic') {
+        for (const [idx, b] of anthropicBlocks.entries()) {
+          if (b.type === 'tool_use' && b.name) {
+            emitToolStreaming({ index: idx, id: b.id, name: b.name, rawArguments: b.json }, true)
+          }
+        }
+      } else {
+        for (const [idx, tc] of toolCallMap.entries()) {
+          if (tc.name) {
+            emitToolStreaming({ index: idx, id: tc.id, name: tc.name, rawArguments: tc.arguments }, true)
+          }
+        }
+      }
+    }
+
     const toolCalls: AccumulatedToolCall[] =
       apiType === 'anthropic'
-        ? Array.from(anthropicBlocks.values())
-            .filter((b) => b.type === 'tool_use' && b.id && b.name)
-            .map((b) => ({ id: b.id, name: b.name, arguments: b.json }))
-        : Array.from(toolCallMap.values()).filter((tc) => tc.id && tc.name)
+        ? Array.from(anthropicBlocks.entries())
+            .filter(([, b]) => b.type === 'tool_use' && b.name)
+            .map(([idx, b]) => ({ index: idx, id: b.id || `call_${round}_${idx}`, name: b.name, arguments: b.json }))
+        : Array.from(toolCallMap.values())
+            .filter((tc) => tc.name)
+            .map((tc, idx) => ({ ...tc, index: tc.index ?? idx, id: tc.id || `call_${round}_${tc.index ?? idx}` }))
     if (toolCalls.length === 0) {
       // 1. Verification Loop Check:
       // If mutating tools ran in this turn, but no command tool ran, give the model one verification chance.
@@ -1077,7 +1148,7 @@ export async function streamChatMessages(
 
       try {
         onStatus?.(typeof args.query === 'string' ? args.query : tc.name, tc.name)
-        const result = await onToolCall!(tc.name, args)
+        const result = await onToolCall!(tc.name, args, { id: tc.id, index: tc.index, round })
         // Register real mutations (name-based so MCP write tools count too);
         // a user-rejected call returned as text is not a mutation.
         if (

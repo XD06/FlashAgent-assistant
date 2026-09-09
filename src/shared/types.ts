@@ -267,7 +267,7 @@ export interface AiStreamRequest {
   useExtensions?: boolean
 }
 
-export type AgentToolState = 'pending-approval' | 'running' | 'done' | 'error' | 'rejected' | 'reverted'
+export type AgentToolState = 'streaming' | 'pending-approval' | 'running' | 'done' | 'error' | 'rejected' | 'reverted'
 
 export interface TodoItem {
   id?: string
@@ -294,6 +294,8 @@ export interface AgentToolEvent {
   newText?: string
   /** For todo_list: updated task items to show in the UI checklist pill. */
   todoList?: TodoItem[]
+  /** For streaming tool calls: number of characters received so far in the stream. */
+  streamingCharCount?: number
 }
 
 export interface AiChunkPayload {

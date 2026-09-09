@@ -435,6 +435,8 @@ const TOOL_CATEGORIES: Record<string, string> = {
 
 function stateLabel(state: AgentToolEvent['state'], isZh: boolean): string {
   switch (state) {
+    case 'streaming':
+      return isZh ? '正在生成…' : 'Streaming…'
     case 'pending-approval':
       return isZh ? '等待确认' : 'Needs approval'
     case 'running':
@@ -496,7 +498,15 @@ function TerminalOutput({
 /** Render an edit/write as a real unified diff: old lines prefixed with `-`
  * (red), new lines with `+` (green). Makes "what replaced what" obvious
  * instead of two same-looking blocks. write_file has only newText → all `+`. */
-function DiffBlock({ oldText, newText }: { oldText?: string; newText?: string }) {
+function DiffBlock({
+  oldText,
+  newText,
+  pinToBottom
+}: {
+  oldText?: string
+  newText?: string
+  pinToBottom?: boolean
+}) {
   const rows = React.useMemo(() => {
     const out: { sign: '+' | '-'; text: string }[] = []
     if (oldText !== undefined) {
@@ -511,8 +521,12 @@ function DiffBlock({ oldText, newText }: { oldText?: string; newText?: string })
     }
     return out
   }, [oldText, newText])
+  const ref = React.useRef<HTMLPreElement | null>(null)
+  React.useEffect(() => {
+    if (pinToBottom && ref.current) ref.current.scrollTop = ref.current.scrollHeight
+  }, [rows, pinToBottom])
   return (
-    <pre className="agent-tool-row__diff agent-tool-row__diff--unified">
+    <pre ref={ref} className="agent-tool-row__diff agent-tool-row__diff--unified">
       {rows.map((row, i) => (
         <div
           key={i}
@@ -544,7 +558,7 @@ function AgentToolRow({
   const isMcp = event.toolName.startsWith('mcp__')
   const category = TOOL_CATEGORIES[event.toolName] ?? (isMcp ? 'mcp' : 'other')
   const title = label ? (isZh ? label.zh : label.en) : isMcp ? 'MCP' : event.toolName
-  const hasDetail = !!(event.oldText || event.newText || event.result)
+  const hasDetail = !!(event.oldText || event.newText || event.result || event.liveOutput)
   const showDetail = open || event.state === 'pending-approval'
   const canRevert = (event.toolName === 'write_file' || event.toolName === 'edit_file') && event.state === 'done'
   const approve = (approved: boolean, alwaysAllow = false) => {
@@ -572,7 +586,16 @@ function AgentToolRow({
             {isZh ? '回退' : 'Revert'}
           </button>
         )}
-        <span className="agent-tool-row__state">{stateLabel(event.state, isZh)}</span>
+        <span className="agent-tool-row__state">
+          {event.state === 'streaming' && typeof event.streamingCharCount === 'number' && event.streamingCharCount > 0
+            ? `${isZh ? '正在生成' : 'Streaming'} (${event.streamingCharCount.toLocaleString()} ${isZh ? '字' : 'chars'})`
+            : stateLabel(event.state, isZh)}
+        </span>
+        {hasDetail && (
+          <span className={`agent-tool-row__chevron${showDetail ? ' agent-tool-row__chevron--open' : ''}`}>
+            <Icon name="chevron-right" size={11} />
+          </span>
+        )}
       </div>
       {event.state === 'pending-approval' && live && (
         <div className="agent-tool-row__actions">
@@ -597,7 +620,11 @@ function AgentToolRow({
       {showDetail && hasDetail && (
         <div className="agent-tool-row__detail">
           {(event.oldText !== undefined || event.newText !== undefined) && (
-            <DiffBlock oldText={event.oldText} newText={event.newText} />
+            <DiffBlock
+              oldText={event.oldText}
+              newText={event.newText}
+              pinToBottom={event.state === 'streaming'}
+            />
           )}
           {event.result &&
             // Command/MCP output is terminal-like: parse ANSI (or add a
@@ -619,6 +646,13 @@ function AgentToolRow({
             ) : (
               <pre className={`agent-tool-row__result agent-tool-row__result--${category}`}>{event.result}</pre>
             ))}
+          {event.state === 'streaming' && !event.newText && event.liveOutput && (
+            <TerminalOutput
+              className="agent-tool-row__result agent-tool-row__result--command"
+              text={event.liveOutput}
+              pinToBottom
+            />
+          )}
         </div>
       )}
     </div>
@@ -643,7 +677,7 @@ function AgentToolGroup({
   isZh: boolean
   onRevert: (callId: string) => void
 }) {
-  const active = events.some((ev) => ev.state === 'pending-approval' || ev.state === 'running')
+  const active = events.some((ev) => ev.state === 'pending-approval' || ev.state === 'running' || ev.state === 'streaming')
   const [manual, setManual] = React.useState<boolean | null>(null)
   // Open by default and after settling — no auto-collapse. Only an explicit
   // header click folds the group to its one-line summary.
@@ -797,6 +831,16 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
   // tool loop at the next round gap, or sent as a new request on completion.
   const [queued, setQueued] = React.useState<string[]>([])
   const queuedRef = React.useRef<string[]>([])
+
+  const cancelQueued = React.useCallback((index: number) => {
+    const text = queuedRef.current[index]
+    if (text === undefined) return
+    const next = queuedRef.current.filter((_, i) => i !== index)
+    queuedRef.current = next
+    setQueued(next)
+    setInput((prev) => (prev.trim() ? `${prev}\n${text}` : text))
+    setTimeout(() => inputRef.current?.focus(), 0)
+  }, [])
   // Inline edit state for the latest user message (edit & resend).
   const [editingUser, setEditingUser] = React.useState<{ index: number; text: string } | null>(null)
   // Attachments pasted into the composer, waiting to be sent with the next
@@ -2085,7 +2129,8 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
                       title={m}
                       onClick={() => chooseModel(m)}
                     >
-                      {m}
+                      <span className="model-menu__name">{m}</span>
+                      {m === selectedModel && <Icon name="check" size={13} />}
                     </button>
                   ))
                 ) : (
@@ -2372,9 +2417,17 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
         {queued.length > 0 && (
           <div className="chat-queue">
             {queued.map((q, i) => (
-              <div key={i} className="chat-queue__item" title={isZh ? '将在不打断任务的前提下送达模型；点击停止可取回到输入框' : 'Delivered without interrupting; press stop to reclaim into the input'}>
+              <div key={i} className="chat-queue__item" title={isZh ? '将在不打断任务的前提下送达模型' : 'Delivered without interrupting'}>
                 <Icon name="clock" size={12} />
-                <span>{q}</span>
+                <span className="chat-queue__text">{q}</span>
+                <button
+                  type="button"
+                  className="chat-queue__btn"
+                  title={isZh ? '退回到输入框编辑' : 'Return to input to edit'}
+                  onClick={() => cancelQueued(i)}
+                >
+                  <Icon name="undo-2" size={12} />
+                </button>
               </div>
             ))}
           </div>
