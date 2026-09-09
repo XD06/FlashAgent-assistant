@@ -10,7 +10,7 @@ import { APP_ICON_DATA_URL, APP_TRAY_DATA_URL } from '@shared/brand'
 import type { AgentToolEvent, AiStreamRequest, SettingsPatch } from '@shared/types'
 import { listModels, streamChatMessages, testModel, type ProviderFetch } from './ai/OpenAICompatibleClient'
 import { formatSearchContext, searchWithFallback, webSearchTool } from './ai/WebSearch'
-import { agentToolDefinitionsForShell, assessCommandRisk, executeAgentTool, requiresApproval, resolveCommandShell, restoreSnapshot, shellSyntaxLabel, snapshotForMutation, summarizeToolCall } from './agent/AgentTools'
+import { agentToolDefinitionsForShell, assessCommandRisk, executeAgentTool, isReadOnlyTool, parseTodoTasks, requiresApproval, resolveCommandShell, restoreSnapshot, shellSyntaxLabel, snapshotForMutation, summarizeToolCall } from './agent/AgentTools'
 import { buildAgentSystemPrompt } from './agent/AgentPrompt'
 import { validateAgentToolArgs } from './agent/validateToolArgs'
 import { deleteSnapshot, loadSnapshot, saveSnapshot } from './agent/SnapshotStore'
@@ -20,7 +20,7 @@ import { buildMemoryPrompt, ensureGlobalMemoryFile, getGlobalMemoryPath } from '
 import { buildSkillsPrompt, getSkillsDir, readSkillMeta, scanSkills } from './skills'
 import { mcpManager } from './mcp/McpManager'
 import { applyProxy, testProxy } from './proxy'
-import { isMcpToolName } from './mcp/mcpUtil'
+import { assessMcpRisk, isMcpToolName } from './mcp/mcpUtil'
 import { stripDocJunk, validateRecapDoc } from '@shared/recapDoc'
 import { ScreenshotService } from './ScreenshotService'
 import { cleanupCaptureTemp } from './capture'
@@ -702,17 +702,22 @@ function registerIpc(): void {
         effectiveSystemPrompt += buildSkillsPrompt(skills)
       }
 
+      const activeEdits = new Map<string, 'edited' | 'created'>()
+
       const runAgentTool = async (name: string, args: Record<string, unknown>): Promise<string> => {
         const callId = randomUUID()
         const summary = summarizeToolCall(name, args, workingDir)
         const argsJson = argsJsonForEvent(args)
         // For write/edit ship the proposed content so the renderer can show a diff.
+        // For todo_list ship parsed tasks for the UI checklist pill.
         const diff: Partial<AgentToolEvent> =
           name === 'edit_file'
             ? { oldText: String(args.old_text ?? '').slice(0, 4000), newText: String(args.new_text ?? '').slice(0, 4000) }
             : name === 'write_file'
               ? { newText: String(args.content ?? '').slice(0, 4000) }
-              : {}
+              : name === 'todo_list'
+                ? { todoList: parseTodoTasks(args.tasks) }
+                : {}
         const sendTool = (patch: Partial<AgentToolEvent>): void => {
           sendChunk({ type: 'tool', tool: { callId, toolName: name, summary, argsJson, ...diff, ...patch } })
         }
@@ -772,6 +777,13 @@ function registerIpc(): void {
                 )
           if (snapshot) void saveSnapshot(callId, snapshot)
           if (name !== 'read_tool_output') await saveToolOutput(callId, output)
+          if (name === 'write_file' || name === 'edit_file') {
+            const targetPath = typeof args.path === 'string' ? args.path : ''
+            if (targetPath) {
+              const action = snapshot && snapshot.content !== null ? 'edited' : 'created'
+              activeEdits.set(targetPath, action)
+            }
+          }
           // Mirror the in-turn 12k cap (head + tail) so cross-turn replay via
           // toolRecap can carry the same content the model saw this turn.
           sendTool({ state: 'done', result: capResultForEvent(output) })
@@ -785,8 +797,8 @@ function registerIpc(): void {
         }
       }
 
-      // External MCP tools always pause for approval unless "always allow" —
-      // we cannot know what a third-party server will do.
+      // External MCP tools: auto-allow in full-access / always-allow mode,
+      // but pause for dangerous operations and block catastrophic ones.
       const runMcpTool = async (name: string, args: Record<string, unknown>): Promise<string> => {
         const callId = randomUUID()
         const summary = `${mcpManager.describeTool(name)} · ${JSON.stringify(args).slice(0, 160)}`
@@ -794,7 +806,13 @@ function registerIpc(): void {
         const sendTool = (patch: Partial<AgentToolEvent>): void => {
           sendChunk({ type: 'tool', tool: { callId, toolName: name, summary, argsJson, ...patch } })
         }
-        if (!alwaysAllow) {
+        const risk = assessMcpRisk(name, args)
+        if (risk === 'forbidden') {
+          sendTool({ state: 'error', result: 'Blocked: destructive command' })
+          return '[Blocked: this MCP tool call is classified as destructive and will never be executed. Do not retry it.]'
+        }
+        const approvalWaived = alwaysAllow || getSettings().agentFullAccess === true
+        if (risk === 'dangerous' || !approvalWaived) {
           sendTool({ state: 'pending-approval' })
           const approval = await waitForApproval(callId, request.requestId, controller.signal)
           if (approval.alwaysAllow) alwaysAllow = true
@@ -832,6 +850,8 @@ function registerIpc(): void {
         {
           fetcher: providerFetch,
           tools: tools.length ? tools : undefined,
+          isReadOnlyTool,
+          getActiveEdits: () => Array.from(activeEdits.entries()).map(([p, a]) => `${p} (${a})`),
           // Agent/MCP runs span many rounds and can pause on user approval.
           // Models often issue one call per round, so real tasks (read × N +
           // edit × N + build/test) need generous headroom.

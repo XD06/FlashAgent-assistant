@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { buildMcpToolName, isMcpToolName, mcpConfigKey, parseEnvBlock, tokenizeCommand } from './mcpUtil'
+import {
+  assessMcpRisk,
+  buildMcpToolName,
+  extractMcpCommandStrings,
+  isMcpToolName,
+  mcpConfigKey,
+  parseEnvBlock,
+  tokenizeCommand
+} from './mcpUtil'
 import type { McpServerConfig } from '@shared/types'
 
 describe('tokenizeCommand', () => {
@@ -63,5 +71,56 @@ describe('mcpConfigKey', () => {
 
   it('ignores pure renames', () => {
     expect(mcpConfigKey({ ...base, name: 'renamed' })).toBe(mcpConfigKey(base))
+  })
+})
+
+describe('extractMcpCommandStrings', () => {
+  it('extracts command and script keys', () => {
+    expect(extractMcpCommandStrings('mcp__server__cmd', { command: 'git status' })).toEqual(['git status'])
+    expect(extractMcpCommandStrings('mcp__server__eval', { script: 'console.log(1)' })).toEqual(['console.log(1)'])
+    expect(extractMcpCommandStrings('mcp__server__db', { sql: 'SELECT 1' })).toEqual(['SELECT 1'])
+  })
+
+  it('extracts input or args arrays for command-like tools', () => {
+    expect(extractMcpCommandStrings('mcp__bash__run', { input: 'ls -la' })).toEqual(['ls -la'])
+    expect(extractMcpCommandStrings('mcp__terminal__exec', { args: ['git', 'diff'] })).toEqual(['git diff'])
+  })
+})
+
+describe('assessMcpRisk', () => {
+  it('marks safe MCP tool calls as safe', () => {
+    expect(assessMcpRisk('mcp__fs__read_file', { path: 'foo.txt' })).toBe('safe')
+    expect(assessMcpRisk('mcp__fs__write_file', { path: 'foo.txt', content: 'hello' })).toBe('safe')
+    expect(assessMcpRisk('mcp__search__web', { query: 'vitest tutorial' })).toBe('safe')
+    expect(assessMcpRisk('mcp__terminal__run_command', { command: 'git status' })).toBe('safe')
+    expect(assessMcpRisk('mcp__terminal__run_command', { command: 'pnpm test' })).toBe('safe')
+    expect(assessMcpRisk('mcp__sqlite__query', { query: 'SELECT * FROM users' })).toBe('safe')
+  })
+
+  it('marks destructive commands as dangerous', () => {
+    expect(assessMcpRisk('mcp__terminal__run_command', { command: 'rm file.txt' })).toBe('dangerous')
+    expect(assessMcpRisk('mcp__terminal__run_command', { command: 'git reset --hard' })).toBe('dangerous')
+    expect(assessMcpRisk('mcp__terminal__run_command', { command: 'git push -f' })).toBe('dangerous')
+    expect(assessMcpRisk('mcp__terminal__run_command', { command: 'taskkill /im node.exe' })).toBe('dangerous')
+    expect(assessMcpRisk('mcp__sqlite__query', { sql: 'DROP TABLE users' })).toBe('dangerous')
+    expect(assessMcpRisk('mcp__bash__exec', { input: 'del /s old.log' })).toBe('dangerous')
+  })
+
+  it('marks destructive tool names as dangerous', () => {
+    expect(assessMcpRisk('mcp__filesystem__delete_file', { path: 'a.txt' })).toBe('dangerous')
+    expect(assessMcpRisk('mcp__filesystem__remove_directory', { path: 'dir' })).toBe('dangerous')
+    expect(assessMcpRisk('mcp__fs__rmdir', { path: 'dir' })).toBe('dangerous')
+    expect(assessMcpRisk('mcp__process__kill_process', { pid: 1234 })).toBe('dangerous')
+    expect(assessMcpRisk('mcp__db__drop_database', { name: 'prod' })).toBe('dangerous')
+  })
+
+  it('marks catastrophic tools and commands as forbidden', () => {
+    expect(assessMcpRisk('mcp__terminal__run_command', { command: 'rm -rf /' })).toBe('forbidden')
+    expect(assessMcpRisk('mcp__terminal__run_command', { command: 'format c:' })).toBe('forbidden')
+    expect(assessMcpRisk('mcp__terminal__run_command', { command: 'shutdown /s /t 0' })).toBe('forbidden')
+    expect(assessMcpRisk('mcp__sys__format_disk', {})).toBe('forbidden')
+    expect(assessMcpRisk('mcp__sys__mkfs', {})).toBe('forbidden')
+    expect(assessMcpRisk('mcp__os__wipe_drive', {})).toBe('forbidden')
+    expect(assessMcpRisk('mcp__custom__tool', { nested: { cmd: ':(){ :|:& };:' } })).toBe('forbidden')
   })
 })

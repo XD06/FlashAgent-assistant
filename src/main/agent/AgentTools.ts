@@ -4,7 +4,7 @@ import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, relative, resolve } from 'node:path'
 import { isWin } from '../platform'
 import type { ToolDefinition } from '../ai/OpenAICompatibleClient'
-import type { CommandShell } from '@shared/types'
+import type { CommandShell, TodoItem } from '@shared/types'
 
 const MAX_READ_LINES = 2000
 // Reading loads the whole file into a string first — cap the size so the
@@ -174,11 +174,13 @@ export const agentToolDefinitions: ToolDefinition[] = [
   },
   {
     name: 'list_dir',
-    description: 'List the entries of a directory. Directories are suffixed with "/".',
+    description:
+      'List the entries of a directory. Directories are suffixed with "/". Use max_depth to inspect subdirectories as a tree (e.g. max_depth=2).',
     parameters: {
       type: 'object',
       properties: {
-        path: { type: 'string', description: 'Directory path. Defaults to the working directory.' }
+        path: { type: 'string', description: 'Directory path. Defaults to the working directory.' },
+        max_depth: { type: 'number', description: 'Depth of directory traversal (1 to 3). Default 1 (flat listing).' }
       },
       required: []
     }
@@ -186,13 +188,14 @@ export const agentToolDefinitions: ToolDefinition[] = [
   {
     name: 'search_files',
     description:
-      'Recursively search for files by name glob and/or line content regex. Returns "path:line: snippet" matches. Much cheaper than reading files one by one — prefer this to locate code. You MUST provide at least one of "glob" or "pattern" (or both).',
+      'Recursively search for files by name glob and/or line content regex. Returns "path:line: snippet" matches. Set context_lines to include surrounding lines. Much cheaper than reading files one by one — prefer this to locate code. You MUST provide at least one of "glob" or "pattern" (or both).',
     parameters: {
       type: 'object',
       properties: {
         path: { type: 'string', description: 'Directory to search. Defaults to the working directory.' },
         glob: { type: 'string', description: 'Filename glob like "*.ts" or "config.*". Optional, but at least one of glob/pattern is required.' },
         pattern: { type: 'string', description: 'Case-insensitive regex matched against each line. Optional, but at least one of glob/pattern is required.' },
+        context_lines: { type: 'number', description: 'Number of surrounding context lines before and after match (0 to 3). Default 0.' },
         max_results: { type: 'number', description: 'Max matches to return. Default 50, max 200.' }
       },
       required: []
@@ -224,6 +227,34 @@ export const agentToolDefinitions: ToolDefinition[] = [
         limit: { type: 'number', description: 'Characters to read. Default 8000, maximum 10000.' }
       },
       required: ['call_id']
+    }
+  },
+  {
+    name: 'todo_list',
+    description:
+      'Update or view the task checklist for the current complex task. Use this to break down multi-step tasks into clear steps and track progress (pending -> in_progress -> completed). The checklist is displayed prominently to the user.',
+    parameters: {
+      type: 'object',
+      properties: {
+        tasks: {
+          type: 'array',
+          description:
+            'The complete ordered list of task items. Each item must have text and status ("pending", "in_progress", or "completed").',
+          items: {
+            type: 'object',
+            properties: {
+              id: { type: 'string', description: 'Step number or id like "1", "2".' },
+              text: { type: 'string', description: 'Actionable description of this step.' },
+              status: {
+                type: 'string',
+                description: 'Current status: pending, in_progress, or completed.'
+              }
+            },
+            required: ['text', 'status']
+          }
+        }
+      },
+      required: ['tasks']
     }
   }
 ]
@@ -373,13 +404,50 @@ async function editFileTool(workingDir: string, args: Record<string, unknown>): 
 
 async function listDirTool(workingDir: string, args: Record<string, unknown>): Promise<string> {
   const dirPath = asString(args.path) ? resolveAgentPath(workingDir, asString(args.path)) : workingDir
-  const entries = await fs.readdir(dirPath, { withFileTypes: true })
-  const names = entries
-    .slice(0, MAX_LIST_ENTRIES)
-    .map((entry) => (entry.isDirectory() ? `${entry.name}/` : entry.name))
-    .sort()
-  const suffix = entries.length > MAX_LIST_ENTRIES ? `\n... (${entries.length - MAX_LIST_ENTRIES} more entries)` : ''
-  return `${dirPath}:\n${names.join('\n')}${suffix}`
+  const maxDepth = Math.min(3, Math.max(1, typeof args.max_depth === 'number' ? Math.floor(args.max_depth) : 1))
+
+  if (maxDepth <= 1) {
+    const entries = await fs.readdir(dirPath, { withFileTypes: true })
+    const names = entries
+      .slice(0, MAX_LIST_ENTRIES)
+      .map((entry) => (entry.isDirectory() ? `${entry.name}/` : entry.name))
+      .sort()
+    const suffix = entries.length > MAX_LIST_ENTRIES ? `\n... (${entries.length - MAX_LIST_ENTRIES} more entries)` : ''
+    return `${dirPath}:\n${names.join('\n')}${suffix}`
+  }
+
+  const lines: string[] = []
+  let totalCount = 0
+
+  const walk = async (currentDir: string, depth: number, indent: string): Promise<void> => {
+    if (depth > maxDepth || totalCount >= MAX_LIST_ENTRIES) return
+    let entries
+    try {
+      entries = await fs.readdir(currentDir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    entries.sort((a, b) => {
+      if (a.isDirectory() && !b.isDirectory()) return -1
+      if (!a.isDirectory() && b.isDirectory()) return 1
+      return a.name.localeCompare(b.name)
+    })
+    for (const entry of entries) {
+      if (totalCount >= MAX_LIST_ENTRIES) break
+      if (entry.name.startsWith('.') || SEARCH_SKIP_DIRS.has(entry.name)) continue
+      totalCount++
+      if (entry.isDirectory()) {
+        lines.push(`${indent}${entry.name}/`)
+        await walk(resolve(currentDir, entry.name), depth + 1, `${indent}  `)
+      } else {
+        lines.push(`${indent}${entry.name}`)
+      }
+    }
+  }
+
+  await walk(dirPath, 1, '  ')
+  const suffix = totalCount >= MAX_LIST_ENTRIES ? `\n... (${totalCount} entries, capped at ${MAX_LIST_ENTRIES})` : ''
+  return `${dirPath} (tree max_depth=${maxDepth}):\n${lines.join('\n')}${suffix}`
 }
 
 function runCommandTool(
@@ -505,6 +573,7 @@ async function searchFilesTool(workingDir: string, args: Record<string, unknown>
     MAX_SEARCH_RESULTS,
     Math.max(1, typeof args.max_results === 'number' ? Math.floor(args.max_results) : 50)
   )
+  const contextLines = Math.min(3, Math.max(0, typeof args.context_lines === 'number' ? Math.floor(args.context_lines) : 0))
   const results: string[] = []
   let visited = 0
   const walk = async (dir: string): Promise<void> => {
@@ -536,7 +605,18 @@ async function searchFilesTool(workingDir: string, args: Record<string, unknown>
           if (content.includes('\u0000')) continue // binary
           const lines = content.split(/\r?\n/)
           for (let i = 0; i < lines.length && results.length < maxResults; i++) {
-            if (pattern.test(lines[i])) results.push(`${full}:${i + 1}: ${lines[i].trim().slice(0, 200)}`)
+            if (pattern.test(lines[i])) {
+              if (contextLines === 0) {
+                results.push(`${full}:${i + 1}: ${lines[i].trim().slice(0, 200)}`)
+              } else {
+                const start = Math.max(0, i - contextLines)
+                const end = Math.min(lines.length - 1, i + contextLines)
+                for (let c = start; c <= end; c++) {
+                  const sep = c === i ? ':' : '-'
+                  results.push(`${full}${sep}${c + 1}${sep} ${lines[c].trim().slice(0, 200)}`)
+                }
+              }
+            }
           }
         } catch {
           // unreadable file — skip
@@ -599,6 +679,11 @@ export function assessCommandRisk(command: string): CommandRisk {
  * the working directory are shown relative to it to keep the row compact. */
 export function summarizeToolCall(name: string, args: Record<string, unknown>, workingDir?: string): string {
   switch (name) {
+    case 'todo_list': {
+      const tasks = parseTodoTasks(args.tasks)
+      const done = tasks.filter((t) => t.status === 'completed').length
+      return `Update checklist (${done}/${tasks.length} done)`
+    }
     case 'run_command':
       return asString(args.command)
     case 'search_files':
@@ -625,6 +710,45 @@ export function summarizeToolCall(name: string, args: Record<string, unknown>, w
     default:
       return JSON.stringify(args).slice(0, 200)
   }
+}
+
+export function parseTodoTasks(raw: unknown): TodoItem[] {
+  if (!Array.isArray(raw)) return []
+  return raw
+    .filter((t): t is Record<string, unknown> => typeof t === 'object' && t !== null)
+    .map((t, idx) => ({
+      id: typeof t.id === 'string' && t.id.trim() ? t.id.trim() : String(idx + 1),
+      text: typeof t.text === 'string' ? t.text.trim() : '',
+      status: (['pending', 'in_progress', 'completed'].includes(String(t.status)) ? t.status : 'pending') as 'pending' | 'in_progress' | 'completed'
+    }))
+    .filter((t) => t.text.length > 0)
+}
+
+function todoListTool(args: Record<string, unknown>): string {
+  const tasks = parseTodoTasks(args.tasks)
+  const completed = tasks.filter((t) => t.status === 'completed').length
+  const inProgress = tasks.filter((t) => t.status === 'in_progress').length
+  const pending = tasks.filter((t) => t.status === 'pending').length
+
+  const formatted = tasks
+    .map((t) => {
+      const mark = t.status === 'completed' ? '[x]' : t.status === 'in_progress' ? '[>]' : '[ ]'
+      return `${mark} ${t.id}. ${t.text}`
+    })
+    .join('\n')
+
+  return `Task checklist updated (${completed}/${tasks.length} completed, ${inProgress} in progress, ${pending} pending):\n${formatted}`
+}
+
+const READ_ONLY_TOOLS = new Set(['read_file', 'list_dir', 'search_files', 'read_tool_output', 'todo_list'])
+
+export function isReadOnlyTool(name: string): boolean {
+  if (READ_ONLY_TOOLS.has(name)) return true
+  if (name.startsWith('mcp__')) {
+    const raw = name.replace(/^mcp__[a-zA-Z0-9_-]+__/, '').toLowerCase()
+    return /^(?:read|get|list|search|fetch|find|show|describe|inspect|view)/.test(raw)
+  }
+  return false
 }
 
 export interface MutationSnapshot {
@@ -677,6 +801,8 @@ export async function executeAgentTool(
       return searchFilesTool(workingDir, args)
     case 'list_dir':
       return listDirTool(workingDir, args)
+    case 'todo_list':
+      return todoListTool(args)
     case 'run_command':
       return runCommandTool(workingDir, args, signal, onOutput, shellPref)
     default:

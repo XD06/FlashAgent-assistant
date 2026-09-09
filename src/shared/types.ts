@@ -269,6 +269,12 @@ export interface AiStreamRequest {
 
 export type AgentToolState = 'pending-approval' | 'running' | 'done' | 'error' | 'rejected' | 'reverted'
 
+export interface TodoItem {
+  id?: string
+  text: string
+  status: 'pending' | 'in_progress' | 'completed'
+}
+
 /** A tool invocation surfaced to the renderer as part of the AI stream. */
 export interface AgentToolEvent {
   callId: string
@@ -286,6 +292,8 @@ export interface AgentToolEvent {
   /** For write/edit: proposed old/new content so the UI can render a diff. */
   oldText?: string
   newText?: string
+  /** For todo_list: updated task items to show in the UI checklist pill. */
+  todoList?: TodoItem[]
 }
 
 export interface AiChunkPayload {

@@ -41,7 +41,7 @@ function streamingTextResponse(text: string): Response {
   const encoder = new TextEncoder()
   const body = new ReadableStream({
     start(controller) {
-      controller.enqueue(encoder.encode(`data: {"choices":[{"delta":{"content":"${text}"}}]}\n\n`))
+      controller.enqueue(encoder.encode(`data: {"choices":[{"delta":{"content":${JSON.stringify(text)}}}]}\n\n`))
       controller.close()
     }
   })
@@ -618,6 +618,191 @@ describe('OpenAI-compatible stream parser', () => {
     expect(toolMsg?.tool_call_id).toBe('call_bad')
     expect(toolMsg?.content).toContain('Invalid tool call')
     expect(toolMsg?.content).toContain('Re-issue the tool call with valid JSON arguments')
+  })
+
+  it('parallelizes consecutive read-only tool calls and preserves result order', async () => {
+    const encoder = new TextEncoder()
+    const multiToolBody = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          encoder.encode(
+            'data: {"choices":[{"delta":{"tool_calls":[' +
+              '{"index":0,"id":"c1","function":{"name":"read_file","arguments":"{\\"path\\":\\"a.ts\\"}"}},' +
+              '{"index":1,"id":"c2","function":{"name":"list_dir","arguments":"{\\"path\\":\\".\\"}"}}' +
+              ']}}]}\n\n'
+          )
+        )
+        controller.close()
+      }
+    })
+
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(multiToolBody, { status: 200 }))
+      .mockResolvedValueOnce(streamingTextResponse('all done'))
+
+    const running = new Set<string>()
+    let maxConcurrent = 0
+
+    const onToolCall = vi.fn(async (name: string) => {
+      running.add(name)
+      maxConcurrent = Math.max(maxConcurrent, running.size)
+      await new Promise((r) => setTimeout(r, 20))
+      running.delete(name)
+      return `result of ${name}`
+    })
+
+    await streamChatMessages(
+      provider,
+      [{ role: 'user', text: 'read both' }],
+      'system',
+      new AbortController().signal,
+      () => {},
+      'off',
+      {
+        tools: [
+          { name: 'read_file', description: '', parameters: {} },
+          { name: 'list_dir', description: '', parameters: {} }
+        ],
+        onToolCall,
+        isReadOnlyTool: (name) => name === 'read_file' || name === 'list_dir',
+        maxToolRounds: 3
+      }
+    )
+
+    // Both read tools must have been active concurrently
+    expect(maxConcurrent).toBe(2)
+    const secondBody = JSON.parse(String(fetchMock.mock.calls[1][1]?.body)) as {
+      messages: Array<{ role: string; content: string; tool_call_id?: string }>
+    }
+    const toolMsgs = secondBody.messages.filter((m) => m.role === 'tool')
+    expect(toolMsgs.map((m) => m.tool_call_id)).toEqual(['c1', 'c2'])
+  })
+
+  it('injects active edits ledger into system prompt across rounds', async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(toolCallResponse('call_1'))
+      .mockResolvedValueOnce(streamingTextResponse('done'))
+
+    let editsList = ['src/a.ts (edited)']
+    await streamChatMessages(
+      provider,
+      [{ role: 'user', text: 'edit a' }],
+      'base system',
+      new AbortController().signal,
+      () => {},
+      'off',
+      {
+        tools: [toolDef],
+        onToolCall: async () => 'ok',
+        getActiveEdits: () => editsList,
+        maxToolRounds: 3
+      }
+    )
+
+    const secondBody = JSON.parse(String(fetchMock.mock.calls[1][1]?.body)) as {
+      messages: Array<{ role: string; content: string }>
+    }
+    const sysMsg = secondBody.messages.find((m) => m.role === 'system')
+    expect(sysMsg?.content).toContain('[Active Edits in this Task]:')
+    expect(sysMsg?.content).toContain('- src/a.ts (edited)')
+  })
+
+  it('triggers verification loop nudge when code was modified but no command ran', async () => {
+    const encoder = new TextEncoder()
+    const editToolBody = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          encoder.encode(
+            'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c_edit","function":{"name":"edit_file","arguments":"{\\"path\\":\\"a.ts\\"}"}}]}}]}\n\n'
+          )
+        )
+        controller.close()
+      }
+    })
+
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(editToolBody, { status: 200 }))
+      // In round 1 the model finishes without any tool calls (tries to quit without testing)
+      .mockResolvedValueOnce(streamingTextResponse('I have edited the file.'))
+      // In round 2 (after verification nudge), model replies with done
+      .mockResolvedValueOnce(streamingTextResponse('Acknowledged verification and finished.'))
+
+    const onToolCall = vi.fn(async () => 'file updated')
+
+    await streamChatMessages(
+      provider,
+      [{ role: 'user', text: 'update a.ts' }],
+      'system',
+      new AbortController().signal,
+      () => {},
+      'off',
+      {
+        tools: [{ name: 'edit_file', description: '', parameters: {} }],
+        onToolCall,
+        roundLimitNotice: '请继续',
+        maxToolRounds: 5
+      }
+    )
+
+    // Must have made 3 fetch calls: round 0 (tool call), round 1 (model ends -> nudged), round 2 (final)
+    expect(fetchMock.mock.calls.length).toBe(3)
+    const thirdBody = JSON.parse(String(fetchMock.mock.calls[2][1]?.body)) as {
+      messages: Array<{ role: string; content: string }>
+    }
+    const lastUserMsg = thirdBody.messages[thirdBody.messages.length - 1]
+    expect(lastUserMsg.role).toBe('user')
+    expect(lastUserMsg.content).toContain('系统自检提示')
+  })
+
+  it('warns on fake test output when no command tool ran', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      streamingTextResponse('Tests passed:\n✓ 42 tests passed in 2.1s')
+    )
+    const deltas: string[] = []
+
+    await streamChatMessages(
+      provider,
+      [{ role: 'user', text: 'run tests' }],
+      'system',
+      new AbortController().signal,
+      (delta) => { if (delta.content) deltas.push(delta.content) },
+      'off',
+      {
+        tools: [{ name: 'run_command', description: '', parameters: {} }],
+        onToolCall: async () => '',
+        maxToolRounds: 3
+      }
+    )
+
+    const full = deltas.join('')
+    expect(full).toContain('no test commands were actually executed in this session')
+  })
+
+  it('warns on round 0 pseudo-completion when user asks to write code and model claims disk write without tool call', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      streamingTextResponse('已为您创建文件并保存如下：\n```ts\nconst x = 1\n```')
+    )
+    const deltas: string[] = []
+
+    await streamChatMessages(
+      provider,
+      [{ role: 'user', text: '请帮我创建 index.ts 并写入代码' }],
+      'system',
+      new AbortController().signal,
+      (delta) => { if (delta.content) deltas.push(delta.content) },
+      'off',
+      {
+        tools: [{ name: 'write_file', description: '', parameters: {} }],
+        onToolCall: async () => '',
+        maxToolRounds: 3
+      }
+    )
+
+    const full = deltas.join('')
+    expect(full).toContain('上述代码为方案展示，尚未调用工具实际写入文件')
   })
 })
 

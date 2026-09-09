@@ -475,6 +475,10 @@ export interface ToolCallStreamOptions extends ProviderRequestOptions {
   tools?: ToolDefinition[]
   onToolCall?: (name: string, args: Record<string, unknown>) => Promise<string>
   onStatus?: (text: string, toolName?: string) => void
+  /** Identify whether a tool is read-only so consecutive read-only calls can be parallelized. */
+  isReadOnlyTool?: (name: string) => boolean
+  /** Active edits ledger (paths modified/created in current task) to maintain memory. */
+  getActiveEdits?: () => string[]
   /** Max tool-calling rounds before giving up. Defaults to 5 (web-search style). */
   maxToolRounds?: number
   /** Wall-clock budget for model streaming across the tool loop. Time spent
@@ -795,6 +799,10 @@ export async function streamChatMessages(
   // real edits is grounded and must not be flagged, while "I created/edited X"
   // with zero mutations backing it is fabrication.
   const executedMutatingTools = new Set<string>()
+  // Command execution tools (run_command, MCP shell commands). The verification
+  // loop uses this to ensure that code changes are verified with actual commands.
+  const executedCommandTools = new Set<string>()
+  let verificationNudged = false
 
   // Build initial API messages array — replayed tool traces from earlier
   // turns expand into native tool-call/tool-result messages here.
@@ -837,6 +845,17 @@ export async function streamChatMessages(
         apiMessages.push({ role: 'user', content: note })
       }
     }
+
+    // Active edits ledger: inject the list of modified/created files into system prompt
+    // so long multi-round sessions retain memory of touched files.
+    const activeEdits = options.getActiveEdits?.() ?? []
+    const editsSuffix =
+      activeEdits.length > 0 ? `\n\n[Active Edits in this Task]:\n${activeEdits.map((e) => `- ${e}`).join('\n')}` : ''
+    const roundSystemPrompt = systemPrompt + editsSuffix
+    if (apiType !== 'anthropic' && apiMessages.length > 0 && (apiMessages[0] as { role?: string }).role === 'system') {
+      ;(apiMessages[0] as { role: string; content: string }).content = roundSystemPrompt
+    }
+
     // Dynamically set max_tokens: reasoning modes need more room
     const dynMaxTokens = defaultMaxTokens(reasoning)
     const loopTemp = options.agentTemperature ?? provider.temperature
@@ -847,7 +866,7 @@ export async function streamChatMessages(
             temperature: loopTemp,
             max_tokens: dynMaxTokens,
             stream: true,
-            system: systemPrompt,
+            system: roundSystemPrompt,
             messages: apiMessages,
             tools: buildToolsBody(apiType, tools!)
           }
@@ -905,12 +924,54 @@ export async function streamChatMessages(
             .map((b) => ({ id: b.id, name: b.name, arguments: b.json }))
         : Array.from(toolCallMap.values()).filter((tc) => tc.id && tc.name)
     if (toolCalls.length === 0) {
-      // Hallucination guard: if the model wrote text that looks like it
-      // performed tool actions (file edits, command runs, etc.) without
-      // actually issuing tool calls, warn the user. This catches the
-      // "narrating work as done" anti-pattern. Only fire when tools are
-      // available AND the model is in the middle of a multi-round task
-      // (round > 0), since round 0 may legitimately be a plan.
+      // 1. Verification Loop Check:
+      // If mutating tools ran in this turn, but no command tool ran, give the model one verification chance.
+      if (
+        executedMutatingTools.size > 0 &&
+        executedCommandTools.size === 0 &&
+        !verificationNudged &&
+        round < maxRounds - 1
+      ) {
+        verificationNudged = true
+        const isZh = options.roundLimitNotice?.includes('继续') || /[\u4e00-\u9fa5]/.test(roundText)
+        const nudgeText = isZh
+          ? '[系统自检提示] 检测到代码已被修改，但尚未运行任何验证命令（如单元测试、类型检查或构建命令）。请使用 run_command 运行相关测试或验证命令核验改动的正确性。如果当前项目无需测试或已确认无须验证，请简要说明理由后结束。'
+          : '[System Verification Nudge] You modified code files, but have not run any verification commands (e.g. tests, typecheck, or build). Please use run_command to run relevant tests/checks to verify your changes. If no verification is needed, briefly explain why and conclude.'
+
+        if (apiType === 'anthropic') {
+          apiMessages.push({ role: 'assistant', content: [{ type: 'text', text: roundText || 'Code modified.' }] })
+          apiMessages.push({ role: 'user', content: [{ type: 'text', text: nudgeText }] })
+        } else {
+          apiMessages.push({ role: 'assistant', content: roundText || 'Code modified.' })
+          apiMessages.push({ role: 'user', content: nudgeText })
+        }
+        continue
+      }
+
+      // 2. Hallucination guard:
+      // Case A: Round 0 pseudo-completion
+      // The user asked to create/edit files, and model text claims files have been created/written/saved on disk,
+      // but issued 0 tool calls.
+      if (round === 0 && roundText.length > 0 && executedMutatingTools.size === 0) {
+        const lastUserMsg = messages[messages.length - 1]?.text || ''
+        const userWantedAction =
+          /(?:创建|新建|写入|修改|更新|保存|编辑|修复|实现|编写|写一个|做个|create|write|edit|modify|save|implement|fix)/i.test(
+            lastUserMsg
+          )
+        const claimsFileSaved =
+          /(?:(?:文件|代码|项目|file)\s*(?:已|已为您|has been)\s*(?:保存|更新|创建|写入|saved|updated|created|written)|(?:已[经]?为您|已[经]?成功).*(?:创建|写入|保存|修改|更新|created|written|saved|modified).*(?:文件|代码|脚本|file))/i.test(
+            roundText
+          )
+        if (userWantedAction && claimsFileSaved && roundText.includes('```')) {
+          const isZh = options.roundLimitNotice?.includes('继续') || /[\u4e00-\u9fa5]/.test(roundText)
+          const warn = isZh
+            ? '\n\n⚠️ 上述代码为方案展示，尚未调用工具实际写入文件。如需写入项目，请回复“执行”。'
+            : '\n\n⚠️ The code above is a preview and has not been written to disk yet. Reply "go ahead" to apply.'
+          onDelta({ content: warn })
+        }
+      }
+
+      // Case B: Round > 0 claimed work without mutating backing
       if (round > 0 && roundText.length > 0) {
         const hallucinationPatterns = [
           /(?:已[经成]?|successfully)\s*(?:创建|修改|编辑|写入|删除|执行|运行|部署|create|edit|modif|writ|delet|execut|ran|deploy|built|install)/i,
@@ -922,7 +983,7 @@ export async function streamChatMessages(
           /\d+→.+\n\d+→/,
           // Model says "I'm now writing/editing code" without a tool call.
           /(?:我现在|开始|动手).*(?:编写|修改|创建|写入).*(?:代码|文件|code|file)/i,
-          /(?:now|let me|I'll|I will)\s+(?:write|edit|create|modify|implement)\s+(?:the|this)?\s*(?:code|file)/i,
+          /(?:now|let me|I'll|I will)\s+(?:write|edit|create|modify|implement)\s+(?:the|this)?\s*(?:code|file)/i
         ]
         const looksHallucinated = hallucinationPatterns.some((p) => p.test(roundText))
         // Cross-check against real executions: if a mutating tool actually ran
@@ -937,6 +998,21 @@ export async function streamChatMessages(
           onDelta({ content: warn })
         }
       }
+
+      // Case C: Fake test report detection
+      // Model asserts test results (e.g. PASS ... or "XX tests passed") when no command tool ever ran.
+      if (executedCommandTools.size === 0 && roundText.length > 0) {
+        const fakeTestPattern =
+          /(?:(?:PASS|FAIL)\s+\S+\.(?:test|spec)\.[a-z]+|\b(?:\d+\s+tests?\s+passed|\d+\s+failing|tests passed|test suites?:?\s*\d+\s*passed)\b|✓\s*\d+\s*tests? passed)/i
+        if (fakeTestPattern.test(roundText)) {
+          const isZh = options.roundLimitNotice?.includes('继续') || /[\u4e00-\u9fa5]/.test(roundText)
+          const warn = isZh
+            ? '\n\n⚠️ 注意：上述测试结果为推断生成，本次对话尚未实际调用命令运行测试。'
+            : '\n\n⚠️ Note: The test results above are model-generated assumptions; no test commands were actually executed in this session.'
+          onDelta({ content: warn })
+        }
+      }
+
       roundLimitHit = false
       break // no tool calls — we're done
     }
@@ -977,10 +1053,8 @@ export async function streamChatMessages(
     // Execute each tool call and collect the results
     const toolResults: Array<{ id: string; content: string }> = []
     const execStart = Date.now()
-    for (const tc of toolCalls) {
-      // Malformed arguments are returned to the model as an actionable tool
-      // result instead of silently running the tool with an empty object —
-      // the model fixes its own call in the next round.
+
+    const executeOneCall = async (tc: AccumulatedToolCall): Promise<{ id: string; content: string }> => {
       let args: Record<string, unknown> = {}
       let parseError: string | null = null
       try {
@@ -995,11 +1069,10 @@ export async function streamChatMessages(
       }
       if (parseError) {
         const raw = (tc.arguments || '').slice(0, 200)
-        toolResults.push({
+        return {
           id: tc.id,
           content: `[tool: ${tc.name}(INVALID_ARGS) → error]\n[Invalid tool call: arguments for ${tc.name} is not a valid JSON object (${parseError}). Raw: ${JSON.stringify(raw)}. Re-issue the tool call with valid JSON arguments.]`
-        })
-        continue
+        }
       }
 
       try {
@@ -1008,18 +1081,47 @@ export async function streamChatMessages(
         // Register real mutations (name-based so MCP write tools count too);
         // a user-rejected call returned as text is not a mutation.
         if (
-          /write|edit|create|delet|remove|run|exec|command|save|updat|patch|apply|move|rename|mkdir/i.test(tc.name) &&
+          /write|edit|create|delet|remove|save|updat|patch|apply|move|rename|mkdir/i.test(tc.name) &&
           !result.startsWith('[User rejected')
         ) {
           executedMutatingTools.add(tc.name)
         }
-        toolResults.push({ id: tc.id, content: toolResultPrefix(tc.name, args, true) + result })
+        if (
+          /command|bash|shell|terminal|run|exec/i.test(tc.name) &&
+          !result.startsWith('[User rejected')
+        ) {
+          executedCommandTools.add(tc.name)
+        }
+        return { id: tc.id, content: toolResultPrefix(tc.name, args, true) + result }
       } catch (error) {
         if (signal.aborted) throw error
         const msg = error instanceof Error ? error.message : String(error)
         onStatus?.(`⚠️ ${msg}`, tc.name)
-        // Still send a tool result so the conversation can continue
-        toolResults.push({ id: tc.id, content: toolResultPrefix(tc.name, args, false) + `[Tool failed: ${msg}]` })
+        return { id: tc.id, content: toolResultPrefix(tc.name, args, false) + `[Tool failed: ${msg}]` }
+      }
+    }
+
+    // Batch contiguous read-only calls for parallel execution; run others sequentially
+    type ToolBatch = { isParallel: boolean; calls: AccumulatedToolCall[] }
+    const batches: ToolBatch[] = []
+    for (const tc of toolCalls) {
+      const isReadOnly = options.isReadOnlyTool ? options.isReadOnlyTool(tc.name) : false
+      const lastBatch = batches[batches.length - 1]
+      if (isReadOnly && lastBatch && lastBatch.isParallel) {
+        lastBatch.calls.push(tc)
+      } else {
+        batches.push({ isParallel: isReadOnly, calls: [tc] })
+      }
+    }
+
+    for (const batch of batches) {
+      if (batch.isParallel && batch.calls.length > 1) {
+        const batchResults = await Promise.all(batch.calls.map((tc) => executeOneCall(tc)))
+        toolResults.push(...batchResults)
+      } else {
+        for (const tc of batch.calls) {
+          toolResults.push(await executeOneCall(tc))
+        }
       }
     }
     toolTimeMs += Date.now() - execStart

@@ -1,6 +1,96 @@
 import type { McpServerConfig } from '@shared/types'
+import { assessCommandRisk, isForbiddenCommand, type CommandRisk } from '../agent/AgentTools'
 
 // Pure helpers for the MCP manager, kept SDK-free so they are unit-testable.
+
+/** Destructive MCP tool names that are considered dangerous (e.g. file deletions, dropping databases, killing processes). */
+const DANGEROUS_MCP_TOOL_PATTERNS: RegExp[] = [
+  /(?:^|[_-])(?:delete|remove|unlink)[-_]?(?:file|dir|directory|path|folder)s?(?:[_-]|$)/i,
+  /(?:^|[_-])(?:drop|truncate)[-_]?(?:table|database|db|schema|collection)s?(?:[_-]|$)/i,
+  /(?:^|[_-])(?:kill|terminate|stop)[-_]?(?:process|job|task)s?(?:[_-]|$)/i,
+  /(?:^|[_-])(?:rmdir|purge[-_]?directory)(?:[_-]|$)/i
+]
+
+/** Catastrophic MCP tool names that are blocked outright. */
+const FORBIDDEN_MCP_TOOL_PATTERNS: RegExp[] = [
+  /(?:^|[_-])(?:format|wipe)[-_]?(?:disk|drive|partition)s?(?:[_-]|$)/i,
+  /(?:^|[_-])mkfs(?:[_-]|$)/i
+]
+
+function collectStringValues(obj: unknown, maxDepth = 3): string[] {
+  if (maxDepth < 0 || obj === null || obj === undefined) return []
+  if (typeof obj === 'string') return [obj]
+  if (Array.isArray(obj)) {
+    return obj.flatMap((item) => collectStringValues(item, maxDepth - 1))
+  }
+  if (typeof obj === 'object') {
+    return Object.values(obj).flatMap((val) => collectStringValues(val, maxDepth - 1))
+  }
+  return []
+}
+
+/** Extract command-like string arguments from an MCP tool call payload. */
+export function extractMcpCommandStrings(toolName: string, args: Record<string, unknown>): string[] {
+  const commands: string[] = []
+  const isCommandTool = /(?:^|[_-])(?:run|exec|execute|bash|sh|shell|terminal|cmd|powershell)(?:[_-]|$)/i.test(toolName)
+
+  const scan = (record: Record<string, unknown>, depth: number): void => {
+    if (depth > 2) return
+    for (const [key, value] of Object.entries(record)) {
+      if (typeof value === 'string') {
+        if (
+          /^(?:command|cmd|script|exec|shell|code|sql|query)$/i.test(key) ||
+          /(?:command|script)$/i.test(key) ||
+          (isCommandTool && /^(?:input|args|line)$/i.test(key))
+        ) {
+          commands.push(value)
+        }
+      } else if (Array.isArray(value) && isCommandTool && /^(?:args|command)$/i.test(key)) {
+        const joined = value.filter((item): item is string => typeof item === 'string').join(' ')
+        if (joined) commands.push(joined)
+      } else if (value && typeof value === 'object' && !Array.isArray(value)) {
+        scan(value as Record<string, unknown>, depth + 1)
+      }
+    }
+  }
+
+  scan(args, 0)
+  return commands
+}
+
+/** Assess the risk level of an MCP tool call.
+ * - 'forbidden': Destructive/catastrophic commands or tool names (e.g. format c:, rm -rf /) -> blocked outright.
+ * - 'dangerous': Risky operations (e.g. file deletions, rm, git reset --hard, kill, drop table) -> pauses for approval even in full access mode.
+ * - 'safe': Normal operations (e.g. search, read, write/edit, status queries) -> runs automatically in full access mode.
+ */
+export function assessMcpRisk(toolName: string, args: Record<string, unknown>): CommandRisk {
+  // Check if tool name itself is forbidden
+  if (FORBIDDEN_MCP_TOOL_PATTERNS.some((pattern) => pattern.test(toolName))) {
+    return 'forbidden'
+  }
+
+  // Check if any string argument contains an outright forbidden command
+  const allStrings = collectStringValues(args)
+  for (const value of allStrings) {
+    if (isForbiddenCommand(value)) {
+      return 'forbidden'
+    }
+  }
+
+  // Extract command strings and evaluate command risk
+  const commands = extractMcpCommandStrings(toolName, args)
+  for (const cmd of commands) {
+    const risk = assessCommandRisk(cmd)
+    if (risk !== 'safe') return risk
+  }
+
+  // Check if tool name itself is dangerous
+  if (DANGEROUS_MCP_TOOL_PATTERNS.some((pattern) => pattern.test(toolName))) {
+    return 'dangerous'
+  }
+
+  return 'safe'
+}
 
 /** Split a command line into tokens, honoring single/double quotes. */
 export function tokenizeCommand(command: string): string[] {

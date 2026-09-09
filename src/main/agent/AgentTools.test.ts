@@ -7,7 +7,9 @@ import {
   assessCommandRisk,
   executeAgentTool,
   isForbiddenCommand,
+  isReadOnlyTool,
   isSensitivePath,
+  parseTodoTasks,
   requiresApproval,
   resolveAgentPath,
   resolveCommandShell,
@@ -469,5 +471,104 @@ describe('run_command live output', () => {
     )
     expect(output).toContain('streamed-line')
     expect(chunks.join('')).toContain('streamed-line')
+  })
+})
+
+describe('list_dir tree exploration with max_depth', () => {
+  it('formats directory hierarchy with tree indentation when max_depth > 1', async () => {
+    const { mkdirSync } = await import('node:fs')
+    const treeRoot = join(workDir, 'tree-test')
+    mkdirSync(join(treeRoot, 'subA', 'nested'), { recursive: true })
+    mkdirSync(join(treeRoot, 'subB'), { recursive: true })
+    writeFileSync(join(treeRoot, 'root.txt'), 'root', 'utf8')
+    writeFileSync(join(treeRoot, 'subA', 'a.txt'), 'a', 'utf8')
+    writeFileSync(join(treeRoot, 'subA', 'nested', 'deep.txt'), 'deep', 'utf8')
+
+    const output = await executeAgentTool('list_dir', { path: treeRoot, max_depth: 3 }, workDir)
+    expect(output).toContain('tree max_depth=3')
+    expect(output).toContain('subA/')
+    expect(output).toContain('  nested/')
+    expect(output).toContain('    deep.txt')
+    expect(output).toContain('  a.txt')
+    expect(output).toContain('subB/')
+    expect(output).toContain('root.txt')
+  })
+})
+
+describe('search_files with context_lines', () => {
+  it('includes preceding and trailing lines with line numbers', async () => {
+    const contextDir = join(workDir, 'context-test')
+    const { mkdirSync } = await import('node:fs')
+    mkdirSync(contextDir, { recursive: true })
+    writeFileSync(
+      join(contextDir, 'context.ts'),
+      ['line 1', 'line 2', 'TARGET_MATCH', 'line 4', 'line 5'].join('\n'),
+      'utf8'
+    )
+
+    const output = await executeAgentTool(
+      'search_files',
+      { path: contextDir, pattern: 'TARGET_MATCH', context_lines: 1 },
+      workDir
+    )
+    expect(output).toContain('context.ts-2- line 2')
+    expect(output).toContain('context.ts:3: TARGET_MATCH')
+    expect(output).toContain('context.ts-4- line 4')
+  })
+})
+
+describe('todo_list and checklist parsing', () => {
+  it('parses valid task items and defaults missing values', () => {
+    const raw = [
+      { text: 'Task 1', status: 'completed' },
+      { id: '2', text: 'Task 2', status: 'in_progress' },
+      { id: 'custom', text: 'Task 3', status: 'invalid_status' },
+      { text: '' } // should be filtered out
+    ]
+    const parsed = parseTodoTasks(raw)
+    expect(parsed).toHaveLength(3)
+    expect(parsed[0]).toEqual({ id: '1', text: 'Task 1', status: 'completed' })
+    expect(parsed[1]).toEqual({ id: '2', text: 'Task 2', status: 'in_progress' })
+    expect(parsed[2]).toEqual({ id: 'custom', text: 'Task 3', status: 'pending' })
+  })
+
+  it('formats task checklist in todoListTool output', async () => {
+    const tasks = [
+      { id: '1', text: 'Step 1', status: 'completed' },
+      { id: '2', text: 'Step 2', status: 'in_progress' },
+      { id: '3', text: 'Step 3', status: 'pending' }
+    ]
+    const output = await executeAgentTool('todo_list', { tasks }, workDir)
+    expect(output).toContain('1/3 completed, 1 in progress, 1 pending')
+    expect(output).toContain('[x] 1. Step 1')
+    expect(output).toContain('[>] 2. Step 2')
+    expect(output).toContain('[ ] 3. Step 3')
+
+    const summary = summarizeToolCall('todo_list', { tasks })
+    expect(summary).toBe('Update checklist (1/3 done)')
+  })
+})
+
+describe('isReadOnlyTool classification', () => {
+  it('correctly identifies built-in read-only tools', () => {
+    expect(isReadOnlyTool('read_file')).toBe(true)
+    expect(isReadOnlyTool('list_dir')).toBe(true)
+    expect(isReadOnlyTool('search_files')).toBe(true)
+    expect(isReadOnlyTool('read_tool_output')).toBe(true)
+    expect(isReadOnlyTool('todo_list')).toBe(true)
+  })
+
+  it('correctly identifies mutating built-in tools as not read-only', () => {
+    expect(isReadOnlyTool('write_file')).toBe(false)
+    expect(isReadOnlyTool('edit_file')).toBe(false)
+    expect(isReadOnlyTool('run_command')).toBe(false)
+  })
+
+  it('identifies read-only MCP tools by prefix convention', () => {
+    expect(isReadOnlyTool('mcp__server__read_data')).toBe(true)
+    expect(isReadOnlyTool('mcp__server__get_user')).toBe(true)
+    expect(isReadOnlyTool('mcp__server__list_repos')).toBe(true)
+    expect(isReadOnlyTool('mcp__server__delete_record')).toBe(false)
+    expect(isReadOnlyTool('mcp__server__execute_sql')).toBe(false)
   })
 })
