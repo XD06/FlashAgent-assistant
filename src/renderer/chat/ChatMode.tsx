@@ -1,11 +1,12 @@
 import React from 'react'
-import type { AgentToolEvent, AiChunkPayload, AiMessageInput, AppSettings } from '@shared/types'
+import type { AgentToolEvent, AiChunkPayload, AiMessageInput, AppSettings, ReasoningMode, TodoItem } from '@shared/types'
 import type { ContextMeasurement } from '@shared/contextMeter'
 import { MarkdownView } from '../Markdown'
 import { Icon } from '../icons'
 import { getTranslator } from '../i18n'
 import { ThinkingBlock } from './ThinkingBlock'
 import { ExtensionsPanel } from './ExtensionsPanel'
+import { TodoListPill } from './TodoListPill'
 import { renderTerminalText, highlightLineNumbers } from './ansi'
 import { buildToolTrace, TOOL_TRACE_OUTPUT_PER_CALL } from './toolTrace'
 import {
@@ -314,6 +315,28 @@ function saveTopics(topics: ChatTopic[]): boolean {
     return true
   } catch {
     return false
+  }
+}
+
+const TEMPORARY_CHAT_KEY = 'aia-chat-temporary-mode'
+
+function loadTemporaryMode(): boolean {
+  try {
+    return localStorage.getItem(TEMPORARY_CHAT_KEY) === 'true'
+  } catch {
+    return false
+  }
+}
+
+function saveTemporaryMode(enabled: boolean): void {
+  try {
+    if (enabled) {
+      localStorage.setItem(TEMPORARY_CHAT_KEY, 'true')
+    } else {
+      localStorage.removeItem(TEMPORARY_CHAT_KEY)
+    }
+  } catch {
+    // ignore quota errors
   }
 }
 
@@ -736,11 +759,25 @@ const AssistantTurnBody = React.memo(function AssistantTurnBody({
   )
 })
 
+const REASONING_OPTIONS: Array<{ value: ReasoningMode; zh: string; en: string }> = [
+  { value: 'on', zh: '自动', en: 'Auto' },
+  { value: 'off', zh: '关闭', en: 'Off' },
+  { value: 'low', zh: '低', en: 'Low' },
+  { value: 'medium', zh: '中', en: 'Medium' },
+  { value: 'high', zh: '高', en: 'High' }
+]
+
 export function ChatMode({ settings }: { settings: AppSettings }) {
   // Referentially stable across renders — AssistantTurnBody is memoized and
   // its memo would be defeated by a fresh translator every render.
   const t = React.useMemo(() => getTranslator(settings.language), [settings.language])
   const isZh = settings.language === 'zh-CN'
+
+  const reasoningMode: ReasoningMode = settings.provider.reasoning ?? 'on'
+  const currentReasoningOpt = REASONING_OPTIONS.find((o) => o.value === reasoningMode) ?? REASONING_OPTIONS[0]
+  const reasoningLabel = isZh ? currentReasoningOpt.zh : currentReasoningOpt.en
+  const [showReasoningMenu, setShowReasoningMenu] = React.useState(false)
+  const reasoningWrapRef = React.useRef<HTMLDivElement>(null)
 
   // ---- Topics (persisted conversation history) ----
   const [topics, setTopics] = React.useState<ChatTopic[]>(() => loadTopics())
@@ -774,6 +811,13 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
   const [searchEnabled, setSearchEnabled] = React.useState(false)
   const [agentEnabled, setAgentEnabled] = React.useState(false)
   const [workingDir, setWorkingDir] = React.useState<string | null>(null)
+  const [todoList, setTodoList] = React.useState<TodoItem[] | null>(null)
+  const [temporaryChat, setTemporaryChat] = React.useState<boolean>(() => loadTemporaryMode())
+  const temporaryChatRef = React.useRef(temporaryChat)
+  React.useEffect(() => {
+    temporaryChatRef.current = temporaryChat
+    saveTemporaryMode(temporaryChat)
+  }, [temporaryChat])
 
   // The titlebar <select> is sized to the *selected* model name via a hidden
   // mirror span — otherwise it sizes to the longest option and drifts
@@ -865,7 +909,9 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
         return
       }
       if (event.key === 'Escape') {
-        if (topicMenu) {
+        if (showReasoningMenu) {
+          setShowReasoningMenu(false)
+        } else if (topicMenu) {
           setTopicMenu(null)
         } else if (modelMenuOpen) {
           setModelMenuOpen(false)
@@ -879,7 +925,19 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [showHistory, showExtensions, modelMenuOpen, topicMenu])
+  }, [showHistory, showExtensions, modelMenuOpen, topicMenu, showReasoningMenu])
+
+  // Clicking outside closes the reasoning intensity popover menu
+  React.useEffect(() => {
+    if (!showReasoningMenu) return
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as HTMLElement | null
+      if (target?.closest('.chat-reasoning-wrap')) return
+      setShowReasoningMenu(false)
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    return () => document.removeEventListener('pointerdown', onPointerDown)
+  }, [showReasoningMenu])
 
   // Clicking any blank area closes the overlay panels (history / extensions)
   // — no need to hunt for the ✕ button. The titlebar toggle buttons opt out
@@ -989,7 +1047,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
     }
   }, [agentEnabled, workingDir, searchEnabled, settings.mcpServers])
   const persistTopic = React.useCallback((turns: ChatTurn[], model?: string) => {
-    if (!turns.length) return
+    if (temporaryChatRef.current || !turns.length) return
     if (persistTimerRef.current) clearTimeout(persistTimerRef.current)
     persistTimerRef.current = setTimeout(() => {
       // Compute the next list outside the setState updater so the side effects
@@ -1072,7 +1130,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
     const last = chat[chat.length - 1]
     const wasPending = prevLastPendingRef.current
     prevLastPendingRef.current = Boolean(last?.pending)
-    if (!last || last.role !== 'assistant' || last.pending || !wasPending) return
+    if (temporaryChatRef.current || !last || last.role !== 'assistant' || last.pending || !wasPending) return
     // Only the very first completed round of a conversation triggers naming.
     if (chat.filter((t) => t.role === 'assistant').length !== 1) return
     const firstUser = chat.find((t) => t.role === 'user')
@@ -1373,6 +1431,9 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
         if (chunk.type === 'status') {
           last.searchQuery = chunk.text ?? ''
         } else if (chunk.type === 'tool' && chunk.tool) {
+          if (chunk.tool.todoList && chunk.tool.todoList.length > 0) {
+            setTodoList(chunk.tool.todoList)
+          }
           // Upsert by callId: state transitions arrive as separate events.
           // Consecutive calls join the same tools block; a text delta in
           // between starts a new one. A new tool call also closes any
@@ -1440,7 +1501,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
     if (!el) return
     const onScroll = () => {
       const distance = el.scrollHeight - el.scrollTop - el.clientHeight
-      stickToBottomRef.current = distance < 32
+      stickToBottomRef.current = distance < 64
     }
     el.addEventListener('scroll', onScroll, { passive: true })
     return () => el.removeEventListener('scroll', onScroll)
@@ -1771,12 +1832,31 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
     setEditingUser(null)
     setActiveTopicId(null)
     setChat([])
+    setTodoList(null)
     setInput('')
     setShowHistory(false)
     setTimeout(() => inputRef.current?.focus(), 0)
   }
 
+  const toggleTemporaryChat = () => {
+    if (!temporaryChat) {
+      if (chat.length > 0 || loading) {
+        newChat()
+      }
+      setTemporaryChat(true)
+      temporaryChatRef.current = true
+    } else {
+      if (chat.length > 0 || loading) {
+        newChat()
+      }
+      setTemporaryChat(false)
+      temporaryChatRef.current = false
+    }
+  }
+
   const loadTopic = (topic: ChatTopic) => {
+    setTemporaryChat(false)
+    temporaryChatRef.current = false
     if (activeRequestId.current) {
       void window.assistantLite.ai.abort(activeRequestId.current)
       activeRequestId.current = null
@@ -1790,6 +1870,22 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
     compactRef.current = topic.compact ?? null
     chatSessionRef.current += 1
     clearCompactNotice()
+    const findLatestTodoList = (turns: ChatTurn[]): TodoItem[] | null => {
+      for (let i = turns.length - 1; i >= 0; i--) {
+        const blocks = turns[i].blocks ?? []
+        for (let j = blocks.length - 1; j >= 0; j--) {
+          const block = blocks[j]
+          if (block.kind === 'tools') {
+            for (let k = block.events.length - 1; k >= 0; k--) {
+              const ev = block.events[k]
+              if (ev.todoList && ev.todoList.length > 0) return ev.todoList
+            }
+          }
+        }
+      }
+      return null
+    }
+    setTodoList(findLatestTodoList(topic.turns))
     // Restore the persisted usage snapshot — the token gauge and the
     // compaction trigger pick up where the topic left off instead of
     // falling back to turn counting until the next usage report arrives.
@@ -1918,7 +2014,15 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
   return (
     <div className="action-window action-window--flex">
       <div className="titlebar titlebar--left titlebar--chat">
-        <Icon name="sparkles" />
+        <button
+          className={`icon${temporaryChat ? ' icon--active icon--temporary' : ''}`}
+          title={isZh
+            ? (temporaryChat ? '隐私模式已开启（不保存记录，点击退出）' : '开启隐私模式（不保存记录）')
+            : (temporaryChat ? 'Privacy mode on (click to exit)' : 'Turn on privacy mode (not saved)')}
+          onClick={toggleTemporaryChat}
+        >
+          <Icon name="incognito" size={15} />
+        </button>
         <button
           className={`icon${showExtensions ? ' icon--active' : ''}`}
           title={isZh ? '扩展：记忆 / Skills / MCP' : 'Extensions: memory / skills / MCP'}
@@ -2023,6 +2127,12 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
               <Icon name="x" size={14} />
             </button>
           </div>
+          {temporaryChat && (
+            <div className="chat-history-panel__temporary-badge">
+              <Icon name="incognito" size={14} />
+              <span>{isZh ? '当前处于临时聊天，本次对话不会存入历史' : 'Temporary mode active: chat is not saved'}</span>
+            </div>
+          )}
           <div className="chat-history-panel__list">
             {topics.length === 0 ? (
               <div className="chat-history-panel__empty">
@@ -2100,11 +2210,17 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
 
       <div className="content chat-content" ref={contentRef}>
         {chat.length === 0 ? (
-          <div className="chat-empty">
-            <Icon name="sparkles" size={28} />
-            <div className="chat-empty__title">{isZh ? '开始一段对话' : 'Start a chat'}</div>
+          <div className={`chat-empty${temporaryChat ? ' chat-empty--temporary' : ''}`}>
+            <div className="chat-empty__icon">
+              <Icon name={temporaryChat ? 'incognito' : 'sparkles'} size={temporaryChat ? 24 : 28} />
+            </div>
+            <div className="chat-empty__title">
+              {temporaryChat ? (isZh ? '临时隐私聊天' : 'Temporary Chat') : (isZh ? '开始一段对话' : 'Start a chat')}
+            </div>
             <div className="chat-empty__hint">
-              {isZh ? '话题自动保存最近 10 条，关闭再开仍可恢复。' : 'Conversations are saved (up to 10). Resume anytime.'}
+              {temporaryChat
+                ? (isZh ? '本次对话不保存在历史记录中，关闭窗口或新建即刻清空。' : 'This conversation will not be saved to history. Cleared on close or new chat.')
+                : (isZh ? '话题自动保存最近 10 条，关闭再开仍可恢复。' : 'Conversations are saved (up to 10). Resume anytime.')}
             </div>
             <div className="chat-empty__features">
               <button className="chat-empty__feature" onClick={() => setSearchEnabled(true)}>
@@ -2251,7 +2367,8 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
         />
       )}
 
-      <div className="chat-input">
+      <div className={`chat-input${temporaryChat ? ' chat-input--temporary' : ''}`}>
+        {todoList && todoList.length > 0 && <TodoListPill tasks={todoList} isZh={isZh} />}
         {queued.length > 0 && (
           <div className="chat-queue">
             {queued.map((q, i) => (
@@ -2298,7 +2415,9 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
           placeholder={
             loading
               ? (isZh ? '排队发送…(不打断请求送达)' : 'Queue a message… (delivered at the next gap, no interrupt)')
-              : (isZh ? 'Enter 发送，Shift+Enter 换行' : 'Message… (Enter to send, Shift+Enter for newline)')
+              : temporaryChat
+                ? (isZh ? '临时会话中（不保存记录，关闭即清空）…' : 'Temporary chat (not saved, cleared on close)…')
+                : (isZh ? 'Enter 发送，Shift+Enter 换行' : 'Message… (Enter to send, Shift+Enter for newline)')
           }
           onChange={(e) => setInput(e.target.value)}
           onPaste={handlePaste}
@@ -2373,7 +2492,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
             onClick={newChat}
             disabled={chat.length === 0 && !loading}
           >
-            <Icon name="plus" size={16} />
+            <Icon name="new-topic" size={16} />
           </button>
           {chat.length > 0 && (() => {
             // Ring fill reflects provider-reported context usage. The actual
@@ -2415,19 +2534,44 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
           })()}
         </div>
           <div className="chat-input__spacer" />
+          <div className="chat-reasoning-wrap" ref={reasoningWrapRef}>
+            <button
+              type="button"
+              className={`chat-reasoning-btn${reasoningMode === 'off' ? ' chat-reasoning-btn--off' : ''}`}
+              title={isZh ? `思考强度：${reasoningLabel}（点击切换）` : `Reasoning: ${reasoningLabel} (click to change)`}
+              aria-label={isZh ? '思考强度' : 'Reasoning intensity'}
+              onClick={() => setShowReasoningMenu((v) => !v)}
+            >
+              <Icon name="brain" size={15} />
+              <span>{reasoningLabel}</span>
+              <Icon name="chevron-down" size={12} />
+            </button>
+            {showReasoningMenu && (
+              <div className="chat-reasoning-menu" role="menu">
+                {REASONING_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    className={`chat-reasoning-item${reasoningMode === opt.value ? ' chat-reasoning-item--active' : ''}`}
+                    onClick={() => {
+                      setShowReasoningMenu(false)
+                      void window.assistantLite.settings.update({ provider: { reasoning: opt.value } })
+                    }}
+                  >
+                    <span>{isZh ? opt.zh : opt.en}</span>
+                    {reasoningMode === opt.value && <Icon name="check" size={12} />}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
           {loading ? (
-            <>
-              <button className="chat-input__btn chat-input__btn--stop" onClick={stop} title={t('stop')}>
-                <Icon name="square" size={16} />
-              </button>
-              <button
-                className="chat-input__btn chat-input__btn--send"
-                onClick={submit}
-                disabled={!input.trim()}
-                title={isZh ? '加入队列（不打断当前任务）' : 'Queue (no interrupt)'}>
-                <Icon name="arrow-up" size={16} />
-              </button>
-            </>
+            <button
+              className="chat-input__btn chat-input__btn--stop"
+              onClick={stop}
+              title={isZh ? '中断生成' : 'Stop generating'}>
+              <Icon name="square" size={14} />
+            </button>
           ) : (
             <button
               className="chat-input__btn chat-input__btn--send"

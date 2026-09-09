@@ -282,8 +282,8 @@ export function ExtensionsPanel({ settings, isZh, workingDir, onClose }: Extensi
           </div>
           <div className="ext-panel__hint">
             {isZh
-              ? '开启后文件读写与普通命令自动放行；删除等危险命令仍会暂停等待确认，格式化磁盘等毁灭性命令始终直接拦截；MCP 工具调用不受影响，仍需确认。'
-              : 'When on, file edits and ordinary commands run automatically. Destructive commands (e.g. deletions) still pause for confirmation, catastrophic ones (e.g. formatting a drive) are always blocked, and MCP tool calls still require approval.'}
+              ? '开启后文件读写、普通命令与 MCP 工具调用自动放行；删除等危险命令仍会暂停等待确认，格式化磁盘等毁灭性命令始终直接拦截。'
+              : 'When on, file edits, ordinary commands, and MCP tool calls run automatically. Destructive commands (e.g. deletions) still pause for confirmation, and catastrophic ones (e.g. formatting a drive) are always blocked.'}
           </div>
           {IS_WINDOWS_UI && (
             <>

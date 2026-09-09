@@ -724,10 +724,17 @@ function ActionApp() {
 
 /** Minimal shell while the chat chunk loads — same outer chrome as ChatMode. */
 function ChatModeFallback({ t }: { t: Translator }) {
+  const isTemporary = React.useMemo(() => {
+    try {
+      return localStorage.getItem('aia-chat-temporary-mode') === 'true'
+    } catch {
+      return false
+    }
+  }, [])
   return (
     <div className="action-window action-window--flex">
       <div className="titlebar titlebar--left titlebar--chat">
-        <Icon name="sparkles" />
+        <Icon name={isTemporary ? 'incognito' : 'sparkles'} />
         <div className="titlebar__spacer" />
         {!isMac && (
           <button className="icon" title={t('close')} onClick={() => window.assistantLite.windowControls.close()}>
@@ -736,7 +743,7 @@ function ChatModeFallback({ t }: { t: Translator }) {
         )}
       </div>
       <div className="chat-content">
-        <div className="chat-empty">
+        <div className={`chat-empty${isTemporary ? ' chat-empty--temporary' : ''}`}>
           <div className="chat-empty__hint">{t('loading')}</div>
         </div>
       </div>
