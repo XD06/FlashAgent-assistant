@@ -118,8 +118,56 @@ const screenshotService = new ScreenshotService(
   }
 )
 
+function createTrayNativeImage(base: Electron.NativeImage): Electron.NativeImage {
+  if (base.isEmpty()) return base
+  if (isWin) {
+    const ni = nativeImage.createEmpty()
+    const scales: Array<{ scale: number; size: number }> = [
+      { scale: 1.0, size: 16 },
+      { scale: 1.25, size: 20 },
+      { scale: 1.5, size: 24 },
+      { scale: 1.75, size: 28 },
+      { scale: 2.0, size: 32 },
+      { scale: 2.5, size: 40 },
+      { scale: 3.0, size: 48 }
+    ]
+    for (const { scale, size } of scales) {
+      const resized = base.resize({ width: size, height: size, quality: 'best' })
+      ni.addRepresentation({
+        scaleFactor: scale,
+        width: size,
+        height: size,
+        buffer: resized.toPNG()
+      })
+    }
+    return ni
+  }
+  if (process.platform === 'darwin') {
+    const ni = nativeImage.createEmpty()
+    ni.addRepresentation({
+      scaleFactor: 1.0,
+      width: 18,
+      height: 18,
+      buffer: base.resize({ width: 18, height: 18, quality: 'best' }).toPNG()
+    })
+    ni.addRepresentation({
+      scaleFactor: 2.0,
+      width: 36,
+      height: 36,
+      buffer: base.resize({ width: 36, height: 36, quality: 'best' }).toPNG()
+    })
+    return ni
+  }
+  return base.resize({ width: 18, height: 18, quality: 'best' })
+}
+
+let cachedTrayIcon: Electron.NativeImage | null = null
+
 function getTrayIcon(): Electron.NativeImage {
-  return trayIcon.resize({ width: 18, height: 18 })
+  if (!cachedTrayIcon) {
+    cachedTrayIcon = createTrayNativeImage(trayIcon)
+  }
+  return cachedTrayIcon
 }
 
 function mainText(key: 'enable' | 'disable' | 'settings' | 'stopSpeech' | 'quit', language: string): string {
@@ -1238,6 +1286,12 @@ if (!app.requestSingleInstanceLock()) {
 
     registerIpc()
     createTray()
+    screen.on('display-metrics-changed', () => {
+      if (tray && !tray.isDestroyed()) {
+        cachedTrayIcon = null
+        tray.setImage(getTrayIcon())
+      }
+    })
     registerShortcuts()
     applySelectionState()
     applyAutoLaunch(getSettings().autoLaunch)

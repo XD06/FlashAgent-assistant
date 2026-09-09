@@ -4,17 +4,36 @@ Add-Type -AssemblyName System.Drawing
 $root = Split-Path $PSScriptRoot -Parent
 $src = Join-Path $root 'build\icon.png'
 $dst = Join-Path $root 'build\icon.ico'
-$sizes = 16, 24, 32, 48, 64, 128, 256
+$sizes = 16, 20, 24, 28, 32, 48, 64, 128, 256
 
 $img = [System.Drawing.Image]::FromFile($src)
 $pngs = foreach ($s in $sizes) {
-  $bmp = New-Object System.Drawing.Bitmap($s, $s)
+  $cur = $img
+  $curW = $img.Width
+  $toDispose = @()
+  while ($curW / 2 -ge $s * 2) {
+    $curW = [int]($curW / 2)
+    $next = New-Object System.Drawing.Bitmap($curW, $curW, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+    $g = [System.Drawing.Graphics]::FromImage($next)
+    $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+    $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::HighQuality
+    $g.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+    $g.DrawImage($cur, 0, 0, $curW, $curW)
+    $g.Dispose()
+    if ($cur -ne $img) { $toDispose += $cur }
+    $cur = $next
+  }
+
+  $bmp = New-Object System.Drawing.Bitmap($s, $s, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
   $g = [System.Drawing.Graphics]::FromImage($bmp)
   $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
   $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::HighQuality
   $g.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
-  $g.DrawImage($img, 0, 0, $s, $s)
+  $g.DrawImage($cur, 0, 0, $s, $s)
   $g.Dispose()
+  foreach ($d in $toDispose) { $d.Dispose() }
+  if ($cur -ne $img) { $cur.Dispose() }
+
   $ms = New-Object System.IO.MemoryStream
   $bmp.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
   $bmp.Dispose()

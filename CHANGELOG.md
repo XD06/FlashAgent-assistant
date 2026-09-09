@@ -32,6 +32,9 @@
 - **开发与运行模式闪退奔溃彻底修复**：
   - 主进程顶层注入全局 `uncaughtException` 与 `unhandledRejection` 守卫，杜绝 Node 16+ 默认的退出机制。
   - `sendChunk` 与流式事件全链路添加异常保护，流式传输严格实施 4000 字符有界截断，避免 IPC 拥塞与内存崩溃。
+- **Windows 系统托盘图标清晰度与高 DPI 适配优化**：
+  - 修复此前硬编码 18×18 尺寸在 Windows 高 DPI 屏幕（如 150% 缩放 24px、125% 缩放 20px、100% 缩放 16px）下因 Explorer 非整数倍双线性重采样导致托盘图标发灰、发虚、边缘模糊的问题。
+  - 主进程 `createTrayNativeImage` 构建支持 16/20/24/28/32/40/48px 全套 DPI 缩放尺阶的原生图像表示集（NativeImage Representations），并监听系统显示度量变更（`display-metrics-changed`）动态自适应；同步升级 `build/icon.ico`，补充 20px 与 28px 常见高分屏档位并引入阶梯式多级降采样。
 - **快捷键截图全屏黑屏异常修复**：
   - 修复多显示器或特定渲染层级下截图遮罩可能出现的黑屏问题，确保截图识图秒级稳定响应。
 
