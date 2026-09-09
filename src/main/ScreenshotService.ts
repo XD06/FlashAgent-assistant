@@ -86,10 +86,15 @@ export class ScreenshotService {
     ipcMain.handle(IPC.ScreenshotStart, () => this.startCapture())
     ipcMain.handle(IPC.ScreenshotOverlayReady, (event) => {
       const win = BrowserWindow.fromWebContents(event.sender)
-      if (win && win === this.overlayWindow && this.currentCapture) {
+      if (win && win === this.overlayWindow) {
+        if (!this.currentCapture) {
+          this.closeOverlay()
+          return
+        }
         const imageSize = this.currentCapture.image.getSize()
+        const dataUrl = this.currentCapture.dataUrl || this.currentCapture.image.toDataURL()
         const payload: OverlayInitPayload = {
-          imageDataUrl: this.currentCapture.dataUrl,
+          imageDataUrl: dataUrl,
           displayId: this.currentCapture.display.id,
           width: this.currentCapture.display.size.width,
           height: this.currentCapture.display.size.height,

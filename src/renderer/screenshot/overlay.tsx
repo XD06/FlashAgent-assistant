@@ -227,16 +227,24 @@ function OverlayApp(): React.JSX.Element | null {
     return off
   }, [])
 
+  const cancel = React.useCallback(() => {
+    void window.assistantLite.screenshot.overlayCancel()
+  }, [])
+
+  React.useEffect(() => {
+    if (init) return
+    const timer = setTimeout(() => {
+      cancel()
+    }, 4000)
+    return () => clearTimeout(timer)
+  }, [init, cancel])
+
   React.useEffect(() => {
     const onResize = (): void =>
       setViewport({ width: window.innerWidth, height: window.innerHeight })
     onResize()
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
-  }, [])
-
-  const cancel = React.useCallback(() => {
-    void window.assistantLite.screenshot.overlayCancel()
   }, [])
 
   const confirm = React.useCallback(
@@ -693,8 +701,4 @@ function pointInRect(p: Point, r: Rect): boolean {
   return p.x >= r.x && p.x <= r.x + r.width && p.y >= r.y && p.y <= r.y + r.height
 }
 
-createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
-    <OverlayApp />
-  </React.StrictMode>
-)
+createRoot(document.getElementById('root')!).render(<OverlayApp />)
