@@ -2510,7 +2510,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
                             })
                           }}
                         >
-                          <Icon name="plus" size={12} />
+                          <Icon name="plus" size={13} />
                         </button>
                       </div>
                       {displayTopics.map((topic) => renderTopicItem(topic))}

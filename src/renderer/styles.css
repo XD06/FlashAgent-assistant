@@ -4118,24 +4118,39 @@ letter-spacing: 0.01em;
 }
 
 .chat-project-header__add-btn {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
+  min-width: 20px;
+  min-height: 20px;
+  max-width: 20px;
+  max-height: 20px;
+  padding: 0;
+  margin: 0;
   border: 0;
   border-radius: 4px;
   background: transparent;
-  color: var(--muted-soft);
+  color: var(--muted);
   cursor: pointer;
-  opacity: 0.8;
-  transition: all 0.15s;
+  box-sizing: border-box;
+  flex-shrink: 0;
+  line-height: 1;
+  opacity: 0.85;
+  transition: all 0.15s ease;
 }
 
 .chat-project-header__add-btn:hover {
   background: var(--hover);
   color: var(--text);
   opacity: 1;
+}
+
+.chat-project-header__add-btn svg {
+  display: block;
+  flex-shrink: 0;
+  pointer-events: none;
 }
 
 .chat-section-header {
@@ -4274,6 +4289,10 @@ letter-spacing: 0.01em;
   justify-content: center;
   width: 20px;
   height: 20px;
+  min-width: 20px;
+  min-height: 20px;
+  max-width: 20px;
+  max-height: 20px;
   padding: 0;
   margin: 0;
   border: 0;
@@ -4285,6 +4304,12 @@ letter-spacing: 0.01em;
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.12s ease, color 0.12s ease, background 0.12s ease;
+}
+
+.chat-history-item__del-btn svg {
+  display: block;
+  flex-shrink: 0;
+  pointer-events: none;
 }
 
 .chat-history-item:hover .chat-history-item__time {
@@ -4307,8 +4332,10 @@ letter-spacing: 0.01em;
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 3px 8px;
+  min-height: 22px;
+  padding: 2px 8px;
   font-size: 11px;
+  line-height: 1;
   color: var(--muted);
   background: transparent;
   border: none;
@@ -4317,6 +4344,7 @@ letter-spacing: 0.01em;
   align-self: flex-start;
   margin-left: 12px;
   margin-top: 1px;
+  box-sizing: border-box;
   transition: all 0.12s;
 }
 
