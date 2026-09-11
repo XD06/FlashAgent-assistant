@@ -1,4 +1,5 @@
 import React from 'react'
+import { SettingInput } from './SettingInput'
 
 type ProviderNameInputProps = {
   readonly value: string
@@ -11,30 +12,12 @@ export function ProviderNameInput({
   placeholder,
   onChange
 }: ProviderNameInputProps) {
-  const [text, setText] = React.useState(value)
-  const composingRef = React.useRef(false)
-
-  React.useEffect(() => {
-    if (!composingRef.current) setText(value)
-  }, [value])
-
   return (
-    <input
+    <SettingInput
       className="provider-name"
-      value={text}
+      value={value}
       placeholder={placeholder}
-      onCompositionStart={() => {
-        composingRef.current = true
-      }}
-      onCompositionEnd={(event) => {
-        composingRef.current = false
-        setText(event.currentTarget.value)
-        onChange(event.currentTarget.value)
-      }}
-      onChange={(event) => {
-        setText(event.target.value)
-        if (!composingRef.current) onChange(event.target.value)
-      }}
+      onChange={onChange}
     />
   )
 }

@@ -2,13 +2,39 @@ import React from 'react'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 
-// Configure marked once: GFM tables, line breaks.
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+const COPY_ICON_SVG =
+  '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="10" height="10" rx="2"/><path d="M7 15H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v1"/></svg>'
+
+// Configure marked once: GFM tables, line breaks, and deterministic code-block rendering.
+// Emitting the `.code-block` wrapper and `.code-copy` button directly at parse time
+// eliminates all flicker during streaming and guarantees 100% presence without DOM thrashing.
 marked.setOptions({
   gfm: true,
   breaks: true
 })
 
-const COPY_ICON_SVG = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="10" height="10" rx="2"/><path d="M7 15H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v1"/></svg>'
+marked.use({
+  renderer: {
+    code({ text, lang }: { text: string; lang?: string }) {
+      const cleanLang = (lang || '').match(/^\S*/)?.[0] || ''
+      const escaped = escapeHtml(text)
+      if (cleanLang.toLowerCase() === 'mermaid') {
+        return `<pre><code class="language-mermaid">${escaped}</code></pre>\n`
+      }
+      const langClass = cleanLang ? ` class="language-${escapeHtml(cleanLang)}"` : ''
+      return `<div class="code-block"><button type="button" class="code-copy" aria-label="Copy code" title="Copy">${COPY_ICON_SVG}</button><pre><code${langClass}>${escaped}</code></pre></div>\n`
+    }
+  }
+})
 
 // Mermaid is ~1.5 MB — load lazily. Cache rendered SVG by source+theme so
 // remounts / re-effects never re-parse a finished diagram.
@@ -77,51 +103,81 @@ async function renderMermaidBlocks(container: HTMLElement, isCancelled: () => bo
   }
 }
 
-function enhanceCodeBlocks(container: HTMLElement, cleanups: (() => void)[]): void {
-  const pres = container.querySelectorAll('pre')
-  pres.forEach((pre) => {
-    if (pre.parentElement?.classList.contains('code-block')) return
-    // Already upgraded to a diagram — leave alone.
-    if (pre.parentElement?.classList.contains('mermaid-diagram')) return
+const copyFeedbackTimers = new WeakMap<HTMLButtonElement, number>()
 
-    const wrapper = document.createElement('div')
-    wrapper.className = 'code-block'
-
-    const btn = document.createElement('button')
-    btn.type = 'button'
-    btn.className = 'code-copy'
-    btn.setAttribute('aria-label', 'Copy code')
-    btn.title = 'Copy'
-    btn.innerHTML = COPY_ICON_SVG
-
-    const onClick = () => {
-      const text = pre.textContent ?? ''
-      if (!text) return
-      void navigator.clipboard.writeText(text)
-      btn.textContent = '✓'
-      window.setTimeout(() => {
-        btn.innerHTML = COPY_ICON_SVG
-      }, 1200)
+async function copyTextToClipboard(text: string): Promise<boolean> {
+  // 1. Electron IPC clipboard (native main process, immune to window blur/focus restrictions)
+  try {
+    if (window.assistantLite?.selection?.writeClipboard) {
+      const ok = await window.assistantLite.selection.writeClipboard(text)
+      if (ok !== false) return true
     }
+  } catch {
+    // fall through to web API
+  }
+  // 2. Modern browser Clipboard API
+  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text)
+      return true
+    } catch {
+      // fall through to execCommand
+    }
+  }
+  // 3. Fallback execCommand
+  if (typeof document !== 'undefined') {
+    try {
+      const ta = document.createElement('textarea')
+      ta.value = text
+      ta.style.position = 'fixed'
+      ta.style.top = '-9999px'
+      ta.style.left = '-9999px'
+      ta.style.opacity = '0'
+      document.body.appendChild(ta)
+      ta.focus()
+      ta.select()
+      const success = document.execCommand('copy')
+      document.body.removeChild(ta)
+      if (success) return true
+    } catch {
+      // ignore
+    }
+  }
+  return false
+}
 
-    btn.addEventListener('click', onClick)
-    cleanups.push(() => btn.removeEventListener('click', onClick))
+async function handleCopyClick(btn: HTMLButtonElement): Promise<void> {
+  const codeBlock = btn.closest('.code-block')
+  const pre = codeBlock?.querySelector('pre')
+  const code = pre?.querySelector('code') ?? pre
+  const text = code?.textContent ?? pre?.textContent ?? ''
+  if (!text) return
 
-    pre.parentNode!.insertBefore(wrapper, pre)
-    wrapper.appendChild(btn)
-    wrapper.appendChild(pre)
-  })
+  const success = await copyTextToClipboard(text)
+  if (success) {
+    const prevTimer = copyFeedbackTimers.get(btn)
+    if (prevTimer) window.clearTimeout(prevTimer)
+
+    btn.textContent = '✓'
+    btn.classList.add('code-copy--copied')
+    const timer = window.setTimeout(() => {
+      if (btn.isConnected) {
+        btn.innerHTML = COPY_ICON_SVG
+        btn.classList.remove('code-copy--copied')
+      }
+      copyFeedbackTimers.delete(btn)
+    }, 1200)
+    copyFeedbackTimers.set(btn, timer)
+  }
 }
 
 /**
  * MarkdownView — renders markdown as sanitized HTML via `marked` + `DOMPurify`.
  *
- * `pending`: while true (streaming), mermaid fences stay as code blocks. Once
- * the turn settles we upgrade closed fences to diagrams. That avoids the
- * flicker of parse → fail → code → parse → SVG on every 50ms flush.
- *
- * Memoized: historical turns re-render on every streaming flush, but their
- * markdown source never changes — skip them entirely.
+ * Code blocks natively include `.code-block` wrappers and `.code-copy` buttons,
+ * rendered at parse time to eliminate streaming flicker and guarantee 100% presence.
+ * Click handling uses event delegation on the root container so clicks are never lost
+ * even mid-stream.
  */
 export const MarkdownView = React.memo(function MarkdownView({
   children,
@@ -139,7 +195,23 @@ export const MarkdownView = React.memo(function MarkdownView({
   const html = React.useMemo(() => {
     const raw = marked.parse(children, { async: false }) as string
     return DOMPurify.sanitize(raw, {
-      ADD_ATTR: ['target', 'rel']
+      ADD_TAGS: ['button', 'svg', 'path', 'rect'],
+      ADD_ATTR: [
+        'target',
+        'rel',
+        'class',
+        'type',
+        'aria-label',
+        'title',
+        'viewBox',
+        'width',
+        'height',
+        'fill',
+        'stroke',
+        'stroke-width',
+        'stroke-linecap',
+        'stroke-linejoin'
+      ]
     })
   }, [children])
 
@@ -153,27 +225,39 @@ export const MarkdownView = React.memo(function MarkdownView({
       cancelled = true
     })
 
-    enhanceCodeBlocks(container, cleanups)
+    // Delegated click handling on the container:
+    // Captures copy button clicks and external link opens with zero per-node listeners.
+    const onContainerClick = (e: MouseEvent) => {
+      // 1. Code copy button
+      const copyBtn = (e.target as HTMLElement).closest<HTMLButtonElement>('.code-copy')
+      if (copyBtn && container.contains(copyBtn)) {
+        e.preventDefault()
+        e.stopPropagation()
+        void handleCopyClick(copyBtn)
+        return
+      }
 
-    // Link handling
+      // 2. External links
+      const anchor = (e.target as HTMLElement).closest<HTMLAnchorElement>('a')
+      if (anchor && container.contains(anchor)) {
+        const href = anchor.getAttribute('href')
+        if (href && /^https?:\/\//i.test(href)) {
+          e.preventDefault()
+          e.stopPropagation()
+          void window.assistantLite.app.openExternal(href)
+        }
+      }
+    }
+
+    container.addEventListener('click', onContainerClick)
+    cleanups.push(() => container.removeEventListener('click', onContainerClick))
+
+    // Set link target/rel on anchors
     const links = container.querySelectorAll('a[href]')
     links.forEach((link) => {
       link.setAttribute('target', '_blank')
       link.setAttribute('rel', 'noopener noreferrer')
     })
-    const onLinkClick = (e: MouseEvent) => {
-      const anchor = (e.target as HTMLElement).closest('a')
-      if (!anchor) return
-      const href = anchor.getAttribute('href')
-      if (!href) return
-      if (/^https?:\/\//i.test(href)) {
-        e.preventDefault()
-        e.stopPropagation()
-        void window.assistantLite.app.openExternal(href)
-      }
-    }
-    container.addEventListener('click', onLinkClick)
-    cleanups.push(() => container.removeEventListener('click', onLinkClick))
 
     // Mermaid: only after the turn is no longer streaming, and only when the
     // fence looks closed. Finished diagrams are cached as DOM nodes so even if
@@ -190,9 +274,6 @@ export const MarkdownView = React.memo(function MarkdownView({
       })
     }
 
-    // If we already have cached diagram DOM for this content and React just
-    // wiped the container via dangerouslySetInnerHTML, put SVGs back before
-    // paint when possible (same-tick sync path only works for cache hits).
     if (!pending) {
       const dark = document.documentElement.getAttribute('data-theme') === 'dark'
       container.querySelectorAll<HTMLElement>('code.language-mermaid').forEach((code) => {

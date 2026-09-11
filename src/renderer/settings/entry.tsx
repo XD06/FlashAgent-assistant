@@ -9,6 +9,7 @@ import { useThemeMode } from '../useThemeMode'
 import { useAppearance } from '../useAppearance'
 import { getActionLabel, getTranslator } from '../i18n'
 import { ProviderNameInput } from './ProviderNameInput'
+import { SettingInput, SettingTextarea } from './SettingInput'
 import type {
   ActionItem,
   AppLanguage,
@@ -107,28 +108,46 @@ function NumberField({
   value,
   min,
   max,
+  step,
   onCommit
 }: {
   value: number
   min: number
-  max: number
+  max?: number
+  step?: number
   onCommit: (value: number) => void
 }) {
   const [text, setText] = React.useState(String(value))
-  React.useEffect(() => setText(String(value)), [value])
+  const focusedRef = React.useRef(false)
+  React.useEffect(() => {
+    if (!focusedRef.current) setText(String(value))
+  }, [value])
   const commit = () => {
     const parsed = parseInt(text, 10)
-    if (Number.isFinite(parsed)) onCommit(Math.min(max, Math.max(min, parsed)))
-    else setText(String(value))
+    if (Number.isFinite(parsed)) {
+      const clampedMin = Math.max(min, parsed)
+      const clamped = max !== undefined ? Math.min(max, clampedMin) : clampedMin
+      setText(String(clamped))
+      onCommit(clamped)
+    } else {
+      setText(String(value))
+    }
   }
   return (
     <input
       type="number"
       min={min}
       max={max}
+      step={step}
       value={text}
+      onFocus={() => {
+        focusedRef.current = true
+      }}
       onChange={(event) => setText(event.target.value)}
-      onBlur={commit}
+      onBlur={() => {
+        focusedRef.current = false
+        commit()
+      }}
       onKeyDown={(event) => {
         if (event.key === 'Enter') (event.target as HTMLInputElement).blur()
       }}
@@ -324,14 +343,6 @@ function ActionEditor({
   const isCustom = !defaultAction
   const defaultPrompt = defaultAction?.promptTemplate ?? ''
 
-  // Local buffers for the free-text fields. Persisting goes through an async IPC
-  // round-trip, so binding the inputs straight to `action.*` made the value prop
-  // lag a keystroke behind — which reset the caret to the end and broke IME
-  // composition. We edit locally and persist in the background. Seeded once per
-  // action; the list keys editors by id, so this remounts when the action changes.
-  const [name, setName] = React.useState(action.name)
-  const [promptTemplate, setPromptTemplate] = React.useState(action.promptTemplate ?? '')
-  const [searchUrlTemplate, setSearchUrlTemplate] = React.useState(action.searchUrlTemplate ?? '')
 
   return (
     <div className="action-config-item">
@@ -363,13 +374,10 @@ function ActionEditor({
           <div className="action-meta">
             <label className="field">
               <span>{t('actionName')}</span>
-              <input
-                value={name}
+              <SettingInput
+                value={action.name}
                 placeholder={getActionLabel(action, language)}
-                onChange={(event) => {
-                  setName(event.target.value)
-                  onChange({ name: event.target.value })
-                }}
+                onChange={(name) => onChange({ name })}
               />
             </label>
             <label className="field">
@@ -379,26 +387,20 @@ function ActionEditor({
           </div>
 
           {isPrompt && (
-            <textarea
-              value={promptTemplate}
+            <SettingTextarea
+              value={action.promptTemplate ?? ''}
               placeholder={t('promptTemplatePlaceholder')}
-              onChange={(event) => {
-                setPromptTemplate(event.target.value)
-                onChange({ promptTemplate: event.target.value })
-              }}
+              onChange={(promptTemplate) => onChange({ promptTemplate })}
             />
           )}
 
           {isSearch && (
             <label className="field">
               <span>{t('searchUrlLabel')}</span>
-              <input
-                value={searchUrlTemplate}
+              <SettingInput
+                value={action.searchUrlTemplate ?? ''}
                 placeholder="https://www.google.com/search?q={{query}}"
-                onChange={(event) => {
-                  setSearchUrlTemplate(event.target.value)
-                  onChange({ searchUrlTemplate: event.target.value })
-                }}
+                onChange={(searchUrlTemplate) => onChange({ searchUrlTemplate })}
               />
             </label>
           )}
@@ -420,10 +422,10 @@ function ActionEditor({
               </label>
               <label className="field">
                 <span>{t('actionModel')}</span>
-                <input
+                <SettingInput
                   value={action.model ?? ''}
                   placeholder={t('actionModelPlaceholder')}
-                  onChange={(event) => onChange({ model: event.target.value.trim() || undefined })}
+                  onChange={(val) => onChange({ model: val.trim() || undefined })}
                 />
               </label>
               <label className="field">
@@ -460,7 +462,6 @@ function ActionEditor({
                 <button
                   type="button"
                   onClick={() => {
-                    setPromptTemplate(defaultPrompt)
                     onChange({ promptTemplate: defaultPrompt })
                   }}>
                   {t('restoreDefaultPrompt')}
@@ -548,11 +549,12 @@ function VocabularySection({ t }: { t: (key: string) => string }) {
     <div className="settings-stack settings-stack--vocabulary">
       <SettingSection title={t('sectionVocabulary')}>
         <div className="vocab-toolbar">
-          <input
+          <SettingInput
             className="vocab-search"
             value={search}
             placeholder={t('vocabSearch')}
-            onChange={(event) => setSearch(event.target.value)}
+            debounceMs={150}
+            onChange={setSearch}
           />
           <span className="vocab-count">{t('vocabCount').replace('{{count}}', String(filtered.length))}</span>
           <button type="button" className="pill" onClick={() => void exportAll()} disabled={!entries?.length}>
@@ -972,9 +974,9 @@ function SettingsApp() {
                       </label>
                       <label className="field">
                         <span>{t('baseUrl')}</span>
-                        <input
+                        <SettingInput
                           value={template.provider.baseUrl}
-                          onChange={(event) => updateTemplateProvider(template.id, 'baseUrl', event.target.value)}
+                          onChange={(val) => updateTemplateProvider(template.id, 'baseUrl', val.trim())}
                         />
                       </label>
                       {template.provider.apiType === 'anthropic' && (
@@ -1002,21 +1004,21 @@ function SettingsApp() {
                             </button>
                           </div>
                         </div>
-                        <input
+                        <SettingInput
                           value={template.provider.model}
-                          onChange={(event) => updateTemplateProvider(template.id, 'model', event.target.value)}
+                          onChange={(val) => updateTemplateProvider(template.id, 'model', val.trim())}
                         />
                       </label>
                       <div className="field field--wide field--api-key">
                         <span>{t('apiKey')}</span>
                         <div className="secret-field">
-                          <input
+                          <SettingInput
                             aria-label={t('apiKey')}
                             autoComplete="off"
                             spellCheck={false}
                             type={visibleApiKeys[template.id] ? 'text' : 'password'}
                             value={template.provider.apiKey}
-                            onChange={(event) => updateTemplateProvider(template.id, 'apiKey', event.target.value)}
+                            onChange={(val) => updateTemplateProvider(template.id, 'apiKey', val.trim())}
                           />
                           <button
                             aria-label={visibleApiKeys[template.id] ? t('hideApiKey') : t('showApiKey')}
@@ -1074,10 +1076,10 @@ function SettingsApp() {
 
           <SettingSection title={t('featureModelGroup')}>
             <SettingRow title={t('visionModel')} description={t('visionModelDesc')}>
-              <input
+              <SettingInput
                 value={settings.visionModel}
                 placeholder="gpt-4o"
-                onChange={(event) => update({ visionModel: event.target.value.trim() })}
+                onChange={(visionModel) => update({ visionModel: visionModel.trim() })}
               />
             </SettingRow>
             <SettingRow
@@ -1135,22 +1137,18 @@ function SettingsApp() {
               </div>
             </SettingRow>
             <SettingRow title={t('compressModel')} description={t('compressModelDesc')}>
-              <input
+              <SettingInput
                 value={settings.compressModel}
                 placeholder="gpt-4o-mini"
-                onChange={(event) => update({ compressModel: event.target.value.trim() })}
+                onChange={(compressModel) => update({ compressModel: compressModel.trim() })}
               />
             </SettingRow>
             <SettingRow title={t('contextWindow')} description={t('contextWindowDesc')}>
-              <input
-                type="number"
+              <NumberField
+                value={settings.contextWindowTokens}
                 min={4000}
                 step={1000}
-                value={settings.contextWindowTokens}
-                onChange={(event) => {
-                  const value = Math.floor(Number(event.target.value))
-                  if (Number.isFinite(value) && value >= 4000) update({ contextWindowTokens: value })
-                }}
+                onCommit={(contextWindowTokens) => update({ contextWindowTokens })}
               />
             </SettingRow>
           </SettingSection>
@@ -1158,10 +1156,10 @@ function SettingsApp() {
           <SettingSection title={t('proxyGroup')}>
             <SettingRow title={t('proxyUrl')} description={proxyStatus ?? t('proxyUrlDesc')}>
               <div className="proxy-field">
-                <input
+                <SettingInput
                   value={settings.proxyUrl}
                   placeholder="http://127.0.0.1:7890"
-                  onChange={(event) => update({ proxyUrl: event.target.value.trim() })}
+                  onChange={(proxyUrl) => update({ proxyUrl: proxyUrl.trim() })}
                 />
                 <button type="button" className="pill" onClick={() => void testProxyNow()} disabled={proxyTesting}>
                   {proxyTesting ? t('proxyTestLoading') : t('proxyTest')}
@@ -1297,12 +1295,12 @@ function SettingsApp() {
               </select>
             </SettingRow>
             <SettingRow title={t('filterList')} description={t('filterListPlaceholder')} className="tall">
-              <textarea
+              <SettingTextarea
                 value={filterText}
                 placeholder={t('filterListPlaceholder')}
-                onChange={(event) =>
+                onChange={(val) =>
                   update({
-                    filterList: event.target.value
+                    filterList: val
                       .split('\n')
                       .map((item) => item.trim().toLowerCase())
                       .filter(Boolean)
@@ -1384,17 +1382,17 @@ function SettingsApp() {
               ))}
             </div>
             <SettingRow title={t('deeplxEndpoint')} description={t('deeplxEndpointDesc')}>
-              <input
+              <SettingInput
                 value={settings.translate.deeplxEndpoint}
                 placeholder="https://your-deeplx.example.com"
-                onChange={(event) => updateTranslate({ deeplxEndpoint: event.target.value.trim() })}
+                onChange={(deeplxEndpoint) => updateTranslate({ deeplxEndpoint: deeplxEndpoint.trim() })}
               />
             </SettingRow>
             <SettingRow title={t('tencentClientKey')} description={t('tencentClientKeyDesc')}>
-              <input
+              <SettingInput
                 value={settings.translate.tencentClientKey}
                 placeholder={t('tencentClientKeyPlaceholder')}
-                onChange={(event) => updateTranslate({ tencentClientKey: event.target.value.trim() })}
+                onChange={(tencentClientKey) => updateTranslate({ tencentClientKey: tencentClientKey.trim() })}
               />
             </SettingRow>
             <SettingRow title={t('vocabAutoRecord')} description={t('vocabAutoRecordDesc')}>
@@ -1447,18 +1445,18 @@ function SettingsApp() {
             {settings.tts.service === 'mimo' ? (
               <>
                 <SettingRow title={t('ttsMimoApiKey')} description={t('ttsMimoApiKeyDesc')}>
-                  <input
+                  <SettingInput
                     type="password"
                     value={settings.tts.mimoApiKey}
                     placeholder="sk-..."
-                    onChange={(event) => updateTts({ mimoApiKey: event.target.value.trim() })}
+                    onChange={(mimoApiKey) => updateTts({ mimoApiKey: mimoApiKey.trim() })}
                   />
                 </SettingRow>
                 <SettingRow title={t('ttsMimoModel')} description={t('ttsMimoModelDesc')}>
-                  <input
+                  <SettingInput
                     value={settings.tts.mimoModel}
                     placeholder="mimo-v2.5-tts"
-                    onChange={(event) => updateTts({ mimoModel: event.target.value.trim() })}
+                    onChange={(mimoModel) => updateTts({ mimoModel: mimoModel.trim() })}
                   />
                 </SettingRow>
                 <SettingRow title={t('ttsMimoVoice')}>
@@ -1487,10 +1485,10 @@ function SettingsApp() {
             ) : (
               <>
                 <SettingRow title={t('ttsEndpoint')} description={t('ttsEndpointDesc')}>
-                  <input
+                  <SettingInput
                     value={settings.tts.endpoint}
                     placeholder="https://tts.example.com/v1/audio/speech"
-                    onChange={(event) => updateTts({ endpoint: event.target.value.trim() })}
+                    onChange={(endpoint) => updateTts({ endpoint: endpoint.trim() })}
                   />
                 </SettingRow>
                 <SettingRow title={t('ttsVoice')}>
@@ -1589,10 +1587,10 @@ function SettingsApp() {
 
           <SettingSection title={t('appearanceFontGroup')}>
             <SettingRow title={t('fontFamily')} description={t('fontFamilyDesc')} className="tall">
-              <input
+              <SettingInput
                 value={settings.fontFamily}
                 placeholder={t('fontFamilyPlaceholder')}
-                onChange={(event) => update({ fontFamily: event.target.value })}
+                onChange={(fontFamily) => update({ fontFamily })}
               />
             </SettingRow>
             <SettingRow title={t('fontSize')}>
