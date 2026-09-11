@@ -5,6 +5,7 @@ import {
   RECAP_DOC_MAX_CHARS,
   mergeRecapDoc,
   parseRecapDoc,
+  autoRepairRecapDoc,
   stripDocJunk,
   validateRecapDoc
 } from './recapDoc'
@@ -39,6 +40,31 @@ describe('stripDocJunk', () => {
 
   it('returns null when the title is missing entirely', () => {
     expect(stripDocJunk('我无法完成这个任务。')).toBeNull()
+  })
+})
+
+describe('autoRepairRecapDoc', () => {
+  it('heals missing failure ledger and normalizes header variants', () => {
+    const loose = [
+      '### 1、原始任务',
+      '实现加法函数',
+      '### 2. 事实记录',
+      '- 创建了 index.js',
+      '### 3. 文件与状态',
+      '`index.js` — 已改',
+      '### 5. 下一步',
+      '编写测试'
+    ].join('\n')
+
+    const repaired = autoRepairRecapDoc(loose)
+    expect(repaired).not.toBeNull()
+    expect(validateRecapDoc(repaired!)).toBeNull()
+    expect(repaired).toContain('## 4. 失败路径台账\n无')
+    expect(repaired).toContain('## 1. 原始任务\n实现加法函数')
+  })
+
+  it('returns null if text has fewer than 3 recognizable sections', () => {
+    expect(autoRepairRecapDoc('随便说点什么，不是复工文档。')).toBeNull()
   })
 })
 

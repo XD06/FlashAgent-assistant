@@ -11,7 +11,7 @@ export { CJK_TOKENS_PER_CHAR, estimateTokensFromChars, estimateTokensFromText } 
 // Keeping the working context small forces the model to stay focused on the
 // current task. Users can override it per install via the
 // `contextWindowTokens` setting; this constant is the default.
-export const CONTEXT_WINDOW_TOKENS = 128_000
+export const CONTEXT_WINDOW_TOKENS = 200_000
 
 /** Inter-turn trigger line: once the latest request's prompt reached this
  * share of the attention budget, compress before the next send. */

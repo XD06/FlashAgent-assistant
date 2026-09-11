@@ -1147,7 +1147,7 @@ function SettingsApp() {
               <NumberField
                 value={settings.contextWindowTokens}
                 min={4000}
-                step={1000}
+                step={10000}
                 onCommit={(contextWindowTokens) => update({ contextWindowTokens })}
               />
             </SettingRow>

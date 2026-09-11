@@ -64,6 +64,7 @@ graph TD
 - **截图识别文字**：热键 → `ScreenshotService.startCapture` → GDI helper exe（`csc.exe` 现场编译，写临时 PNG，读入内存后立即删除）→ 全屏遮罩选区 → confirm 后主进程裁剪 → 按 `settings.ocrEngine` 分发：系统引擎（`WinRtOcr.exe`，PNG 走 stdin）或 paddle 引擎包（userData 内按需下载）→ 文本进剪贴板 + toast。
 - **快速翻译与语音合成**：回车 → `translate:run` → 主进程**并行**执行所有启用服务（每服务独立 15s 超时与 AbortController）→ 逐服务回 `translate:chunk` → 渲染层按 `serviceId` 更新卡片；中英文双向智能互切；词典卡片附带生词本自动收录钩子；全局语音合成（TTS）根据设置调度 Edge TTS 或小米 MiMo 大模型规范播音服务。
 - **Agent 工具调用与执行流**：模型工具调用 → 未闭合 JSON 启发式参数流式解析（`parseStreamingToolArgs`）与实时字符计数/展开动效 → 基于 `(round, index)` 轮次物理隔离的稳定 Call ID 派发 → `validateAgentToolArgs` → 连续只读工具并发批处理（`Promise.all`）加速读取 → 细粒度风险分级（内置与 MCP 工具均评估：`forbidden` 毁灭性指令直接拦截 / `dangerous` 危险操作即便在全权限模式也强制暂停审批 / 普通操作全权限自动放行）→ 动态防幻觉守护（拦截虚假测试报告与无工具调用的伪完成声明）→ 编辑后验证引导（自动提示跑测试/构建检查）→ 执行并落盘快照（可回退）与工具输出（截断至 12k 回传）；主进程全局未捕获异常/拒绝拦截与 IPC 4000 字符流式文本有界截断保证进程常驻稳定。
+- **对话上下文与历史压缩流**：默认注意力预算 200k tokens（保留区 85% ~170k，触发线 95% ~190k）；长任务单轮/多轮采用死锁破局退避，在发送前或用户点击输入框左下角圆环就地压缩；旧历史经由结构自愈的 `IPC.AiSummarize` 提炼为 5 节复工文档（Recap Doc），若指定压缩模型 404 则无缝降级当前聊天模型；UI 视图完整保留全部轮次，线路层以「复工文档 + 保留区轮次 + 刚输入指令」按需组装重放。
 
 ## 4. 核心抽象与设计模式
 

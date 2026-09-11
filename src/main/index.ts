@@ -23,7 +23,7 @@ import { mcpManager } from './mcp/McpManager'
 import { applyProxy, testProxy } from './proxy'
 import { assessMcpRisk, isMcpToolName } from './mcp/mcpUtil'
 import { loadTopicsFromDisk, saveTopicsToDisk } from './chatTopicsStore'
-import { stripDocJunk, validateRecapDoc } from '@shared/recapDoc'
+import { autoRepairRecapDoc, stripDocJunk, validateRecapDoc } from '@shared/recapDoc'
 import { ScreenshotService } from './ScreenshotService'
 import { cleanupCaptureTemp } from './capture'
 import { SelectionService } from './SelectionService'
@@ -1162,10 +1162,10 @@ function registerIpc(): void {
   // passed by the renderer (its window certainly fits — we just talked to it).
   // Failures throw so the renderer can surface the pre-send compaction as a
   // normal request failure — no "send the uncompressed original" fallback.
-  ipcMain.handle(IPC.AiSummarize, async (_event, payload: { text: string; model?: string }) => {
+  ipcMain.handle(IPC.AiSummarize, async (_event, payload: { text: string; model?: string; providerTemplateId?: string }) => {
     if (typeof payload?.text !== 'string' || !payload.text.trim()) return ''
     const settings = getSettings()
-    const base = resolveProvider(settings, undefined)
+    const base = resolveProvider(settings, payload.providerTemplateId)
     const chatModel =
       (typeof payload.model === 'string' && payload.model.trim()) || base.model
     const compressModel = settings.compressModel.trim()
@@ -1221,7 +1221,9 @@ function registerIpc(): void {
 
     let lastError: unknown
     for (const model of candidates) {
-      // Two attempts per model (network blips / empty or malformed output).
+      // Two attempts per model (network blips / empty or malformed output),
+      // EXCEPT when the model is rejected as non-existent (404/400), where we
+      // immediately skip to the next candidate (fallback to chatModel).
       for (let attempt = 0; attempt < 2; attempt++) {
         try {
           const summary = await runOnce(model)
@@ -1229,10 +1231,9 @@ function registerIpc(): void {
             lastError = new Error(`Empty summary from model ${model}`)
             continue
           }
-          // Structure guarantee: strip preamble junk, then verify all five
-          // section headers. A malformed doc counts as a failed attempt —
-          // same path as a network failure (retry → next candidate model).
-          const doc = stripDocJunk(summary)
+          // Structure guarantee with self-healing: first try autoRepairRecapDoc to heal
+          // loose markdown header variations, then fall back to stripDocJunk.
+          const doc = autoRepairRecapDoc(summary) ?? stripDocJunk(summary)
           if (doc === null) {
             lastError = new Error(`Malformed summary from model ${model}: 缺少“# 复工文档”标题`)
             continue
@@ -1245,6 +1246,20 @@ function registerIpc(): void {
           return doc
         } catch (error) {
           lastError = error
+          const msg = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase()
+          // If the model does not exist on this provider (404 or model not found), immediately break out
+          // of attempts for this model and proceed to next candidate (chatModel).
+          if (
+            msg.includes('404') ||
+            msg.includes('model_not_found') ||
+            msg.includes('not found') ||
+            msg.includes('does not exist') ||
+            msg.includes('invalid model') ||
+            msg.includes('unsupported model')
+          ) {
+            console.warn(`[AiSummarize] Model ${model} not available on provider, falling back immediately:`, msg)
+            break
+          }
         }
       }
     }

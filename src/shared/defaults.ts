@@ -107,7 +107,7 @@ export const defaultSettings: AppSettings = {
   webSearchEnabled: true,
   proxyUrl: '',
   compressModel: '',
-  contextWindowTokens: 128_000,
+  contextWindowTokens: 200_000,
   visionModel: '',
   ocrEngine: 'system',
   agentFullAccess: false,

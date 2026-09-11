@@ -127,6 +127,11 @@ export function mergeSettings(current: AppSettings, patch: SettingsPatch): AppSe
     chatWindowHeight: rest.chatWindowHeight != null ? clampInt(rest.chatWindowHeight, 360, 2000, 580) : current.chatWindowHeight,
     fontFamily: typeof (rest.fontFamily ?? current.fontFamily) === 'string' ? (rest.fontFamily ?? current.fontFamily) : '',
     fontSize: clampInt(rest.fontSize ?? current.fontSize, 10, 28, defaultSettings.fontSize),
+    contextWindowTokens: (() => {
+      const raw = rest.contextWindowTokens ?? current.contextWindowTokens
+      if (raw === 128_000) return defaultSettings.contextWindowTokens
+      return clampInt(raw, 4000, 2_000_000, defaultSettings.contextWindowTokens)
+    })(),
     autoLaunch: typeof (rest.autoLaunch ?? current.autoLaunch) === 'boolean' ? (rest.autoLaunch ?? current.autoLaunch) : false,
     provider: nextProvider,
     providerTemplates: nextProviderTemplates,

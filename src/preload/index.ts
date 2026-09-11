@@ -74,8 +74,8 @@ const api = {
     listModels: (providerTemplateId?: string): Promise<string[]> => ipcRenderer.invoke(IPC.AiListModels, providerTemplateId),
     testModel: (providerTemplateId?: string): Promise<{ ok: true }> =>
       ipcRenderer.invoke(IPC.AiTestModel, providerTemplateId),
-    summarize: (text: string, model?: string): Promise<string> =>
-      ipcRenderer.invoke(IPC.AiSummarize, { text, model }),
+    summarize: (text: string, model?: string, providerTemplateId?: string): Promise<string> =>
+      ipcRenderer.invoke(IPC.AiSummarize, { text, model, providerTemplateId }),
     /** Best-effort topic title from the first round; '' when naming failed. */
     nameTopic: (text: string, model?: string): Promise<string> =>
       ipcRenderer.invoke(IPC.AiNameTopic, { text, model }),

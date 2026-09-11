@@ -46,6 +46,51 @@ export function stripDocJunk(raw: string): string | null {
     .trim()
 }
 
+const SECTION_REPAIR_PATTERNS = [
+  /^#{1,4}\s*(?:1[.,、\s]|一[、.\s]|(?:原始任务))/i,
+  /^#{1,4}\s*(?:2[.,、\s]|二[、.\s]|(?:事实台账|关键事实|事实记录))/i,
+  /^#{1,4}\s*(?:3[.,、\s]|三[、.\s]|(?:涉及文件|文件状态|文件与状态))/i,
+  /^#{1,4}\s*(?:4[.,、\s]|四[、.\s]|(?:失败路径|失败记录|踩坑记录))/i,
+  /^#{1,4}\s*(?:5[.,、\s]|五[、.\s]|(?:当前任务|下一步|后续计划))/i
+]
+
+/** Attempt to recover a structured recap doc from slight formatting deviations
+ * (e.g. minor header variation like "### 1、原始任务", missing empty failure section).
+ * Returns the normalized standard doc or null if unrecoverable. */
+export function autoRepairRecapDoc(raw: string): string | null {
+  if (!raw || typeof raw !== 'string') return null
+  const cleaned = raw.replace(/\r\n/g, '\n').replace(/\n```\s*$/, '').trim()
+  const lines = cleaned.split('\n')
+
+  const sectionLines: Array<{ sectionIndex: number; lineIndex: number }> = []
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim()
+    for (let s = 0; s < SECTION_REPAIR_PATTERNS.length; s++) {
+      if (SECTION_REPAIR_PATTERNS[s].test(line)) {
+        if (!sectionLines.some((item) => item.sectionIndex === s)) {
+          sectionLines.push({ sectionIndex: s, lineIndex: i })
+        }
+        break
+      }
+    }
+  }
+
+  // Must recognize at least 3 distinct sections (e.g. task, files, next steps)
+  if (sectionLines.length < 3) return null
+
+  sectionLines.sort((a, b) => a.sectionIndex - b.sectionIndex)
+  const sectionBodies: string[] = [EMPTY_SECTION, EMPTY_SECTION, EMPTY_SECTION, EMPTY_SECTION, EMPTY_SECTION]
+
+  for (let idx = 0; idx < sectionLines.length; idx++) {
+    const cur = sectionLines[idx]
+    const nextLineIdx = idx + 1 < sectionLines.length ? sectionLines[idx + 1].lineIndex : lines.length
+    const body = lines.slice(cur.lineIndex + 1, nextLineIdx).join('\n').trim()
+    sectionBodies[cur.sectionIndex] = body || EMPTY_SECTION
+  }
+
+  return buildDoc(sectionBodies)
+}
+
 /** All five section headers must be present, in order, at line starts.
  * Returns null when valid, else a description of what is missing (used in
  * the retry-chain error message). */

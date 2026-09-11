@@ -21,9 +21,9 @@ import {
 } from './compaction'
 
 describe('compaction constants', () => {
-  it('trigger line is 95% of the 128k attention budget', () => {
-    expect(CONTEXT_WINDOW_TOKENS).toBe(128_000)
-    expect(COMPACT_TRIGGER_TOKENS).toBe(121_600)
+  it('trigger line is 95% of the 200k attention budget', () => {
+    expect(CONTEXT_WINDOW_TOKENS).toBe(200_000)
+    expect(COMPACT_TRIGGER_TOKENS).toBe(190_000)
   })
 })
 

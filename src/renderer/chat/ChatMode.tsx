@@ -1287,14 +1287,14 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
       turns: ChatTurn[],
       session: number,
       gate: { cancelled: boolean },
-      pendingText: string
+      pendingText: string,
+      options?: { force?: boolean }
     ): Promise<void> => {
       const covered = compactRef.current?.covered ?? 0
       // keepStart is always a user-task boundary. It is token-budgeted, not
       // a fixed turn count, so a request/tool/result sequence stays intact.
-      const keepStart = computeChatTaskRoundKeepStart(turns, settings.contextWindowTokens)
-      if (keepStart <= covered) return
-      const stale = turns.slice(covered, keepStart)
+      let keepStart = computeChatTaskRoundKeepStart(turns, settings.contextWindowTokens)
+
       // Hybrid count: the provider's usage report lags one request behind —
       // add a script-aware estimate for the turns it never saw plus the
       // message about to be sent, so a huge paste can't slip past the trigger.
@@ -1302,6 +1302,35 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
         turns.slice(usageTurnsRef.current).reduce((n, turn) => n + estimateTokensFromText(buildSendText(turn)), 0) +
         estimateTokensFromText(pendingText)
       const promptTokens = estimateEffectiveTokens(contextUsageRef.current, trailingTokens)
+      const trigger = compactTriggerTokens(settings.contextWindowTokens)
+      const isHighWater =
+        (promptTokens ?? 0) >= trigger ||
+        (contextUsageRef.current ?? 0) >= trigger
+
+      // Deadlock breaker:
+      // If computeChatTaskRoundKeepStart refused to advance (e.g. isNewest protected the only round,
+      // or the latest round alone exceeds the budget so keepStart <= covered), but the context has
+      // uncompressed turns and is at high water (or manually forced):
+      if (keepStart <= covered && turns.length > covered && (isHighWater || options?.force)) {
+        let fallbackKeep = -1
+        for (let i = turns.length - 1; i > covered; i--) {
+          if (turns[i].role === 'user') {
+            fallbackKeep = i
+            break
+          }
+        }
+        if (fallbackKeep > covered) {
+          keepStart = fallbackKeep
+        } else {
+          // Even a single user/assistant round fills the attention budget:
+          // condense the entire uncompressed history into recap doc.
+          keepStart = turns.length
+        }
+      }
+
+      if (keepStart <= covered) return
+      const stale = turns.slice(covered, keepStart)
+
       // Estimate the same payload that the send path will replay. This is a
       // token estimate rather than a fixed character/message cap, so a larger
       // configured attention budget survives a completed 50-tool task round.
@@ -1320,6 +1349,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
         for (const note of injectedNotes(turn)) sendTokens += estimateTokensFromText(note)
       })
       if (
+        !options?.force &&
         !shouldCompact(
           { promptTokens, staleEntries: stale.length, sendTokens },
           settings.contextWindowTokens
@@ -1405,6 +1435,17 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
       // Advance the covered frontier to keepStart *at compress time*. The
       // just-typed user turn is not in `turns` and stays in the recent zone.
       compactRef.current = { summary, covered: keepStart }
+
+      // Refresh real-time context token usage after compaction
+      const remainingTurns = turns.slice(keepStart)
+      let refreshedTokens = estimateTokensFromText(summary)
+      remainingTurns.forEach((turn) => {
+        refreshedTokens += estimateTurnTokens(turn)
+      })
+      contextUsageRef.current = refreshedTokens
+      usageTurnsRef.current = turns.length
+      setContextUsage(refreshedTokens)
+
       persistTopic(turns, selectedModel)
       setCompactNotice(
         isZh
@@ -1418,6 +1459,37 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
     },
     [isZh, selectedModel, persistTopic, clearCompactNotice, settings.contextWindowTokens]
   )
+
+  // In-place manual compaction triggered by clicking the context ring
+  const [isCompacting, setIsCompacting] = React.useState(false)
+  const handleManualCompact = React.useCallback(async () => {
+    if (isCompacting || activeRequestId.current || preSendRef.current) return
+    const history = chatRef.current
+    const covered = compactRef.current?.covered ?? 0
+    if (!history.length || history.length <= covered) {
+      setCompactNotice(isZh ? '当前没有可压缩的历史对话' : 'No messages to compress')
+      if (compactNoticeTimerRef.current) clearTimeout(compactNoticeTimerRef.current)
+      compactNoticeTimerRef.current = setTimeout(() => setCompactNotice(null), 3000)
+      return
+    }
+
+    const session = chatSessionRef.current
+    const gate = { cancelled: false }
+    preSendRef.current = gate
+    setIsCompacting(true)
+    try {
+      await compactIfNeeded(history, session, gate, '', { force: true })
+    } catch {
+      if (!gate.cancelled && chatSessionRef.current === session) {
+        setCompactNotice(isZh ? '上下文压缩失败，请重试' : 'Context compression failed — please retry')
+        if (compactNoticeTimerRef.current) clearTimeout(compactNoticeTimerRef.current)
+        compactNoticeTimerRef.current = setTimeout(() => setCompactNotice(null), 4000)
+      }
+    } finally {
+      if (preSendRef.current === gate) preSendRef.current = null
+      setIsCompacting(false)
+    }
+  }, [isCompacting, isZh, compactIfNeeded])
 
   // ---- AI chunk handler ----
   // Text/reasoning deltas are buffered as an ordered queue and flushed at
@@ -2937,7 +3009,8 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
               : 0
             const rounds = chat.filter((turn) => turn.role === 'user').length
             const pct = Math.round(ratio * 100)
-            const tip =
+            const canCompact = chat.length > covered && !loading && !isCompacting
+            const baseTip =
               contextUsage !== null
                 ? isZh
                   ? `已进行 ${rounds} 轮 · 上下文 ${formatTokens(contextUsage)}/${formatTokens(compactTriggerTokens(settings.contextWindowTokens))} tokens（${pct}%）${covered > 0 ? ` · 已压进摘要 ${covered} 条` : ''}`
@@ -2945,9 +3018,27 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
                 : isZh
                   ? `已进行 ${rounds} 轮 · 上下文将在下次发送时按 token 计算${covered > 0 ? ` · 已压进摘要 ${covered} 条` : ''}`
                   : `${rounds} round${rounds === 1 ? '' : 's'} · context will be token-estimated on the next send${covered > 0 ? ` · ${covered} in recap` : ''}`
+            const tip = canCompact
+              ? `${baseTip} · ${isZh ? '点击立即压缩上下文' : 'Click to compress context'}`
+              : isCompacting
+                ? (isZh ? '正在压缩较早的对话…' : 'Compressing earlier messages…')
+                : baseTip
             const C = 2 * Math.PI * 6.5
             return (
-              <div className="chat-context-ring" title={tip} aria-label={tip}>
+              <div
+                className={`chat-context-ring${canCompact ? ' chat-context-ring--clickable' : ''}`}
+                title={tip}
+                aria-label={tip}
+                onClick={canCompact ? () => void handleManualCompact() : undefined}
+                role={canCompact ? 'button' : undefined}
+                tabIndex={canCompact ? 0 : undefined}
+                onKeyDown={canCompact ? (e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    void handleManualCompact()
+                  }
+                } : undefined}
+              >
                 <svg width="16" height="16" viewBox="0 0 16 16">
                   <circle cx="8" cy="8" r="6.5" fill="none" stroke="var(--divider)" strokeWidth="2.5" />
                   <circle
