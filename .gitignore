@@ -23,6 +23,7 @@ pnpm-debug.log*
 sandbox-e2e/run-e2e.cjs
 sandbox-e2e/run-agent-context.cjs
 sandbox-e2e/agent-context-workspace/
+sandbox-e2e/test-workspace/
 sandbox-e2e/agent-context-result.json
 
 # 个人笔记（不入库）
