@@ -48,6 +48,24 @@ export function buildHtmlPreviewDoc(code: string): string {
         background: #1e1e1e;
       }
     }
+    ::-webkit-scrollbar {
+      width: 5px;
+      height: 5px;
+    }
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(128, 128, 128, 0.35);
+      border-radius: 3px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: rgba(128, 128, 128, 0.55);
+    }
+    * {
+      scrollbar-width: thin;
+      scrollbar-color: rgba(128, 128, 128, 0.35) transparent;
+    }
   </style>
 </head>
 <body>
@@ -57,34 +75,75 @@ ${trimmed}
 }
 
 export function buildSvgPreviewDoc(code: string): string {
+  const clean = code.trim().replace(/^<\?xml[\s\S]*?\?>/i, '').trim()
   return `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
   <style>
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      overflow: auto;
+    }
     body {
       display: flex;
       align-items: center;
       justify-content: center;
-      min-height: 100vh;
-      margin: 0;
-      padding: 16px;
+      padding: 12px;
+      box-sizing: border-box;
       background: repeating-conic-gradient(#80808022 0% 25%, transparent 0% 50%) 50% / 20px 20px;
     }
     svg {
       max-width: 100%;
+      max-height: 100%;
+      width: auto;
       height: auto;
+      display: block;
+    }
+    ::-webkit-scrollbar {
+      width: 5px;
+      height: 5px;
+    }
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(128, 128, 128, 0.35);
+      border-radius: 3px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: rgba(128, 128, 128, 0.55);
+    }
+    * {
+      scrollbar-width: thin;
+      scrollbar-color: rgba(128, 128, 128, 0.35) transparent;
     }
   </style>
 </head>
 <body>
-${code.trim()}
+${clean}
 </body>
 </html>`
 }
 
 const COPY_ICON_SVG =
   '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="10" height="10" rx="2"/><path d="M7 15H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v1"/></svg>'
+
+const RELOAD_ICON_SVG =
+  '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>'
+
+export const FULLSCREEN_ENTER_ICON_SVG =
+  '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>'
+
+export const FULLSCREEN_EXIT_ICON_SVG =
+  '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></svg>'
+
+const EXPAND_ICON_SVG =
+  '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>'
 
 // Configure marked once: GFM tables, line breaks, and deterministic code-block rendering.
 // Emitting the `.code-block` wrapper and `.code-copy` button directly at parse time
@@ -107,37 +166,40 @@ marked.use({
       const isPreviewable = lowerLang === 'html' || lowerLang === 'htm' || lowerLang === 'svg'
       const langClass = cleanLang ? ` class="language-${escapeHtml(cleanLang)}"` : ''
 
+      const lineCount = text.replace(/\r\n/g, '\n').split('\n').length
+      const isCollapsible = lineCount > 15
+      const expandBtnHtml = isCollapsible
+        ? `<div class="code-block__expand-wrap"><button type="button" class="code-expand-btn" data-action="toggle-expand" aria-label="展开全部代码">${EXPAND_ICON_SVG}<span class="code-expand-text">展开全部 (${lineCount} 行)</span></button></div>`
+        : ''
+      const collapseClass = isCollapsible ? ' code-block--collapsible code-block--collapsed' : ''
+      const linesAttr = isCollapsible ? ` data-lines="${lineCount}"` : ''
+
       if (!isPreviewable) {
-        return `<div class="code-block"><button type="button" class="code-copy" data-action="copy-code" aria-label="Copy code" title="Copy">${COPY_ICON_SVG}</button><pre><code${langClass}>${highlighted}</code></pre></div>\n`
+        return `<div class="code-block${collapseClass}"${linesAttr}><button type="button" class="code-copy" data-action="copy-code" aria-label="Copy code" title="Copy">${COPY_ICON_SVG}</button><pre><code${langClass}>${highlighted}</code></pre>${expandBtnHtml}</div>\n`
       }
 
-      const srcdoc = lowerLang === 'svg' ? buildSvgPreviewDoc(text) : buildHtmlPreviewDoc(text)
-      const escapedSrcdoc = escapeHtml(srcdoc)
-
-      return `<div class="code-block code-block--previewable">
+      return `<div class="code-block code-block--previewable${collapseClass}" data-lang="${escapeHtml(lowerLang)}"${linesAttr}>
   <div class="code-block__header">
     <div class="code-block__tabs">
       <button type="button" class="code-tab active" data-action="tab-code" aria-label="Code">
         <span class="code-block__lang">${escapeHtml(cleanLang)}</span>
       </button>
-      <button type="button" class="code-tab" data-action="tab-preview" aria-label="Preview">
+      <button type="button" class="code-tab" data-action="tab-preview" aria-label="实时预览" title="实时预览">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
-        <span>预览</span>
       </button>
     </div>
-    <button type="button" class="code-copy" data-action="copy-code" aria-label="Copy code" title="Copy">${COPY_ICON_SVG}</button>
+    <div class="code-block__actions">
+      <button type="button" class="code-copy" data-action="copy-code" aria-label="Copy code" title="复制代码">${COPY_ICON_SVG}</button>
+      <button type="button" class="preview-reload" data-action="reload-preview" aria-label="刷新预览" title="刷新预览">${RELOAD_ICON_SVG}</button>
+      <button type="button" class="preview-fullscreen" data-action="toggle-fullscreen" aria-label="全屏预览" title="全屏预览">${FULLSCREEN_ENTER_ICON_SVG}</button>
+    </div>
   </div>
   <div class="code-panel-code">
     <pre><code${langClass}>${highlighted}</code></pre>
+    ${expandBtnHtml}
   </div>
   <div class="code-panel-preview">
-    <div class="preview-toolbar">
-      <span class="preview-title">实时预览 (Sandbox)</span>
-      <button type="button" class="preview-reload" data-action="reload-preview" title="刷新预览" aria-label="刷新预览">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
-      </button>
-    </div>
-    <iframe class="html-preview-frame" sandbox="allow-scripts" data-srcdoc="${escapedSrcdoc}" loading="lazy"></iframe>
+    <iframe class="html-preview-frame" sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups"></iframe>
   </div>
 </div>\n`
     }
@@ -303,7 +365,7 @@ export const MarkdownView = React.memo(function MarkdownView({
   const html = React.useMemo(() => {
     const raw = marked.parse(children, { async: false }) as string
     return DOMPurify.sanitize(raw, {
-      ADD_TAGS: ['button', 'svg', 'path', 'rect', 'circle', 'polygon', 'iframe', 'span'],
+      ADD_TAGS: ['button', 'svg', 'path', 'rect', 'circle', 'polygon', 'polyline', 'line', 'iframe', 'span'],
       ADD_ATTR: [
         'target',
         'rel',
@@ -326,11 +388,16 @@ export const MarkdownView = React.memo(function MarkdownView({
         'd',
         'x',
         'y',
+        'x1',
+        'y1',
+        'x2',
+        'y2',
         'rx',
         'sandbox',
         'srcdoc',
         'data-srcdoc',
         'data-action',
+        'data-lines',
         'loading'
       ]
     })
@@ -347,7 +414,7 @@ export const MarkdownView = React.memo(function MarkdownView({
     })
 
     // Delegated click handling on the container:
-    // Captures preview tabs, reloads, copy button clicks, and external link opens with zero per-node listeners.
+    // Captures preview tabs, reloads, fullscreen toggles, copy button clicks, expand/collapse toggles, and external link opens with zero per-node listeners.
     const onContainerClick = (e: MouseEvent) => {
       const target = e.target as HTMLElement
 
@@ -364,14 +431,30 @@ export const MarkdownView = React.memo(function MarkdownView({
         const iframe = codeBlock.querySelector<HTMLIFrameElement>('.html-preview-frame')
 
         if (isPreview) {
+          if (codeBlock.classList.contains('is-previewing')) return
           codeBlock.classList.add('is-previewing')
           codeTab?.classList.remove('active')
           previewTab?.classList.add('active')
-          if (iframe && iframe.dataset.srcdoc && (!iframe.srcdoc || iframe.srcdoc === 'about:blank')) {
-            iframe.srcdoc = iframe.dataset.srcdoc
+          if (iframe) {
+            const rawCode = codeBlock.querySelector('pre code')?.textContent ?? ''
+            const lang = (codeBlock.getAttribute('data-lang') || codeBlock.querySelector('.code-block__lang')?.textContent || '').toLowerCase().trim()
+            const doc = lang === 'svg' ? buildSvgPreviewDoc(rawCode) : buildHtmlPreviewDoc(rawCode)
+            if (iframe.dataset.loadedDoc !== doc) {
+              iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-modals allow-popups')
+              iframe.dataset.loadedDoc = doc
+              iframe.srcdoc = doc
+            }
           }
         } else {
+          if (!codeBlock.classList.contains('is-previewing')) return
           codeBlock.classList.remove('is-previewing')
+          codeBlock.classList.remove('is-fullscreen')
+          const fsBtn = codeBlock.querySelector<HTMLButtonElement>('[data-action="toggle-fullscreen"]')
+          if (fsBtn) {
+            fsBtn.innerHTML = FULLSCREEN_ENTER_ICON_SVG
+            fsBtn.title = '全屏预览'
+            fsBtn.setAttribute('aria-label', '全屏预览')
+          }
           previewTab?.classList.remove('active')
           codeTab?.classList.add('active')
         }
@@ -385,16 +468,43 @@ export const MarkdownView = React.memo(function MarkdownView({
         e.stopPropagation()
         const codeBlock = reloadBtn.closest('.code-block')
         const iframe = codeBlock?.querySelector<HTMLIFrameElement>('.html-preview-frame')
-        if (iframe && iframe.dataset.srcdoc) {
+        if (codeBlock && iframe) {
+          iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-modals allow-popups')
+          const rawCode = codeBlock.querySelector('pre code')?.textContent ?? ''
+          const lang = (codeBlock.getAttribute('data-lang') || codeBlock.querySelector('.code-block__lang')?.textContent || '').toLowerCase().trim()
+          const doc = lang === 'svg' ? buildSvgPreviewDoc(rawCode) : buildHtmlPreviewDoc(rawCode)
+          iframe.dataset.loadedDoc = doc
           iframe.srcdoc = ''
-          setTimeout(() => {
-            if (iframe && iframe.dataset.srcdoc) iframe.srcdoc = iframe.dataset.srcdoc
-          }, 50)
+          requestAnimationFrame(() => {
+            iframe.srcdoc = doc
+          })
         }
         return
       }
 
-      // 3. Code copy button
+      // 3. Fullscreen toggle
+      const fsBtn = target.closest<HTMLButtonElement>('[data-action="toggle-fullscreen"]')
+      if (fsBtn && container.contains(fsBtn)) {
+        e.preventDefault()
+        e.stopPropagation()
+        const codeBlock = fsBtn.closest('.code-block')
+        if (!codeBlock) return
+        const isFs = codeBlock.classList.contains('is-fullscreen')
+        if (isFs) {
+          codeBlock.classList.remove('is-fullscreen')
+          fsBtn.innerHTML = FULLSCREEN_ENTER_ICON_SVG
+          fsBtn.title = '全屏预览'
+          fsBtn.setAttribute('aria-label', '全屏预览')
+        } else {
+          codeBlock.classList.add('is-fullscreen')
+          fsBtn.innerHTML = FULLSCREEN_EXIT_ICON_SVG
+          fsBtn.title = '退出全屏 (Esc)'
+          fsBtn.setAttribute('aria-label', '退出全屏')
+        }
+        return
+      }
+
+      // 4. Code copy button
       const copyBtn = target.closest<HTMLButtonElement>('.code-copy')
       if (copyBtn && container.contains(copyBtn)) {
         e.preventDefault()
@@ -403,7 +513,31 @@ export const MarkdownView = React.memo(function MarkdownView({
         return
       }
 
-      // 4. External links
+      // 5. Toggle expand / collapse for long code blocks
+      const expandBtn = target.closest<HTMLButtonElement>('[data-action="toggle-expand"]')
+      if (expandBtn && container.contains(expandBtn)) {
+        e.preventDefault()
+        e.stopPropagation()
+        const codeBlock = expandBtn.closest('.code-block')
+        if (!codeBlock) return
+        const isCollapsed = codeBlock.classList.contains('code-block--collapsed')
+        const textSpan = expandBtn.querySelector<HTMLElement>('.code-expand-text')
+        const lines = codeBlock.getAttribute('data-lines') || ''
+
+        if (isCollapsed) {
+          codeBlock.classList.remove('code-block--collapsed')
+          codeBlock.classList.add('code-block--expanded')
+          if (textSpan) textSpan.textContent = '收起代码'
+        } else {
+          codeBlock.classList.remove('code-block--expanded')
+          codeBlock.classList.add('code-block--collapsed')
+          if (textSpan) textSpan.textContent = `展开全部${lines ? ` (${lines} 行)` : ''}`
+          codeBlock.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+        }
+        return
+      }
+
+      // 6. External links
       const anchor = target.closest<HTMLAnchorElement>('a')
       if (anchor && container.contains(anchor)) {
         const href = anchor.getAttribute('href')
@@ -417,6 +551,30 @@ export const MarkdownView = React.memo(function MarkdownView({
 
     container.addEventListener('click', onContainerClick)
     cleanups.push(() => container.removeEventListener('click', onContainerClick))
+
+    // Escape key exits fullscreen preview
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        const fsBlock = container.querySelector('.code-block.is-fullscreen')
+        if (fsBlock) {
+          fsBlock.classList.remove('is-fullscreen')
+          const fsBtn = fsBlock.querySelector<HTMLButtonElement>('[data-action="toggle-fullscreen"]')
+          if (fsBtn) {
+            fsBtn.innerHTML = FULLSCREEN_ENTER_ICON_SVG
+            fsBtn.title = '全屏预览'
+            fsBtn.setAttribute('aria-label', '全屏预览')
+          }
+        }
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    cleanups.push(() => window.removeEventListener('keydown', onKeyDown))
+    cleanups.push(() => {
+      container.querySelectorAll('.code-block.is-fullscreen').forEach((el) => el.classList.remove('is-fullscreen'))
+      container.querySelectorAll<HTMLIFrameElement>('.html-preview-frame').forEach((iframe) => {
+        iframe.srcdoc = 'about:blank'
+      })
+    })
 
     // Set link target/rel on anchors
     const links = container.querySelectorAll('a[href]')

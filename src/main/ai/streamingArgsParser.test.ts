@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  extractAnyProperty,
   extractPartialProperty,
   parseStreamingToolArgs,
   unescapePartialJsonString
@@ -84,5 +85,27 @@ describe('parseStreamingToolArgs', () => {
     const partialJson = `{"path": "${filePath.replace(/\\/g, '\\\\')}"`
     const result = parseStreamingToolArgs('write_file', partialJson, cwd)
     expect(result.summary.replace(/\\/g, '/')).toBe('src/index.ts')
+  })
+
+  it('supports property aliases like filePath and code for write_file', () => {
+    const partialJson = '{"filePath": "src/App.vue", "code": "<template><div>Hello</div></template>"'
+    const result = parseStreamingToolArgs('write_file', partialJson)
+    expect(result.summary).toBe('src/App.vue')
+    expect(result.content).toBe('<template><div>Hello</div></template>')
+  })
+
+  it('extractAnyProperty returns first matching candidate', () => {
+    const json = '{"command": "echo 1", "cmd": "echo 2"}'
+    expect(extractAnyProperty(json, ['nonexistent', 'cmd', 'command'])).toBe('echo 2')
+    expect(extractAnyProperty(json, ['nonexistent'])).toBeNull()
+  })
+
+  it('formats long streamed file content with latest tail visible', () => {
+    const longContent = 'A'.repeat(5000)
+    const partialJson = `{"path": "long.txt", "content": "${longContent}"`
+    const result = parseStreamingToolArgs('write_file', partialJson)
+    expect(result.content).toBeDefined()
+    expect(result.content).toContain('... [前略] ...\n')
+    expect(result.content!.length).toBeLessThan(4050)
   })
 })

@@ -62,14 +62,23 @@ let isQuitting = false
 
 // Pre-images of agent write/edit calls are persisted to disk (see
 // SnapshotStore) so revert from the tool card survives an app restart.
-const CHAT_SHADOW_PADDING = 18
+const CHAT_SHADOW_PADDING = 0
 const CHAT_DEFAULT_WIDTH = 520
 const CHAT_DEFAULT_HEIGHT = 640
 const abortControllers = new Map<string, AbortController>()
 // User notes queued mid-request, delivered into the tool loop between rounds
 // (see drainInjected). Entry exists only while its request is streaming.
 const injectionQueues = new Map<string, string[]>()
-const providerFetch: ProviderFetch = (url, init) => net.fetch(url, init)
+// AI / Translate / TTS HTTP traffic: Node's fetch goes through undici's global dispatcher
+// configured by applyProxy (respects manual / system proxy with 64 connections and
+// zero-IPC stream buffering for silky-smooth token delivery). Fall back to net.fetch
+// if global fetch is unavailable.
+const providerFetch: ProviderFetch = (url, init) => {
+  if (typeof fetch === 'function') {
+    return fetch(url, init)
+  }
+  return net.fetch(url, init)
+}
 
 function createNativeImageFromFile(paths: string[], fallbackDataUrl: string): Electron.NativeImage {
   for (const path of paths) {

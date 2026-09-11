@@ -81,7 +81,10 @@ export function groupTopics(topics: ChatTopic[]): {
   }
 
   for (const topic of topics) {
-    const dir = topic.session?.workingDir?.trim()
+    // Only topics with an active agent workspace belong to a project.
+    // If agentEnabled is false, or workingDir is empty/missing, it is a general task.
+    const isProjectTask = topic.session?.agentEnabled !== false && !!topic.session?.workingDir?.trim()
+    const dir = isProjectTask ? topic.session!.workingDir!.trim() : null
     if (dir) {
       const existing = projectMap.get(dir)
       if (existing) {

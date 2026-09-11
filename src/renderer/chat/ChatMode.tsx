@@ -566,7 +566,7 @@ function AgentToolRow({
   isZh: boolean
   onRevert: (callId: string) => void
 }) {
-  const [open, setOpen] = React.useState(false)
+  const [userToggledOpen, setUserToggledOpen] = React.useState<boolean | null>(null)
   const label = TOOL_LABELS[event.toolName]
   // MCP tools carry a mcp__server__tool name; the summary already shows
   // "server · tool", so a generic MCP badge is enough here.
@@ -574,21 +574,32 @@ function AgentToolRow({
   const category = TOOL_CATEGORIES[event.toolName] ?? (isMcp ? 'mcp' : 'other')
   const title = label ? (isZh ? label.zh : label.en) : isMcp ? 'MCP' : event.toolName
   const hasDetail = !!(event.oldText || event.newText || event.result || event.liveOutput)
-  const showDetail = open || event.state === 'pending-approval'
+
+  // Auto-expand during streaming, execution (running), pending-approval, or on error
+  const isLive = event.state === 'streaming' || event.state === 'running' || event.state === 'pending-approval'
+  const isError = event.state === 'error' || event.state === 'rejected'
+  const showDetail = userToggledOpen !== null ? userToggledOpen : (isLive || isError)
   const canRevert = (event.toolName === 'write_file' || event.toolName === 'edit_file') && event.state === 'done'
   const approve = (approved: boolean, alwaysAllow = false) => {
     void window.assistantLite.agent.approveTool(event.callId, approved, alwaysAllow)
   }
+
+  // Friendly summary when streaming and path has not yet arrived
+  const displaySummary =
+    event.summary === '...' && event.state === 'streaming'
+      ? (isZh ? '正在生成参数…' : 'Generating arguments…')
+      : event.summary
+
   return (
     <div className={`agent-tool-row agent-tool-row--${event.state} agent-tool-row--cat-${category}`}>
       <div
         className="agent-tool-row__head"
-        onClick={() => hasDetail && setOpen((v) => !v)}
+        onClick={() => hasDetail && setUserToggledOpen(!showDetail)}
         style={hasDetail ? { cursor: 'pointer' } : undefined}
       >
         <Icon name={TOOL_ICONS[event.toolName] ?? (isMcp ? 'blocks' : 'pencil')} size={13} />
         <span className="agent-tool-row__name">{title}</span>
-        <code className="agent-tool-row__summary" title={event.summary}>{event.summary}</code>
+        <code className="agent-tool-row__summary" title={displaySummary}>{displaySummary}</code>
         {canRevert && (
           <button
             className="agent-tool-row__revert"
@@ -625,13 +636,6 @@ function AgentToolRow({
           </button>
         </div>
       )}
-      {event.state === 'running' && event.liveOutput && (
-        <TerminalOutput
-          className="agent-tool-row__result agent-tool-row__result--live"
-          text={event.liveOutput}
-          pinToBottom
-        />
-      )}
       {showDetail && hasDetail && (
         <div className="agent-tool-row__detail">
           {(event.oldText !== undefined || event.newText !== undefined) && (
@@ -641,10 +645,21 @@ function AgentToolRow({
               pinToBottom={event.state === 'streaming'}
             />
           )}
+          {event.state === 'running' && event.liveOutput && (
+            <TerminalOutput
+              className="agent-tool-row__result agent-tool-row__result--live"
+              text={event.liveOutput}
+              pinToBottom
+            />
+          )}
+          {event.state === 'streaming' && !event.newText && event.liveOutput && (
+            <TerminalOutput
+              className="agent-tool-row__result agent-tool-row__result--command"
+              text={event.liveOutput}
+              pinToBottom
+            />
+          )}
           {event.result &&
-            // Command/MCP output is terminal-like: parse ANSI (or add a
-            // restrained status hint). Reads tint only the line-number gutter.
-            // Failures always render red regardless of category.
             (category === 'command' || category === 'mcp' || event.state === 'error' || event.state === 'rejected' ? (
               <TerminalOutput
                 className={`agent-tool-row__result agent-tool-row__result--${
@@ -661,13 +676,6 @@ function AgentToolRow({
             ) : (
               <pre className={`agent-tool-row__result agent-tool-row__result--${category}`}>{event.result}</pre>
             ))}
-          {event.state === 'streaming' && !event.newText && event.liveOutput && (
-            <TerminalOutput
-              className="agent-tool-row__result agent-tool-row__result--command"
-              text={event.liveOutput}
-              pinToBottom
-            />
-          )}
         </div>
       )}
     </div>
@@ -1126,9 +1134,10 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
     searchEnabled: false
   })
   React.useEffect(() => {
+    const effectiveWorkingDir = agentEnabled && workingDir ? workingDir.trim() : null
     sessionSnapshotRef.current = {
-      agentEnabled,
-      workingDir,
+      agentEnabled: agentEnabled && !!effectiveWorkingDir,
+      workingDir: effectiveWorkingDir,
       searchEnabled
     }
     // Update active topic's session and model immediately so changes are never lost
@@ -1140,7 +1149,11 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
         next[idx] = {
           ...next[idx],
           model: selectedModel,
-          session: { agentEnabled, workingDir, searchEnabled }
+          session: {
+            agentEnabled: agentEnabled && !!effectiveWorkingDir,
+            workingDir: effectiveWorkingDir,
+            searchEnabled
+          }
         }
         saveTopics(next)
         return next
@@ -2161,8 +2174,9 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
     const session = topic.session
     if (session) {
       setSearchEnabled(session.searchEnabled)
-      setWorkingDir(session.workingDir)
-      setAgentEnabled(session.agentEnabled && !!session.workingDir)
+      const hasAgentDir = session.agentEnabled && !!session.workingDir
+      setWorkingDir(hasAgentDir ? session.workingDir : null)
+      setAgentEnabled(hasAgentDir)
     } else {
       setSearchEnabled(false)
       setWorkingDir(null)
@@ -2228,6 +2242,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
   const toggleAgent = async () => {
     if (agentEnabled) {
       setAgentEnabled(false)
+      setWorkingDir(null)
       return
     }
     // Enabling requires a working directory; keep the previous pick if any.
@@ -2880,13 +2895,29 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
             <Icon name="terminal" size={16} />
           </button>
           {agentEnabled && workingDir && (
-            <button
-              className="chat-input__workdir"
-              title={`${workingDir}\n${isZh ? '点击更换工作目录' : 'Click to change working directory'}`}
-              onClick={() => void changeWorkingDir()}
-            >
-              {workingDir.split(/[\\/]/).filter(Boolean).pop()}
-            </button>
+            <div className="chat-input__workdir-pill">
+              <button
+                type="button"
+                className="chat-input__workdir"
+                title={`${workingDir}\n${isZh ? '点击更换工作目录' : 'Click to change working directory'}`}
+                onClick={() => void changeWorkingDir()}
+              >
+                <Icon name="folder" size={12} />
+                <span>{workingDir.split(/[\\/]/).filter(Boolean).pop()}</span>
+              </button>
+              <button
+                type="button"
+                className="chat-input__workdir-clear"
+                title={isZh ? '取消工作区' : 'Remove workspace'}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setWorkingDir(null)
+                  setAgentEnabled(false)
+                }}
+              >
+                <Icon name="x" size={11} />
+              </button>
+            </div>
           )}
           <button
             className="chat-input__tool"

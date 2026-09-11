@@ -21,7 +21,7 @@ const TOOLBAR_SCREEN_MARGIN = 8
 const TOOLBAR_SHADOW_PADDING = 16
 const ACTION_WIDTH = 560
 const ACTION_HEIGHT = 420
-const ACTION_SHADOW_PADDING = 18
+const ACTION_SHADOW_PADDING = 0
 
 // selection-hook ships a "clipboard fallback" that simulates Ctrl+Insert then
 // Ctrl+C when UIA/IAccessible can't read the selection. Simulated copies are

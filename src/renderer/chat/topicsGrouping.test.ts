@@ -48,6 +48,13 @@ describe('topicsGrouping', () => {
         title: 'General task without workspace',
         turns: [],
         updatedAt: 4000
+      },
+      {
+        id: 't5',
+        title: 'General task with cancelled agent workspace',
+        turns: [],
+        updatedAt: 5000,
+        session: { workingDir: 'C:\\projects\\qwen2api', agentEnabled: false, searchEnabled: false }
       }
     ]
 
@@ -65,8 +72,9 @@ describe('topicsGrouping', () => {
     expect(result.projects[1].name).toBe('qwen2api')
     expect(result.projects[1].topics).toHaveLength(1)
 
-    // General tasks
-    expect(result.generalTasks).toHaveLength(1)
-    expect(result.generalTasks[0].id).toBe('t4')
+    // General tasks (t4 has no session, t5 has agentEnabled: false -> both are general tasks!)
+    expect(result.generalTasks).toHaveLength(2)
+    expect(result.generalTasks[0].id).toBe('t5')
+    expect(result.generalTasks[1].id).toBe('t4')
   })
 })

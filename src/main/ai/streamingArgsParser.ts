@@ -64,6 +64,15 @@ export function extractPartialProperty(json: string, propName: string): string |
   return unescapePartialJsonString(remainder)
 }
 
+/** Extract the first matching property from a list of candidate property names. */
+export function extractAnyProperty(json: string, propNames: string[]): string | null {
+  for (const name of propNames) {
+    const val = extractPartialProperty(json, name)
+    if (val !== null) return val
+  }
+  return null
+}
+
 /**
  * Parses streaming tool arguments and produces real-time UI hints and partial content.
  */
@@ -79,12 +88,15 @@ export function parseStreamingToolArgs(
     const charCount = rawArgs.length
 
     if (toolName === 'write_file' || toolName === 'edit_file') {
-      const path = extractPartialProperty(rawArgs, 'path')
-      const oldText = toolName === 'edit_file' ? extractPartialProperty(rawArgs, 'old_text') : undefined
+      const path = extractAnyProperty(rawArgs, ['path', 'filePath', 'file_path', 'target_file', 'filename', 'file'])
+      const oldText =
+        toolName === 'edit_file'
+          ? extractAnyProperty(rawArgs, ['old_text', 'oldText', 'original_text'])
+          : undefined
       const content =
         toolName === 'write_file'
-          ? extractPartialProperty(rawArgs, 'content')
-          : extractPartialProperty(rawArgs, 'new_text')
+          ? extractAnyProperty(rawArgs, ['content', 'text', 'code'])
+          : extractAnyProperty(rawArgs, ['new_text', 'newText', 'content', 'text'])
 
       let summary = '...'
       if (path) {
@@ -101,25 +113,34 @@ export function parseStreamingToolArgs(
         }
       }
 
+      // For long streamed content, keep the latest tail visible so progress never freezes
+      const formatTail = (text?: string | null): string | undefined => {
+        if (!text) return undefined
+        if (text.length <= 4000) return text
+        return '... [前略] ...\n' + text.slice(-3900)
+      }
+
       return {
         summary,
         oldText: oldText ? oldText.slice(0, 4000) : undefined,
-        content: content ? content.slice(0, 4000) : undefined,
+        content: formatTail(content),
         charCount
       }
     }
 
     if (toolName === 'run_command') {
-      const command = extractPartialProperty(rawArgs, 'command')
+      const command = extractAnyProperty(rawArgs, ['command', 'cmd'])
       return {
         summary: command || '...',
-        command: command ? command.slice(0, 4000) : undefined,
+        command: command
+          ? (command.length > 4000 ? command.slice(0, 3900) + '...' : command)
+          : undefined,
         charCount
       }
     }
 
     if (toolName === 'read_file' || toolName === 'list_dir') {
-      const path = extractPartialProperty(rawArgs, 'path')
+      const path = extractAnyProperty(rawArgs, ['path', 'filePath', 'file_path', 'dir', 'directory'])
       return {
         summary: path || '...',
         charCount
@@ -127,7 +148,7 @@ export function parseStreamingToolArgs(
     }
 
     if (toolName === 'search_files') {
-      const query = extractPartialProperty(rawArgs, 'query') || extractPartialProperty(rawArgs, 'pattern')
+      const query = extractAnyProperty(rawArgs, ['query', 'pattern', 'search_term', 'term'])
       return {
         summary: query || '...',
         charCount
@@ -136,9 +157,9 @@ export function parseStreamingToolArgs(
 
     // MCP or generic tool: try common property names
     const candidate =
-      extractPartialProperty(rawArgs, 'path') ||
-      extractPartialProperty(rawArgs, 'command') ||
-      extractPartialProperty(rawArgs, 'query') ||
+      extractAnyProperty(rawArgs, ['path', 'filePath', 'file_path']) ||
+      extractAnyProperty(rawArgs, ['command', 'cmd']) ||
+      extractAnyProperty(rawArgs, ['query', 'pattern']) ||
       extractPartialProperty(rawArgs, 'prompt') ||
       extractPartialProperty(rawArgs, 'url')
 

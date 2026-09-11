@@ -4,6 +4,7 @@ import {
   expandOpenAIHistory,
   extractAnthropicBlocks,
   flattenToolTrace,
+  isStreamDoneEvent,
   listModels,
   normalizeBaseUrl,
   parseAnthropicStreamEvent,
@@ -1083,3 +1084,48 @@ describe('flattenToolTrace', () => {
     expect(flattenToolTrace(m)).toBe(m)
   })
 })
+
+describe('stream completion and connection keep-alive handling', () => {
+  it('correctly identifies stream completion events for OpenAI and Anthropic', () => {
+    expect(isStreamDoneEvent('data: [DONE]\n\n')).toBe(true)
+    expect(isStreamDoneEvent('data: [DONE]')).toBe(true)
+    expect(isStreamDoneEvent('event: message_stop\ndata: {"type":"message_stop"}\n\n')).toBe(true)
+    expect(isStreamDoneEvent('data: {"type":"message_stop"}')).toBe(true)
+    expect(isStreamDoneEvent('data: {"choices":[{"delta":{"content":"hi"}}]}\n\n')).toBe(false)
+  })
+
+  it('immediately exits and cancels reader when [DONE] is received without waiting for TCP close', async () => {
+    const encoder = new TextEncoder()
+    let readerCancelled = false
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"first"}}]}\n\n'))
+        controller.enqueue(encoder.encode('data: [DONE]\n\n'))
+        // Deliberately do NOT call controller.close() to simulate persistent HTTP Keep-Alive
+      },
+      cancel() {
+        readerCancelled = true
+      }
+    })
+
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(body, { status: 200 }))
+    const deltas: string[] = []
+
+    const promise = streamChatMessages(
+      provider,
+      [{ role: 'user', text: 'hi' }],
+      'system',
+      new AbortController().signal,
+      (delta) => {
+        if (delta.content) deltas.push(delta.content)
+      },
+      'off'
+    )
+
+    // Should resolve quickly without timing out on the open stream
+    await expect(promise).resolves.toBeUndefined()
+    expect(deltas).toEqual(['first'])
+    expect(readerCancelled).toBe(true)
+  })
+})
+

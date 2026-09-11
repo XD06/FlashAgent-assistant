@@ -21,6 +21,14 @@ async function resolveSystemProxy(): Promise<string | null> {
   }
 }
 
+const AGENT_OPTIONS = {
+  connections: 64,
+  pipelining: 1,
+  keepAliveTimeout: 30_000,
+  connectTimeout: 15_000,
+  headersTimeout: 30_000
+}
+
 /** Apply the proxy chain: manual proxy > system proxy > direct.
  *
  * Chromium traffic (net.fetch: AI requests, web search) follows the manual
@@ -31,12 +39,12 @@ export async function applyProxy(proxyUrl: string | undefined): Promise<void> {
   const manual = proxyUrl?.trim()
   if (manual) {
     await session.defaultSession.setProxy({ proxyRules: manual })
-    setGlobalDispatcher(new ProxyAgent(manual))
+    setGlobalDispatcher(new ProxyAgent({ uri: manual, ...AGENT_OPTIONS }))
     return
   }
   await session.defaultSession.setProxy({ mode: 'system' })
   const system = await resolveSystemProxy()
-  setGlobalDispatcher(system ? new ProxyAgent(system) : new Agent())
+  setGlobalDispatcher(system ? new ProxyAgent({ uri: system, ...AGENT_OPTIONS }) : new Agent(AGENT_OPTIONS))
 }
 
 /** Probe connectivity through the given (or effective) proxy using the same

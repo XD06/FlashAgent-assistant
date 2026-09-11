@@ -88,6 +88,38 @@ function sleepUnlessAborted(ms: number, signal: AbortSignal | null | undefined):
   })
 }
 
+const REQUEST_HEADERS_TIMEOUT_MS = 30_000
+
+async function fetchWithAttemptTimeout(
+  url: string,
+  init: RequestInit,
+  options: ProviderRequestOptions,
+  outerSignal: AbortSignal | null | undefined
+): Promise<Response> {
+  const timeoutController = new AbortController()
+  const timer = setTimeout(() => {
+    timeoutController.abort(
+      new Error(`Provider request timed out after ${REQUEST_HEADERS_TIMEOUT_MS / 1000}s waiting for response headers.`)
+    )
+  }, REQUEST_HEADERS_TIMEOUT_MS)
+
+  const onOuterAbort = (): void => {
+    timeoutController.abort(outerSignal?.reason ?? new DOMException('The operation was aborted.', 'AbortError'))
+  }
+  if (outerSignal?.aborted) {
+    clearTimeout(timer)
+    throw (outerSignal.reason ?? new DOMException('The operation was aborted.', 'AbortError'))
+  }
+  outerSignal?.addEventListener('abort', onOuterAbort, { once: true })
+
+  try {
+    return await fetchProvider(url, { ...init, signal: timeoutController.signal }, options)
+  } finally {
+    clearTimeout(timer)
+    outerSignal?.removeEventListener('abort', onOuterAbort)
+  }
+}
+
 /** fetchProvider with backoff on transient failures. Non-retryable responses
  * (401, 400, ...) are returned as-is for the caller's !ok check; retryable
  * ones are retried and, once attempts run out, thrown as a readable error. */
@@ -102,14 +134,15 @@ async function fetchProviderWithRetry(
     let failure: string
     let retryAfterMs: number | null = null
     try {
-      const response = await fetchProvider(url, init, options)
+      const response = await fetchWithAttemptTimeout(url, init, options, signal)
       if (response.ok || !RETRYABLE_STATUS.has(response.status)) return response
       failure = await readProviderError(response)
       retryAfterMs = parseRetryAfter(response.headers.get('retry-after'))
     } catch (error) {
       // Abort is the user's call, never retried; anything else at the fetch
-      // layer is a network-level transient (ECONNRESET, dead proxy, ...).
-      if (signal?.aborted || (error instanceof Error && error.name === 'AbortError')) throw error
+      // layer is a network-level transient (ECONNRESET, dead proxy, timeout, ...).
+      const isUserAbort = signal?.aborted || (error instanceof Error && error.name === 'AbortError' && !error.message.includes('timed out'))
+      if (isUserAbort) throw error
       failure = error instanceof Error ? error.message : String(error)
     }
     if (attempt >= RETRY_BACKOFF_MS.length) throw new Error(failure)
@@ -393,12 +426,22 @@ const SSE_EVENT_SEPARATOR = /\r?\n\r?\n/
 // path, so the underlying connection is released even when a handler throws.
 const STREAM_IDLE_TIMEOUT_MS = 90_000
 
+export function isStreamDoneEvent(event: string): boolean {
+  // OpenAI: data: [DONE]
+  if (/(?:^|\n)\s*data:\s*\[DONE\](?:\s*|$)/.test(event)) return true
+  // Anthropic: event: message_stop or payload containing "type":"message_stop"
+  if (/(?:^|\n)\s*event:\s*message_stop(?:\s*|$)/.test(event)) return true
+  if (event.includes('"type":"message_stop"') || event.includes('"type": "message_stop"')) return true
+  return false
+}
+
 async function readSseStream(body: ReadableStream<Uint8Array>, onEvent: (event: string) => void): Promise<void> {
   const reader = body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
+  let streamCompleted = false
   try {
-    while (true) {
+    while (!streamCompleted) {
       let timer: ReturnType<typeof setTimeout> | undefined
       const idle = new Promise<never>((_, reject) => {
         timer = setTimeout(
@@ -416,9 +459,17 @@ async function readSseStream(body: ReadableStream<Uint8Array>, onEvent: (event: 
       buffer += decoder.decode(chunk.value, { stream: true })
       const events = buffer.split(SSE_EVENT_SEPARATOR)
       buffer = events.pop() ?? ''
-      for (const event of events) onEvent(event)
+      for (const event of events) {
+        onEvent(event)
+        if (isStreamDoneEvent(event)) {
+          streamCompleted = true
+          break
+        }
+      }
     }
-    if (buffer.trim()) onEvent(buffer)
+    if (!streamCompleted && buffer.trim()) {
+      onEvent(buffer)
+    }
   } finally {
     void reader.cancel().catch(() => undefined)
   }
@@ -849,7 +900,8 @@ export async function streamChatMessages(
     // Deliver user notes queued while the previous round was streaming or
     // executing tools — the gap between rounds is the only safe place to
     // add a user message without breaking the tool-call protocol.
-    for (const note of options.drainInjected?.() ?? []) {
+    const injectedNotes = options.drainInjected?.() ?? []
+    for (const note of injectedNotes) {
       if (apiType === 'anthropic') {
         // Anthropic requires alternating roles; tool results already sit in a
         // trailing user message, so append a text block to it when present
@@ -875,7 +927,11 @@ export async function streamChatMessages(
       latestChecklist
         ? `\n\n[Active Task Checklist Anchor]:\nThis task is already in progress. The authoritative checklist state is:\n${latestChecklist}\nRule: Do NOT reset or repeat completed steps ([x]). Directly resume and execute the active ([>]) or pending ([ ]) step.`
         : ''
-    const roundSystemPrompt = systemPrompt + editsSuffix + checklistSuffix
+    const injectedSuffix =
+      injectedNotes.length > 0
+        ? `\n\n[Active Mid-Task User Guidance]:\n${injectedNotes.join('\n\n')}\nRule: Follow this user guidance immediately in your next action.`
+        : ''
+    const roundSystemPrompt = systemPrompt + editsSuffix + checklistSuffix + injectedSuffix
     if (apiType !== 'anthropic' && apiMessages.length > 0 && (apiMessages[0] as { role?: string }).role === 'system') {
       ;(apiMessages[0] as { role: string; content: string }).content = roundSystemPrompt
     }
