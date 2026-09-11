@@ -30,4 +30,19 @@ describe('buildToolTrace', () => {
     expect(trace[0].result).toContain('read_tool_output')
     expect(trace[0].result).toContain('call-1')
   })
+
+  it('never omits todo_list checklist results even when withOutput is false', () => {
+    const todoEvent: AgentToolEvent = {
+      callId: 'call-todo',
+      toolName: 'todo_list',
+      summary: 'Update checklist (1/3 done)',
+      argsJson: '{"tasks":[{"id":"1","text":"step 1","status":"completed"}]}',
+      state: 'done',
+      result: 'Task checklist updated (1/3 completed):\n[x] 1. step 1'
+    }
+    const trace = buildToolTrace([todoEvent], true, false)
+    expect(trace[0].result).toContain('Task checklist updated')
+    expect(trace[0].result).toContain('[x] 1. step 1')
+    expect(trace[0].result).not.toContain('输出已省略')
+  })
 })

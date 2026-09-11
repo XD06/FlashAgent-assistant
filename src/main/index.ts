@@ -11,7 +11,7 @@ import type { AgentToolEvent, AiStreamRequest, SettingsPatch } from '@shared/typ
 import { listModels, streamChatMessages, testModel, type ProviderFetch } from './ai/OpenAICompatibleClient'
 import { extractPartialProperty, parseStreamingToolArgs } from './ai/streamingArgsParser'
 import { formatSearchContext, searchWithFallback, webSearchTool } from './ai/WebSearch'
-import { agentToolDefinitionsForShell, assessCommandRisk, executeAgentTool, isReadOnlyTool, parseTodoTasks, requiresApproval, resolveCommandShell, restoreSnapshot, shellSyntaxLabel, snapshotForMutation, summarizeToolCall } from './agent/AgentTools'
+import { agentToolDefinitionsForShell, assessCommandRisk, executeAgentTool, findLatestChecklistState, formatChecklistAnchor, isReadOnlyTool, parseTodoTasks, requiresApproval, resolveCommandShell, restoreSnapshot, shellSyntaxLabel, snapshotForMutation, summarizeToolCall } from './agent/AgentTools'
 import { buildAgentSystemPrompt } from './agent/AgentPrompt'
 import { validateAgentToolArgs } from './agent/validateToolArgs'
 import { deleteSnapshot, loadSnapshot, saveSnapshot } from './agent/SnapshotStore'
@@ -764,6 +764,11 @@ function registerIpc(): void {
         effectiveSystemPrompt += buildSkillsPrompt(skills)
       }
 
+      let latestChecklistState = agentEnabled ? findLatestChecklistState(messages) : null
+      if (agentEnabled && latestChecklistState) {
+        effectiveSystemPrompt += `\n\n[Active Task Checklist Anchor]:\nThis task is already in progress. The authoritative checklist state from earlier progress is:\n${latestChecklistState}\nRule: Do NOT reset or repeat completed steps ([x]). Directly resume and execute the active ([>]) or pending ([ ]) step.`
+      }
+
       const activeEdits = new Map<string, 'edited' | 'created'>()
       const toolCallIdMap = new Map<string, string>()
       const resolveCallId = (round: number, index: number, metaId?: string): string => {
@@ -867,6 +872,12 @@ function registerIpc(): void {
               activeEdits.set(targetPath, action)
             }
           }
+          if (name === 'todo_list') {
+            const parsedTasks = parseTodoTasks(args.tasks)
+            if (parsedTasks.length > 0) {
+              latestChecklistState = formatChecklistAnchor(parsedTasks)
+            }
+          }
           // Mirror the in-turn 12k cap (head + tail) so cross-turn replay via
           // toolRecap can carry the same content the model saw this turn.
           sendTool({ state: 'done', result: capResultForEvent(output) })
@@ -939,6 +950,7 @@ function registerIpc(): void {
           tools: tools.length ? tools : undefined,
           isReadOnlyTool,
           getActiveEdits: () => Array.from(activeEdits.entries()).map(([p, a]) => `${p} (${a})`),
+          getLatestChecklist: () => latestChecklistState,
           // Agent/MCP runs span many rounds and can pause on user approval.
           // Models often issue one call per round, so real tasks (read × N +
           // edit × N + build/test) need generous headroom.
@@ -1057,6 +1069,19 @@ function registerIpc(): void {
     if (!queue) return false
     queue.push(text)
     return true
+  })
+
+  // Cancel a queued user note before it has been drained into the tool loop.
+  ipcMain.handle(IPC.AiCancelInject, (_event, requestId: string, text: string) => {
+    if (typeof requestId !== 'string' || typeof text !== 'string') return false
+    const queue = injectionQueues.get(requestId)
+    if (!queue) return false
+    const idx = queue.lastIndexOf(text)
+    if (idx >= 0) {
+      queue.splice(idx, 1)
+      return true
+    }
+    return false
   })
 
   ipcMain.handle(IPC.AgentPickWorkingDir, async (event) => {

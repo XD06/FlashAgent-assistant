@@ -69,6 +69,8 @@ const api = {
     /** Queue a user note for delivery into a running request's tool loop.
      * Returns false when the request is no longer accepting injections. */
     inject: (requestId: string, text: string): Promise<boolean> => ipcRenderer.invoke(IPC.AiInject, requestId, text),
+    cancelInject: (requestId: string, text: string): Promise<boolean> =>
+      ipcRenderer.invoke(IPC.AiCancelInject, requestId, text),
     listModels: (providerTemplateId?: string): Promise<string[]> => ipcRenderer.invoke(IPC.AiListModels, providerTemplateId),
     testModel: (providerTemplateId?: string): Promise<{ ok: true }> =>
       ipcRenderer.invoke(IPC.AiTestModel, providerTemplateId),

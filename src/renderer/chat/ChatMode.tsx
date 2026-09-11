@@ -877,6 +877,9 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
     const next = queuedRef.current.filter((_, i) => i !== index)
     queuedRef.current = next
     setQueued(next)
+    if (activeRequestId.current) {
+      void window.assistantLite.ai.cancelInject(activeRequestId.current, text)
+    }
     setInput((prev) => (prev.trim() ? `${prev}\n${text}` : text))
     setTimeout(() => inputRef.current?.focus(), 0)
   }, [])

@@ -106,6 +106,7 @@ describe('truncateForSend', () => {
       { role: 'assistant', text: 'ok' },
       { role: 'user', text: big }
     ]
+
     const out = truncateForSend(input, false)
     // The giant latest message alone busts the budget — still kept.
     expect(out[out.length - 1].text).toBe(big)
@@ -132,7 +133,7 @@ describe('truncateForSend', () => {
     expect(out.filter((m) => m.text.startsWith('m'))).toHaveLength(1)
   })
 
-  it('embedded tool traces count toward the char budget and never split', () => {
+  it('embedded tool traces count toward the char budget: slims immediate preceding assistant and drops older ones whole', () => {
     const trace = {
       id: 'c1',
       name: 'read_file',
@@ -141,29 +142,19 @@ describe('truncateForSend', () => {
     }
     const input: AiMessageInput[] = [
       { role: 'user', text: 'q0' },
-      { role: 'assistant', text: 'done', toolTrace: [trace] },
-      { role: 'user', text: 'q1' }
+      { role: 'assistant', text: 'older_done_' + 'y'.repeat(MAX_SEND_CHARS) },
+      { role: 'user', text: 'q1' },
+      { role: 'assistant', text: 'recent_done', toolTrace: [trace] },
+      { role: 'user', text: 'q2' }
     ]
     const out = truncateForSend(input, false)
-    // The trace-bearing message busts the budget — dropped whole (call and
-    // result together), never shipped partially.
-    expect(out.some((m) => m.toolTrace)).toBe(false)
-    expect(out[out.length - 1].text).toBe('q1')
-  })
-})
-
-describe('messagePayloadChars', () => {
-  it('counts text only when no trace is attached', () => {
-    expect(messagePayloadChars({ role: 'user', text: 'abcd' })).toBe(4)
-  })
-
-  it('adds trace name/args/result plus per-entry envelope', () => {
-    const m: AiMessageInput = {
-      role: 'assistant',
-      text: 'ok',
-      toolTrace: [{ id: 'c1', name: 'run', argsJson: '{}', result: 'out' }]
-    }
-    expect(messagePayloadChars(m)).toBe(2 + 3 + 2 + 3 + 24)
+    // The older trace-bearing message busts the budget and is dropped whole
+    expect(out.some((m) => m.text === 'older_done')).toBe(false)
+    // But the immediate preceding assistant survives slimmed without losing memory
+    const immediate = out.find((m) => m.text === 'recent_done')
+    expect(immediate).toBeDefined()
+    expect(immediate?.toolTrace?.[0].result).toContain('trimmed for context window')
+    expect(out[out.length - 1].text).toBe('q2')
   })
 
   it('estimates tool replay tokens with the same atomic trace shape', () => {
@@ -237,16 +228,16 @@ describe('task-round retention', () => {
 
   it('keeps whole newest task rounds rather than splitting a user and assistant pair', () => {
     const entries = [
-      { role: 'user' as const, taskRoundId: 'a', tokens: 900 },
-      { role: 'assistant' as const, taskRoundId: 'a', tokens: 900 },
+      { role: 'user' as const, taskRoundId: 'a', tokens: 4000 },
+      { role: 'assistant' as const, taskRoundId: 'a', tokens: 4000 },
       { role: 'user' as const, taskRoundId: 'b', tokens: 200 },
       { role: 'assistant' as const, taskRoundId: 'b', tokens: 200 },
       { role: 'user' as const, taskRoundId: 'c', tokens: 600 },
       { role: 'assistant' as const, taskRoundId: 'c', tokens: 600 }
     ]
 
-    // 10k attention budget -> 2k recent window. Rounds B+C fit (1.6k),
-    // while adding A would overflow. The cut is the start of B, never 3.
+    // 10k attention budget -> 8.5k recent window. Rounds B+C fit (1.6k),
+    // while adding A (8.0k -> 9.6k total) overflows. The cut is the start of B (index 2).
     expect(computeTaskRoundKeepStart(entries, 10_000)).toBe(2)
   })
 

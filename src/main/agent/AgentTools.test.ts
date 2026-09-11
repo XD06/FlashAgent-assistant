@@ -6,6 +6,8 @@ import {
   agentToolDefinitionsForShell,
   assessCommandRisk,
   executeAgentTool,
+  findLatestChecklistState,
+  formatChecklistAnchor,
   isForbiddenCommand,
   isReadOnlyTool,
   isSensitivePath,
@@ -546,6 +548,33 @@ describe('todo_list and checklist parsing', () => {
 
     const summary = summarizeToolCall('todo_list', { tasks })
     expect(summary).toBe('Update checklist (1/3 done)')
+  })
+
+  it('extracts latest checklist state from conversation history', () => {
+    const tasks = [
+      { id: '1', text: 'Step 1', status: 'completed' },
+      { id: '2', text: 'Step 2', status: 'in_progress' }
+    ]
+    const history = [
+      { role: 'user' as const, text: 'start' },
+      {
+        role: 'assistant' as const,
+        text: 'started',
+        toolTrace: [
+          {
+            id: 'c1',
+            name: 'todo_list',
+            argsJson: JSON.stringify({ tasks }),
+            result: 'ok'
+          }
+        ]
+      },
+      { role: 'user' as const, text: 'continue' }
+    ]
+    const anchor = findLatestChecklistState(history)
+    expect(anchor).toContain('1/2 completed, 1 in progress')
+    expect(anchor).toContain('[x] 1. Step 1')
+    expect(anchor).toContain('[>] 2. Step 2')
   })
 })
 

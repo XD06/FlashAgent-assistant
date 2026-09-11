@@ -19,6 +19,7 @@ export const IPC = {
   AiChunk: 'ai:chunk',
   AiAbort: 'ai:abort',
   AiInject: 'ai:inject',
+  AiCancelInject: 'ai:cancel-inject',
   AiListModels: 'ai:list-models',
   AiTestModel: 'ai:test-model',
   AiSummarize: 'ai:summarize',

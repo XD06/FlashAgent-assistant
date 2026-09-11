@@ -92,24 +92,44 @@ export function sendCharCapForWindow(windowTokens?: number): number {
   return Math.max(MAX_SEND_CHARS, Math.ceil(windowTokens * 4))
 }
 
+
 /** Chars a message contributes to the wire payload. An embedded tool trace
  * expands into real tool-call/tool-result messages at the protocol layer,
  * so its args and results count like text (+~24 chars/entry envelope).
  * Keeping the trace inside its message makes truncation atomic — a call can
  * never be dropped separately from its result. */
 export function messagePayloadChars(m: AiMessageInput): number {
-  let total = m.text.length
-  for (const t of m.toolTrace ?? []) total += t.name.length + t.argsJson.length + t.result.length + 24
+  let total = (m.text ?? '').length
+  for (const t of m.toolTrace ?? []) {
+    total += (t.name ?? '').length + (t.argsJson ?? '').length + (t.result ?? '').length + 24
+  }
   return total
 }
 
 /** Approximate the replay payload in tokens without retaining prompt text. */
 export function messagePayloadTokens(m: AiMessageInput): number {
-  let total = estimateTokensFromText(m.text)
+  let total = estimateTokensFromText(m.text ?? '')
   for (const t of m.toolTrace ?? []) {
-    total += estimateTokensFromText(t.name) + estimateTokensFromText(t.argsJson) + estimateTokensFromText(t.result) + 6
+    total += estimateTokensFromText(t.name ?? '') + estimateTokensFromText(t.argsJson ?? '') + estimateTokensFromText(t.result ?? '') + 6
   }
   return total
+}
+
+/** Slim large tool trace outputs in place when a message is near transport limits,
+ * preserving tool call identity, arguments, and todo_list progress intact. */
+export function slimMessageForSend(m: AiMessageInput, targetMaxResultChars = 500): AiMessageInput {
+  if (!m.toolTrace?.length) return m
+  const nextTrace = m.toolTrace.map((t) => {
+    // Keep todo_list progress 100% untouched
+    if (t.name === 'todo_list' || t.result.length <= targetMaxResultChars) return t
+    const head = t.result.slice(0, Math.floor(targetMaxResultChars * 0.7))
+    const tail = t.result.slice(-Math.floor(targetMaxResultChars * 0.25))
+    return {
+      ...t,
+      result: `${head}\n... [earlier tool output trimmed for context window] ...\n${tail}`
+    }
+  })
+  return { ...m, toolTrace: nextTrace }
 }
 
 export function truncateForSend(
@@ -129,10 +149,22 @@ export function truncateForSend(
   const kept: AiMessageInput[] = []
   let total = head ? messagePayloadChars(head) : 0
   for (let i = recent.length - 1; i >= 0; i--) {
-    total += messagePayloadChars(recent[i])
-    // Always keep at least the latest message, however large it is.
-    if (kept.length > 0 && total > maxChars) break
-    kept.unshift(recent[i])
+    let item = recent[i]
+    let chars = messagePayloadChars(item)
+    // If adding this item busts the char budget, try slimming large tool traces first
+    if (kept.length > 0 && total + chars > maxChars && item.toolTrace?.length) {
+      item = slimMessageForSend(item)
+      chars = messagePayloadChars(item)
+    }
+
+    // Always keep at least the latest user turn and its immediate preceding assistant turn
+    const isImmediatePrecedingTurn = i === recent.length - 2 && item.role === 'assistant'
+    if (kept.length > 0 && total + chars > maxChars && !isImmediatePrecedingTurn) {
+      break
+    }
+
+    total += chars
+    kept.unshift(item)
   }
   const omitted = rest.length - kept.length
   if (omitted > 0) {
@@ -149,8 +181,8 @@ export function truncateForSend(
 
 // ---- Recent task-round window: token-budget sized (accuracy over counting) ----
 
-/** Share of the attention budget reserved for verbatim recent turns. */
-export const KEEP_RECENT_TOKEN_RATIO = 0.2
+/** Share of the attention budget reserved for verbatim recent turns (85% to prevent premature omission). */
+export const KEEP_RECENT_TOKEN_RATIO = 0.85
 /** One transcript entry as seen by the task-round retention policy. New
  * conversations carry a stable taskRoundId. Persisted conversations from
  * before that field existed fall back to a user message starting a round. */

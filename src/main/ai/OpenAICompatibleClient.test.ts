@@ -501,13 +501,13 @@ describe('OpenAI-compatible stream parser', () => {
 
   // ---- Tool-loop context control ----
   const toolDef = { name: 'read_file', description: 'read', parameters: { type: 'object', properties: {} } }
-  function toolCallResponse(callId: string): Response {
+  function toolCallResponse(callId: string, args = JSON.stringify({ path: `${callId}.txt` })): Response {
     const encoder = new TextEncoder()
     const body = new ReadableStream({
       start(controller) {
         controller.enqueue(
           encoder.encode(
-            `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"${callId}","function":{"name":"read_file","arguments":"{}"}}]}}]}\n\n`
+            `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"${callId}","function":{"name":"read_file","arguments":${JSON.stringify(args)}}}]}}]}\n\n`
           )
         )
         controller.close()
@@ -618,6 +618,31 @@ describe('OpenAI-compatible stream parser', () => {
     expect(toolMsg?.tool_call_id).toBe('call_bad')
     expect(toolMsg?.content).toContain('Invalid tool call')
     expect(toolMsg?.content).toContain('Re-issue the tool call with valid JSON arguments')
+  })
+
+  it('breaks infinite loops when model repeats identical tool calls consecutively', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+    // Multiple responses with identical tool call arguments
+    for (let i = 0; i < 5; i++) {
+      fetchMock.mockResolvedValueOnce(toolCallResponse(`call_same`, JSON.stringify({ action: 'repeat' })))
+    }
+
+    const deltas: string[] = []
+    const onToolCall = vi.fn(async () => 'repeated output')
+
+    await streamChatMessages(
+      provider,
+      [{ role: 'user', text: 'loop' }],
+      'system',
+      new AbortController().signal,
+      (delta) => { if (delta.content) deltas.push(delta.content) },
+      'off',
+      { tools: [toolDef], onToolCall, maxToolRounds: 10 }
+    )
+
+    // After round 0 and 1, tool ran; round 2 was skipped; round 3 triggered breaker and exited early
+    expect(onToolCall).toHaveBeenCalledTimes(2)
+    expect(deltas.some((d) => d.includes('熔断') || d.includes('Loop breaker') || d.includes('loop breaker'))).toBe(true)
   })
 
   it('emits onToolStreaming events as tool arguments stream in and passes meta to onToolCall', async () => {

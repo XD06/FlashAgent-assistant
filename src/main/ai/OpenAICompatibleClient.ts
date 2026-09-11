@@ -273,9 +273,10 @@ function parseDataUrl(dataUrl: string): { mediaType: string; data: string } | nu
 }
 
 function buildOpenAIContent(message: AiMessageInput): unknown {
-  if (!message.images?.length) return message.text
+  const text = message.text ?? (message as any).content ?? ''
+  if (!message.images?.length) return text
   const parts: unknown[] = []
-  if (message.text) parts.push({ type: 'text', text: message.text })
+  if (text) parts.push({ type: 'text', text })
   for (const image of message.images) {
     parts.push({ type: 'image_url', image_url: { url: image } })
   }
@@ -283,7 +284,8 @@ function buildOpenAIContent(message: AiMessageInput): unknown {
 }
 
 function buildAnthropicContent(message: AiMessageInput): unknown {
-  if (!message.images?.length) return message.text
+  const text = message.text ?? (message as any).content ?? ''
+  if (!message.images?.length) return text
   const parts: unknown[] = []
   for (const image of message.images) {
     const parsed = parseDataUrl(image)
@@ -293,7 +295,7 @@ function buildAnthropicContent(message: AiMessageInput): unknown {
       source: { type: 'base64', media_type: parsed.mediaType, data: parsed.data }
     })
   }
-  if (message.text) parts.push({ type: 'text', text: message.text })
+  if (text) parts.push({ type: 'text', text })
   return parts
 }
 
@@ -334,7 +336,8 @@ export function expandOpenAIHistory(messages: AiMessageInput[]): unknown[] {
       }))
     })
     for (const t of m.toolTrace) out.push({ role: 'tool', tool_call_id: t.id, content: t.result })
-    if (m.text) out.push({ role: 'assistant', content: m.text })
+    const trailingText = m.text ?? (m as any).content ?? ''
+    if (trailingText) out.push({ role: 'assistant', content: trailingText })
   }
   return out
 }
@@ -488,6 +491,8 @@ export interface ToolCallStreamOptions extends ProviderRequestOptions {
   isReadOnlyTool?: (name: string) => boolean
   /** Active edits ledger (paths modified/created in current task) to maintain memory. */
   getActiveEdits?: () => string[]
+  /** Returns the active task checklist state to anchor progress across tool rounds. */
+  getLatestChecklist?: () => string | null
   /** Max tool-calling rounds before giving up. Defaults to 5 (web-search style). */
   maxToolRounds?: number
   /** Wall-clock budget for model streaming across the tool loop. Time spent
@@ -814,6 +819,10 @@ export async function streamChatMessages(
   const executedCommandTools = new Set<string>()
   let verificationNudged = false
 
+  // Loop Breaker: detect consecutive rounds with identical tool calls to prevent ping-pong loops (e.g. repeated todo_list)
+  let consecutiveDuplicateRounds = 0
+  let lastRoundSignatures: string[] = []
+
   // Build initial API messages array — replayed tool traces from earlier
   // turns expand into native tool-call/tool-result messages here.
   let apiMessages: unknown[]
@@ -861,7 +870,12 @@ export async function streamChatMessages(
     const activeEdits = options.getActiveEdits?.() ?? []
     const editsSuffix =
       activeEdits.length > 0 ? `\n\n[Active Edits in this Task]:\n${activeEdits.map((e) => `- ${e}`).join('\n')}` : ''
-    const roundSystemPrompt = systemPrompt + editsSuffix
+    const latestChecklist = options.getLatestChecklist?.()
+    const checklistSuffix =
+      latestChecklist
+        ? `\n\n[Active Task Checklist Anchor]:\nThis task is already in progress. The authoritative checklist state is:\n${latestChecklist}\nRule: Do NOT reset or repeat completed steps ([x]). Directly resume and execute the active ([>]) or pending ([ ]) step.`
+        : ''
+    const roundSystemPrompt = systemPrompt + editsSuffix + checklistSuffix
     if (apiType !== 'anthropic' && apiMessages.length > 0 && (apiMessages[0] as { role?: string }).role === 'system') {
       ;(apiMessages[0] as { role: string; content: string }).content = roundSystemPrompt
     }
@@ -994,6 +1008,35 @@ export async function streamChatMessages(
         : Array.from(toolCallMap.values())
             .filter((tc) => tc.name)
             .map((tc, idx) => ({ ...tc, index: tc.index ?? idx, id: tc.id || `call_${round}_${tc.index ?? idx}` }))
+    if (toolCalls.length > 0) {
+      const currentSignatures = toolCalls.map((tc) => `${tc.name}:${(tc.arguments || '').replace(/\s+/g, '')}`)
+      const isIdenticalToLastRound =
+        lastRoundSignatures.length > 0 &&
+        lastRoundSignatures.length === currentSignatures.length &&
+        lastRoundSignatures.every((sig, idx) => sig === currentSignatures[idx])
+
+      if (isIdenticalToLastRound) {
+        consecutiveDuplicateRounds++
+      } else {
+        consecutiveDuplicateRounds = 0
+      }
+      lastRoundSignatures = currentSignatures
+
+      if (consecutiveDuplicateRounds >= 3) {
+        const isZh = options.roundLimitNotice?.includes('继续') || /[\u4e00-\u9fa5]/.test(roundText)
+        const loopMsg = isZh
+          ? '\n\n⚠️ 检测到模型连续多次重复调用相同参数的工具陷入死循环，已自动熔断终止。请检查当前任务或给予具体指令。'
+          : '\n\n⚠️ Detected repeated identical tool calls. Loop breaker halted the execution to prevent timeout.'
+        options.onStatus?.(isZh ? '⚠️ 触发工具死循环熔断保护' : '⚠️ Tool loop breaker triggered')
+        onDelta({ content: loopMsg })
+        roundLimitHit = false
+        break
+      }
+    } else {
+      consecutiveDuplicateRounds = 0
+      lastRoundSignatures = []
+    }
+
     if (toolCalls.length === 0) {
       // 1. Verification Loop Check:
       // If mutating tools ran in this turn, but no command tool ran, give the model one verification chance.
@@ -1148,7 +1191,15 @@ export async function streamChatMessages(
 
       try {
         onStatus?.(typeof args.query === 'string' ? args.query : tc.name, tc.name)
-        const result = await onToolCall!(tc.name, args, { id: tc.id, index: tc.index, round })
+        let result: string
+        if (consecutiveDuplicateRounds >= 2) {
+          result = `[System notice: Duplicate tool call skipped. This exact ${tc.name} call was already executed in previous rounds with identical arguments. Stop repeating it and immediately proceed with actual file/command actions.]`
+        } else {
+          result = await onToolCall!(tc.name, args, { id: tc.id, index: tc.index, round })
+          if (consecutiveDuplicateRounds === 1) {
+            result += `\n\n[System note: This tool call is identical to the previous round. If this was a checklist update, it is already current. Proceed to execute concrete tools (such as read_file, edit_file, or run_command) for the active step.]`
+          }
+        }
         // Register real mutations (name-based so MCP write tools count too);
         // a user-rejected call returned as text is not a mutation.
         if (

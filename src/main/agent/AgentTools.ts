@@ -4,7 +4,7 @@ import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, relative, resolve } from 'node:path'
 import { isWin } from '../platform'
 import type { ToolDefinition } from '../ai/OpenAICompatibleClient'
-import type { CommandShell, TodoItem } from '@shared/types'
+import type { AiMessageInput, CommandShell, TodoItem } from '@shared/types'
 
 const MAX_READ_LINES = 2000
 // Reading loads the whole file into a string first — cap the size so the
@@ -724,6 +724,43 @@ export function parseTodoTasks(raw: unknown): TodoItem[] {
     .filter((t) => t.text.length > 0)
 }
 
+export function formatChecklistAnchor(tasks: TodoItem[]): string {
+  if (!tasks.length) return ''
+  const completed = tasks.filter((t) => t.status === 'completed').length
+  const inProgress = tasks.filter((t) => t.status === 'in_progress').length
+  const pending = tasks.filter((t) => t.status === 'pending').length
+  const formatted = tasks
+    .map((t) => {
+      const mark = t.status === 'completed' ? '[x]' : t.status === 'in_progress' ? '[>]' : '[ ]'
+      return `${mark} ${t.id}. ${t.text}`
+    })
+    .join('\n')
+  return `(${completed}/${tasks.length} completed, ${inProgress} in progress, ${pending} pending):\n${formatted}`
+}
+
+export function findLatestChecklistState(messages: AiMessageInput[]): string | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]
+    if (m.role === 'assistant' && m.toolTrace?.length) {
+      for (let j = m.toolTrace.length - 1; j >= 0; j--) {
+        const t = m.toolTrace[j]
+        if (t.name === 'todo_list') {
+          try {
+            const parsed = JSON.parse(t.argsJson || '{}')
+            const tasks = parseTodoTasks(parsed.tasks)
+            if (tasks.length > 0) {
+              return formatChecklistAnchor(tasks)
+            }
+          } catch {
+            // ignore
+          }
+        }
+      }
+    }
+  }
+  return null
+}
+
 function todoListTool(args: Record<string, unknown>): string {
   const tasks = parseTodoTasks(args.tasks)
   const completed = tasks.filter((t) => t.status === 'completed').length
@@ -737,7 +774,7 @@ function todoListTool(args: Record<string, unknown>): string {
     })
     .join('\n')
 
-  return `Task checklist updated (${completed}/${tasks.length} completed, ${inProgress} in progress, ${pending} pending):\n${formatted}`
+  return `Task checklist updated (${completed}/${tasks.length} completed, ${inProgress} in progress, ${pending} pending):\n${formatted}\n(Action required: Checklist updated. Now proceed to execute the real tools for your active step; do not call todo_list again until step progress changes.)`
 }
 
 const READ_ONLY_TOOLS = new Set(['read_file', 'list_dir', 'search_files', 'read_tool_output', 'todo_list'])

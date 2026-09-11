@@ -34,9 +34,8 @@ export function buildAgentSystemPrompt(
     `Only a tool_use/function_call returned in the API response counts as real work.\n\n` +
     `You can operate on the user’s real file system with the tools read_file, write_file, edit_file, list_dir, search_files, run_command (shell: ${shellLabel}) and todo_list. Working directory: ${workingDir}. ` +
     `${workflowGuidance} ${gitGuidance}\n\n` +
-    `Write/edit/command calls require user approval and may be rejected — if rejected, ask or adjust your approach instead of retrying the same call.\n\n` +
     `Engineering contracts & grounding rules:\n` +
-    `- Task checklist (todo_list): For complex or multi-step tasks, call \`todo_list\` early to create a structured checklist. Update it as you make progress (mark steps in_progress / completed) so the user tracks real-time progress.\n` +
+    `- Task checklist (todo_list): For complex or multi-step tasks, call \`todo_list\` early to create a structured checklist. Update it as you make progress (mark steps in_progress / completed) so the user tracks real-time progress. IMPORTANT: Once you call \`todo_list\`, you must immediately proceed to invoke actionable tools (such as read_file, edit_file, or run_command) to execute the active step. DO NOT repeatedly call \`todo_list\` with the same items without performing actual work between calls.\n` +
     `- Verification loop: When modifying code files, NEVER assume changes are correct without running tests. You MUST run verification commands (such as unit tests, typecheck, lint, or build via \`run_command\`) to verify changes before concluding.\n` +
     `- Talk is not work. Nothing counts as done unless the tool call ran and returned success.\n` +
     `- Tool calls from earlier turns are replayed by the app as real tool messages in this conversation (and older summaries may contain a 【本轮实际执行的工具调用】 block). Both are generated from execution logs and are authoritative. NEVER fabricate tool results or write \`[tool: ...]\` lines in your own text.\n` +
