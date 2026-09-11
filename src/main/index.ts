@@ -22,6 +22,7 @@ import { buildSkillsPrompt, getSkillsDir, readSkillMeta, scanSkills } from './sk
 import { mcpManager } from './mcp/McpManager'
 import { applyProxy, testProxy } from './proxy'
 import { assessMcpRisk, isMcpToolName } from './mcp/mcpUtil'
+import { loadTopicsFromDisk, saveTopicsToDisk } from './chatTopicsStore'
 import { stripDocJunk, validateRecapDoc } from '@shared/recapDoc'
 import { ScreenshotService } from './ScreenshotService'
 import { cleanupCaptureTemp } from './capture'
@@ -1105,6 +1106,13 @@ function registerIpc(): void {
     } catch {
       return null
     }
+  })
+  ipcMain.handle(IPC.ChatLoadTopics, async () => {
+    return loadTopicsFromDisk()
+  })
+  ipcMain.handle(IPC.ChatSaveTopics, async (_event, topics: unknown[]) => {
+    if (!Array.isArray(topics)) return false
+    return saveTopicsToDisk(topics)
   })
   ipcMain.handle(IPC.AiListModels, (_event, providerTemplateId?: string) =>
     listModels(resolveProvider(getSettings(), providerTemplateId), { fetcher: providerFetch })

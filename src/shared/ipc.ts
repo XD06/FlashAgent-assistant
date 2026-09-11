@@ -29,6 +29,8 @@ export const IPC = {
   AgentRevertTool: 'agent:revert-tool',
 
   ChatExportMarkdown: 'chat:export-markdown',
+  ChatLoadTopics: 'chat:load-topics',
+  ChatSaveTopics: 'chat:save-topics',
 
   TranslateRun: 'translate:run',
   TranslateAbort: 'translate:abort',

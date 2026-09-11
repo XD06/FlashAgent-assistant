@@ -94,7 +94,9 @@ const api = {
   chat: {
     /** Returns the saved file path, or null when cancelled/failed. */
     exportMarkdown: (title: string, markdown: string): Promise<string | null> =>
-      ipcRenderer.invoke(IPC.ChatExportMarkdown, { title, markdown })
+      ipcRenderer.invoke(IPC.ChatExportMarkdown, { title, markdown }),
+    loadTopics: (): Promise<unknown[]> => ipcRenderer.invoke(IPC.ChatLoadTopics),
+    saveTopics: (topics: unknown[]): Promise<boolean> => ipcRenderer.invoke(IPC.ChatSaveTopics, topics)
   },
   translate: {
     /** Kick off all enabled services; results arrive via onChunk per service. */

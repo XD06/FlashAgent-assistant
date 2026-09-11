@@ -4025,9 +4025,7 @@ letter-spacing: 0.01em;
   top: 42px;
   left: 0;
   bottom: 0;
-  /* Rows are just title + meta now (actions live in the right-click menu),
-     so the panel can be a fair bit narrower. */
-  width: 190px;
+  width: 232px;
   z-index: 10;
   display: flex;
   flex-direction: column;
@@ -4041,7 +4039,7 @@ letter-spacing: 0.01em;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 10px;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--divider);
   font-size: 12px;
   font-weight: 620;
@@ -4067,9 +4065,13 @@ letter-spacing: 0.01em;
 }
 
 .chat-history-panel__list {
-flex: 1 1 auto;
-overflow: auto;
-padding: 4px;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .chat-history-panel__empty {
@@ -4079,12 +4081,82 @@ padding: 4px;
   font-size: 12px;
 }
 
+/* Project group & Section header */
+.chat-project-group {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.chat-project-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 6px;
+  font-size: 11.5px;
+  font-weight: 650;
+  color: var(--text-soft);
+  user-select: none;
+}
+
+.chat-project-header__info {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-project-header__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-project-header__add-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted-soft);
+  cursor: pointer;
+  opacity: 0.8;
+  transition: all 0.15s;
+}
+
+.chat-project-header__add-btn:hover {
+  background: var(--hover);
+  color: var(--text);
+  opacity: 1;
+}
+
+.chat-section-header {
+  padding: 6px 6px 2px;
+  font-size: 11px;
+  font-weight: 650;
+  color: var(--muted-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  user-select: none;
+}
+
+/* Chat history item */
 .chat-history-item {
   position: relative;
-  padding: 8px 10px;
-  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 8px;
+  border-radius: 6px;
   cursor: pointer;
   transition: background 0.1s;
+  min-height: 28px;
+  gap: 6px;
 }
 
 .chat-history-item:hover {
@@ -4095,31 +4167,132 @@ padding: 4px;
   background: var(--hover);
 }
 
+.chat-history-item__main {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  flex: 1;
+}
+
+.chat-history-item__running-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: var(--accent, #3b82f6);
+  flex-shrink: 0;
+  animation: pulse-dot 1.5s infinite ease-in-out;
+}
+
+@keyframes pulse-dot {
+  0% {
+    transform: scale(0.9);
+    opacity: 0.6;
+  }
+  50% {
+    transform: scale(1.3);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(0.9);
+    opacity: 0.6;
+  }
+}
+
+.chat-history-item__pin-icon {
+  color: var(--accent, #3b82f6);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+
 .chat-history-item__title {
-  font-size: 12.5px;
-  font-weight: 620;
+  font-size: 12px;
+  font-weight: 500;
   color: var(--text-soft);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  flex: 1;
+}
+
+.chat-history-item--active .chat-history-item__title {
+  color: var(--text);
+  font-weight: 600;
 }
 
 .chat-history-item__title-input {
   width: 100%;
-  padding: 2px 6px;
+  padding: 2px 5px;
   border: 1px solid var(--accent);
-  border-radius: 6px;
+  border-radius: 4px;
   background: var(--bg);
   color: var(--text);
-  font-size: 12.5px;
-  font-weight: 620;
+  font-size: 12px;
+  font-weight: 500;
   outline: none;
 }
 
 .chat-history-item__meta {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.chat-history-item__time {
   font-size: 11px;
   color: var(--muted-soft);
-  margin-top: 2px;
+  white-space: nowrap;
+}
+
+.chat-history-item__del-btn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted-soft);
+  cursor: pointer;
+}
+
+.chat-history-item__del-btn:hover {
+  color: var(--danger, #ef4444);
+  background: color-mix(in srgb, var(--danger, #ef4444) 10%, transparent);
+}
+
+.chat-history-item:hover .chat-history-item__del-btn {
+  display: flex;
+}
+
+.chat-history-item:hover .chat-history-item__time {
+  display: none;
+}
+
+/* Show more / less button */
+.chat-show-more-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  font-size: 11px;
+  color: var(--muted);
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  align-self: flex-start;
+  margin-left: 12px;
+  margin-top: 1px;
+  transition: all 0.12s;
+}
+
+.chat-show-more-btn:hover {
+  color: var(--text);
+  background: var(--hover);
 }
 
 /* Right-click context menu for a history item (rename / export / delete). */
