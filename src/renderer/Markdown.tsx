@@ -1,6 +1,7 @@
 import React from 'react'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
+import hljs from 'highlight.js'
 
 function escapeHtml(text: string): string {
   return text
@@ -9,6 +10,77 @@ function escapeHtml(text: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;')
+}
+
+export function highlightCode(code: string, lang?: string): string {
+  const clean = (lang || '').match(/^\S*/)?.[0]?.toLowerCase() || ''
+  if (clean && hljs.getLanguage(clean)) {
+    try {
+      return hljs.highlight(code, { language: clean, ignoreIllegals: true }).value
+    } catch {
+      // ignore
+    }
+  }
+  return escapeHtml(code)
+}
+
+export function buildHtmlPreviewDoc(code: string): string {
+  const trimmed = code.trim()
+  if (trimmed.toLowerCase().startsWith('<!doctype') || trimmed.toLowerCase().startsWith('<html')) {
+    return trimmed
+  }
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      padding: 16px;
+      margin: 0;
+      color: #333;
+      background: #fff;
+    }
+    @media (prefers-color-scheme: dark) {
+      body {
+        color: #e0e0e0;
+        background: #1e1e1e;
+      }
+    }
+  </style>
+</head>
+<body>
+${trimmed}
+</body>
+</html>`
+}
+
+export function buildSvgPreviewDoc(code: string): string {
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      margin: 0;
+      padding: 16px;
+      background: repeating-conic-gradient(#80808022 0% 25%, transparent 0% 50%) 50% / 20px 20px;
+    }
+    svg {
+      max-width: 100%;
+      height: auto;
+    }
+  </style>
+</head>
+<body>
+${code.trim()}
+</body>
+</html>`
 }
 
 const COPY_ICON_SVG =
@@ -26,12 +98,48 @@ marked.use({
   renderer: {
     code({ text, lang }: { text: string; lang?: string }) {
       const cleanLang = (lang || '').match(/^\S*/)?.[0] || ''
-      const escaped = escapeHtml(text)
-      if (cleanLang.toLowerCase() === 'mermaid') {
-        return `<pre><code class="language-mermaid">${escaped}</code></pre>\n`
+      const lowerLang = cleanLang.toLowerCase()
+      if (lowerLang === 'mermaid') {
+        return `<pre><code class="language-mermaid">${escapeHtml(text)}</code></pre>\n`
       }
+
+      const highlighted = highlightCode(text, cleanLang)
+      const isPreviewable = lowerLang === 'html' || lowerLang === 'htm' || lowerLang === 'svg'
       const langClass = cleanLang ? ` class="language-${escapeHtml(cleanLang)}"` : ''
-      return `<div class="code-block"><button type="button" class="code-copy" aria-label="Copy code" title="Copy">${COPY_ICON_SVG}</button><pre><code${langClass}>${escaped}</code></pre></div>\n`
+
+      if (!isPreviewable) {
+        return `<div class="code-block"><button type="button" class="code-copy" data-action="copy-code" aria-label="Copy code" title="Copy">${COPY_ICON_SVG}</button><pre><code${langClass}>${highlighted}</code></pre></div>\n`
+      }
+
+      const srcdoc = lowerLang === 'svg' ? buildSvgPreviewDoc(text) : buildHtmlPreviewDoc(text)
+      const escapedSrcdoc = escapeHtml(srcdoc)
+
+      return `<div class="code-block code-block--previewable">
+  <div class="code-block__header">
+    <div class="code-block__tabs">
+      <button type="button" class="code-tab active" data-action="tab-code" aria-label="Code">
+        <span class="code-block__lang">${escapeHtml(cleanLang)}</span>
+      </button>
+      <button type="button" class="code-tab" data-action="tab-preview" aria-label="Preview">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
+        <span>预览</span>
+      </button>
+    </div>
+    <button type="button" class="code-copy" data-action="copy-code" aria-label="Copy code" title="Copy">${COPY_ICON_SVG}</button>
+  </div>
+  <div class="code-panel-code">
+    <pre><code${langClass}>${highlighted}</code></pre>
+  </div>
+  <div class="code-panel-preview">
+    <div class="preview-toolbar">
+      <span class="preview-title">实时预览 (Sandbox)</span>
+      <button type="button" class="preview-reload" data-action="reload-preview" title="刷新预览" aria-label="刷新预览">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+      </button>
+    </div>
+    <iframe class="html-preview-frame" sandbox="allow-scripts" data-srcdoc="${escapedSrcdoc}" loading="lazy"></iframe>
+  </div>
+</div>\n`
     }
   }
 })
@@ -195,7 +303,7 @@ export const MarkdownView = React.memo(function MarkdownView({
   const html = React.useMemo(() => {
     const raw = marked.parse(children, { async: false }) as string
     return DOMPurify.sanitize(raw, {
-      ADD_TAGS: ['button', 'svg', 'path', 'rect'],
+      ADD_TAGS: ['button', 'svg', 'path', 'rect', 'circle', 'polygon', 'iframe', 'span'],
       ADD_ATTR: [
         'target',
         'rel',
@@ -210,7 +318,20 @@ export const MarkdownView = React.memo(function MarkdownView({
         'stroke',
         'stroke-width',
         'stroke-linecap',
-        'stroke-linejoin'
+        'stroke-linejoin',
+        'cx',
+        'cy',
+        'r',
+        'points',
+        'd',
+        'x',
+        'y',
+        'rx',
+        'sandbox',
+        'srcdoc',
+        'data-srcdoc',
+        'data-action',
+        'loading'
       ]
     })
   }, [children])
@@ -226,10 +347,55 @@ export const MarkdownView = React.memo(function MarkdownView({
     })
 
     // Delegated click handling on the container:
-    // Captures copy button clicks and external link opens with zero per-node listeners.
+    // Captures preview tabs, reloads, copy button clicks, and external link opens with zero per-node listeners.
     const onContainerClick = (e: MouseEvent) => {
-      // 1. Code copy button
-      const copyBtn = (e.target as HTMLElement).closest<HTMLButtonElement>('.code-copy')
+      const target = e.target as HTMLElement
+
+      // 1. Code / Preview Tab toggle
+      const tabBtn = target.closest<HTMLButtonElement>('[data-action="tab-code"], [data-action="tab-preview"]')
+      if (tabBtn && container.contains(tabBtn)) {
+        e.preventDefault()
+        e.stopPropagation()
+        const codeBlock = tabBtn.closest('.code-block')
+        if (!codeBlock) return
+        const isPreview = tabBtn.dataset.action === 'tab-preview'
+        const codeTab = codeBlock.querySelector<HTMLButtonElement>('[data-action="tab-code"]')
+        const previewTab = codeBlock.querySelector<HTMLButtonElement>('[data-action="tab-preview"]')
+        const iframe = codeBlock.querySelector<HTMLIFrameElement>('.html-preview-frame')
+
+        if (isPreview) {
+          codeBlock.classList.add('is-previewing')
+          codeTab?.classList.remove('active')
+          previewTab?.classList.add('active')
+          if (iframe && iframe.dataset.srcdoc && (!iframe.srcdoc || iframe.srcdoc === 'about:blank')) {
+            iframe.srcdoc = iframe.dataset.srcdoc
+          }
+        } else {
+          codeBlock.classList.remove('is-previewing')
+          previewTab?.classList.remove('active')
+          codeTab?.classList.add('active')
+        }
+        return
+      }
+
+      // 2. Reload preview
+      const reloadBtn = target.closest<HTMLButtonElement>('[data-action="reload-preview"]')
+      if (reloadBtn && container.contains(reloadBtn)) {
+        e.preventDefault()
+        e.stopPropagation()
+        const codeBlock = reloadBtn.closest('.code-block')
+        const iframe = codeBlock?.querySelector<HTMLIFrameElement>('.html-preview-frame')
+        if (iframe && iframe.dataset.srcdoc) {
+          iframe.srcdoc = ''
+          setTimeout(() => {
+            if (iframe && iframe.dataset.srcdoc) iframe.srcdoc = iframe.dataset.srcdoc
+          }, 50)
+        }
+        return
+      }
+
+      // 3. Code copy button
+      const copyBtn = target.closest<HTMLButtonElement>('.code-copy')
       if (copyBtn && container.contains(copyBtn)) {
         e.preventDefault()
         e.stopPropagation()
@@ -237,8 +403,8 @@ export const MarkdownView = React.memo(function MarkdownView({
         return
       }
 
-      // 2. External links
-      const anchor = (e.target as HTMLElement).closest<HTMLAnchorElement>('a')
+      // 4. External links
+      const anchor = target.closest<HTMLAnchorElement>('a')
       if (anchor && container.contains(anchor)) {
         const href = anchor.getAttribute('href')
         if (href && /^https?:\/\//i.test(href)) {

@@ -1523,6 +1523,237 @@ html[data-theme='dark'] .titlebar button:hover {
   color: #10a37f;
 }
 
+/* ---- Syntax Highlighting (highlight.js) ---- */
+.markdown-body pre code.hljs {
+  display: block;
+  overflow-x: auto;
+  padding: 0;
+}
+
+.markdown-body .hljs-keyword,
+.markdown-body .hljs-selector-tag,
+.markdown-body .hljs-subst {
+  color: #cf222e;
+  font-weight: 600;
+}
+
+.markdown-body .hljs-string,
+.markdown-body .hljs-title,
+.markdown-body .hljs-section,
+.markdown-body .hljs-attribute,
+.markdown-body .hljs-literal,
+.markdown-body .hljs-template-tag,
+.markdown-body .hljs-template-variable,
+.markdown-body .hljs-type,
+.markdown-body .hljs-addition {
+  color: #0a3069;
+}
+
+.markdown-body .hljs-comment,
+.markdown-body .hljs-quote,
+.markdown-body .hljs-deletion {
+  color: #6e7781;
+  font-style: italic;
+}
+
+.markdown-body .hljs-number,
+.markdown-body .hljs-symbol,
+.markdown-body .hljs-bullet {
+  color: #0550ae;
+}
+
+.markdown-body .hljs-attr,
+.markdown-body .hljs-variable {
+  color: #953800;
+}
+
+.markdown-body .hljs-function,
+.markdown-body .hljs-title.function_ {
+  color: #8250df;
+}
+
+.markdown-body .hljs-built_in,
+.markdown-body .hljs-builtin-name {
+  color: #116329;
+}
+
+/* Dark mode syntax highlighting */
+html[data-theme='dark'] .markdown-body .hljs-keyword,
+html[data-theme='dark'] .markdown-body .hljs-selector-tag,
+html[data-theme='dark'] .markdown-body .hljs-subst {
+  color: #ff7b72;
+}
+
+html[data-theme='dark'] .markdown-body .hljs-string,
+html[data-theme='dark'] .markdown-body .hljs-title,
+html[data-theme='dark'] .markdown-body .hljs-section,
+html[data-theme='dark'] .markdown-body .hljs-attribute,
+html[data-theme='dark'] .markdown-body .hljs-literal,
+html[data-theme='dark'] .markdown-body .hljs-template-tag,
+html[data-theme='dark'] .markdown-body .hljs-template-variable,
+html[data-theme='dark'] .markdown-body .hljs-type,
+html[data-theme='dark'] .markdown-body .hljs-addition {
+  color: #a5d6ff;
+}
+
+html[data-theme='dark'] .markdown-body .hljs-comment,
+html[data-theme='dark'] .markdown-body .hljs-quote,
+html[data-theme='dark'] .markdown-body .hljs-deletion {
+  color: #8b949e;
+}
+
+html[data-theme='dark'] .markdown-body .hljs-number,
+html[data-theme='dark'] .markdown-body .hljs-symbol,
+html[data-theme='dark'] .markdown-body .hljs-bullet {
+  color: #79c0ff;
+}
+
+html[data-theme='dark'] .markdown-body .hljs-attr,
+html[data-theme='dark'] .markdown-body .hljs-variable {
+  color: #ffa657;
+}
+
+html[data-theme='dark'] .markdown-body .hljs-function,
+html[data-theme='dark'] .markdown-body .hljs-title.function_ {
+  color: #d2a8ff;
+}
+
+html[data-theme='dark'] .markdown-body .hljs-built_in,
+html[data-theme='dark'] .markdown-body .hljs-builtin-name {
+  color: #7ee787;
+}
+
+/* ---- HTML / SVG Code Block Live Preview ---- */
+.markdown-body .code-block--previewable {
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--divider);
+  background: var(--hover);
+  margin: 8px 0;
+}
+
+.markdown-body .code-block--previewable .code-block__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px;
+  background: color-mix(in srgb, var(--control-bg) 92%, transparent);
+  border-bottom: 1px solid var(--divider);
+}
+
+.markdown-body .code-block__tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.markdown-body .code-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted);
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: all 0.12s ease;
+  user-select: none;
+}
+
+.markdown-body .code-tab:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+
+.markdown-body .code-tab.active {
+  color: var(--text);
+  background: var(--panel-solid);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+.markdown-body .code-block--previewable pre {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.markdown-body .code-block--previewable .code-copy {
+  position: static;
+  opacity: 0.85;
+}
+
+.markdown-body .code-block--previewable .code-copy:hover {
+  opacity: 1;
+}
+
+.markdown-body .code-panel-preview {
+  display: none;
+  background: var(--panel-solid);
+}
+
+.markdown-body .code-block.is-previewing .code-panel-code {
+  display: none;
+}
+
+.markdown-body .code-block.is-previewing .code-panel-preview {
+  display: block;
+}
+
+.markdown-body .preview-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 10px;
+  font-size: 11px;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--control-bg) 80%, transparent);
+  border-bottom: 1px solid var(--divider);
+}
+
+.markdown-body .preview-title {
+  font-weight: 500;
+  font-size: 11px;
+  opacity: 0.85;
+}
+
+.markdown-body .preview-reload {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--divider);
+  border-radius: 4px;
+  background: var(--panel-solid);
+  color: var(--muted);
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.markdown-body .preview-reload:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+
+.markdown-body .html-preview-frame {
+  display: block;
+  width: 100%;
+  height: 300px;
+  min-height: 180px;
+  max-height: 600px;
+  border: none;
+  background: #ffffff;
+  resize: vertical;
+}
+
+html[data-theme='dark'] .markdown-body .html-preview-frame {
+  background: #1e1e1e;
+}
+
 .markdown-body blockquote {
   border-left: 3px solid var(--divider);
   margin-left: 0;
