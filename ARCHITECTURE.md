@@ -79,7 +79,8 @@ graph TD
 - **AI 服务商**：OpenAI-compatible（`/chat/completions` 流式）与 Anthropic；请求层统一采用 Node 原生 / undici 栈（挂接全局 dispatcher，配置 64 连接池、15s 连接超时与 30s Headers Timeout），零 Chromium 跨进程 IPC 缓冲，支持 `[DONE]` 毫秒级流终止与指数退避重试；渲染器仍通过 Chromium 代理。
 - **渲染视图与实时预览**：代码块采用 highlight.js 高亮与自适应高度折叠，HTML/SVG 支持无缝切入独立沙箱 iframe 实时预览与全屏覆盖，采用虚拟隐藏与 DOM 缓存杜绝 RenderFrame 重建卡顿。
 - **翻译/词典/TTS 上游**：均为 Web API，各自需要签名或固定请求头；Edge TTS 补充请求头防盗链绕过，小米 MiMo TTS 走 OpenAI 兼容聊天补全端点合成音频；有道 dictvoice 音频有防盗链，经主进程代理换 data URL。
-- **MCP**：`@modelcontextprotocol/sdk` 懒加载（首次连接才 import），远程 MCP 走 undici 代理。
+- **MCP**：`@modelcontextprotocol/sdk` 懒加载（首次连接才 import），自动向 stdio 子进程与远程 MCP 注入系统/应用网络代理、清洗嵌套 `cmd /c` 与补充 `-y` 参数、实时捕获 stderr 管道排查日志，并支持行内配置可视化修改与热重载。
+
 - **OS 集成**：`selection-hook`（划词，Windows/macOS 双实现）、`csc.exe` 编译的 helper、`Windows.Media.Ocr`、系统托盘与全局快捷键。
 
 ## 6. 技术债务与已知取舍

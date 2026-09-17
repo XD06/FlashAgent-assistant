@@ -103,6 +103,40 @@ export function tokenizeCommand(command: string): string[] {
   return tokens
 }
 
+/** Sanitize command tokens for MCP stdio execution.
+ * - Strips redundant wrapping `cmd /c` or `cmd.exe /c` (avoids nested cmd.exe).
+ * - Ensures non-interactive flags (e.g. `-y` for `npx`, `bunx`, `uvx`) so stdio doesn't hang waiting for stdin confirmation.
+ * - On Windows, wraps with `cmd.exe /c` so `.cmd` shims (npx, uvx, etc.) execute properly.
+ */
+export function sanitizeMcpCommandTokens(rawTokens: string[]): { command: string; args: string[] } {
+  const tokens = [...rawTokens]
+  if (!tokens.length) throw new Error('Command is empty')
+
+  // Strip leading cmd / cmd.exe /c /k wrapper if already present to prevent cmd.exe /c cmd /c nesting
+  while (tokens.length >= 2 && /^cmd(?:\.exe)?$/i.test(tokens[0]) && /^\/[ck]$/i.test(tokens[1])) {
+    tokens.splice(0, 2)
+  }
+  if (!tokens.length) throw new Error('Command is empty')
+
+  // If the command is npx/bunx/uvx, ensure -y or --yes is present so it never blocks on stdin
+  const baseBin = tokens[0].toLowerCase().replace(/\.(?:cmd|exe|bat)$/i, '')
+  if ((baseBin === 'npx' || baseBin === 'bunx' || baseBin === 'uvx') && !tokens.some((t) => t === '-y' || t === '--yes')) {
+    tokens.splice(1, 0, '-y')
+  }
+
+  if (process.platform === 'win32') {
+    return {
+      command: process.env.COMSPEC || 'cmd.exe',
+      args: ['/c', ...tokens]
+    }
+  }
+  return {
+    command: tokens[0],
+    args: tokens.slice(1)
+  }
+}
+
+
 /** Parse a "KEY=VALUE per line" block into an env record. */
 export function parseEnvBlock(env?: string): Record<string, string> {
   const result: Record<string, string> = {}

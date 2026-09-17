@@ -20,8 +20,9 @@ import { cancelApprovalsForRequest, resolveApproval, waitForApproval } from './a
 import { buildMemoryPrompt, ensureGlobalMemoryFile, getGlobalMemoryPath } from './memory'
 import { buildSkillsPrompt, getSkillsDir, readSkillMeta, scanSkills } from './skills'
 import { mcpManager } from './mcp/McpManager'
-import { applyProxy, testProxy } from './proxy'
+import { applyProxy, getEffectiveProxyUrl, testProxy } from './proxy'
 import { assessMcpRisk, isMcpToolName } from './mcp/mcpUtil'
+
 import { loadTopicsFromDisk, saveTopicsToDisk } from './chatTopicsStore'
 import { autoRepairRecapDoc, stripDocJunk, validateRecapDoc } from '@shared/recapDoc'
 import { ScreenshotService } from './ScreenshotService'
@@ -1326,10 +1327,12 @@ if (!app.requestSingleInstanceLock()) {
     app.setAppUserModelId('com.xd06.flashagentassistant')
     app.dock?.setIcon(appIcon)
     // Apply the proxy chain first so MCP connections go through it too.
+    mcpManager.setProxyResolver(() => getEffectiveProxyUrl(getSettings().proxyUrl))
     void applyProxy(getSettings().proxyUrl).finally(() => {
       // Bring up enabled MCP server connections in the background.
       mcpManager.sync(getSettings().mcpServers)
     })
+
     app.on('browser-window-created', (_event, window) => {
   // optimizer.watchWindowShortcuts equivalent: F12 toggle devtools in dev
   if (!app.isPackaged) {

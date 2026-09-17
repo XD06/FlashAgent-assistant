@@ -918,6 +918,67 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
   // off-center on wide windows (max-width in CSS still caps narrow ones).
   const modelMeasureRef = React.useRef<HTMLSpanElement | null>(null)
   const [modelSelectWidth, setModelSelectWidth] = React.useState(0)
+
+  // Timing and performance metrics for the active/latest round
+  const [turnMetrics, setTurnMetrics] = React.useState<{
+    running: boolean
+    startTime: number | null
+    firstTokenTime: number | null
+    endTime: number | null
+    liveSeconds: number
+    completionTokens: number
+    speedTokPerSec: number | null
+    firstTokenLatencySec: number | null
+    durationStr: string | null
+  } | null>(null)
+
+  // Ticking timer while running
+  React.useEffect(() => {
+    if (!turnMetrics?.running || !turnMetrics.startTime) return
+    const timer = setInterval(() => {
+      setTurnMetrics((prev) => {
+        if (!prev || !prev.running || !prev.startTime) return prev
+        return { ...prev, liveSeconds: Math.floor((Date.now() - prev.startTime) / 1000) }
+      })
+    }, 500)
+    return () => clearInterval(timer)
+  }, [turnMetrics?.running, turnMetrics?.startTime])
+
+  // Copied message feedback state (stores turn id or index)
+  const [copiedTurnId, setCopiedTurnId] = React.useState<string | number | null>(null)
+  const copyTurnText = React.useCallback((id: string | number, text: string) => {
+    if (!text) return
+    void navigator.clipboard.writeText(text).then(() => {
+      setCopiedTurnId(id)
+      setTimeout(() => {
+        setCopiedTurnId((cur) => (cur === id ? null : cur))
+      }, 1500)
+    })
+  }, [])
+
+  // Active user turn index for baseline navigator
+  const [activeUserTurnIndex, setActiveUserTurnIndex] = React.useState<number | null>(null)
+
+  // Extract all user turns for baseline timeline
+  const userTurns = React.useMemo(() => {
+    const list: { turn: ChatTurn; index: number; displayIdx: number }[] = []
+    let dIdx = 0
+    chat.forEach((turn, index) => {
+      if (turn.role === 'user' && !turn.injected) {
+        list.push({ turn, index, displayIdx: dIdx++ })
+      }
+    })
+    return list
+  }, [chat])
+
+  const scrollToUserTurn = React.useCallback((index: number) => {
+    const el = document.getElementById(`user-turn-${index}`)
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      setActiveUserTurnIndex(index)
+    }
+  }, [])
+
   // Custom dropdown with a search box — /v1/models can return hundreds of
   // entries, which a native <select> can't filter.
   const [modelMenuOpen, setModelMenuOpen] = React.useState(false)
@@ -1555,6 +1616,12 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
 
       if (isCurrentTopic) {
         if (chunk.type === 'delta' || chunk.type === 'reasoning') {
+          setTurnMetrics((prev) => {
+            if (!prev || !prev.running || prev.firstTokenTime !== null || !prev.startTime) return prev
+            const firstTokenTime = Date.now()
+            const firstTokenLatencySec = Number(((firstTokenTime - prev.startTime) / 1000).toFixed(1))
+            return { ...prev, firstTokenTime, firstTokenLatencySec }
+          })
           const kind = chunk.type === 'delta' ? ('text' as const) : ('reasoning' as const)
           const value = (chunk.type === 'delta' ? chunk.text : chunk.reasoning) ?? ''
           if (value) {
@@ -1567,6 +1634,9 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
           return
         }
         if (chunk.type === 'usage') {
+          if (typeof chunk.usage?.completionTokens === 'number') {
+            setTurnMetrics((prev) => (prev ? { ...prev, completionTokens: chunk.usage!.completionTokens } : prev))
+          }
           if (typeof chunk.usage?.promptTokens === 'number') {
             contextUsageRef.current = chunk.usage.promptTokens
             usageTurnsRef.current = chatRef.current.length
@@ -1734,6 +1804,31 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
       }
 
       if (chunk.type === 'done' || chunk.type === 'error') {
+        if (isCurrentTopic) {
+          setTurnMetrics((prev) => {
+            if (!prev || !prev.startTime) return prev
+            const endTime = Date.now()
+            const totalSec = Math.max(0.1, (endTime - prev.startTime) / 1000)
+            const genSec = prev.firstTokenTime ? Math.max(0.1, (endTime - prev.firstTokenTime) / 1000) : totalSec
+            const lastTurn = chatRef.current[chatRef.current.length - 1]
+            const estTokens = lastTurn ? estimateTokensFromText(lastTurn.text || '') : 0
+            const tokens = prev.completionTokens > 0 ? prev.completionTokens : estTokens
+            const speedTokPerSec = Math.round(tokens / genSec)
+            const durationStr = totalSec < 10
+              ? `${totalSec.toFixed(1)}s`
+              : totalSec < 60
+                ? `${Math.round(totalSec)}s`
+                : `${Math.floor(totalSec / 60)}m ${Math.round(totalSec % 60)}s`
+            return {
+              ...prev,
+              running: false,
+              endTime,
+              completionTokens: tokens,
+              speedTokPerSec,
+              durationStr
+            }
+          })
+        }
         if (targetTopicId) {
           requestToTopicId.current.delete(reqId)
           topicToRequestId.current.delete(targetTopicId)
@@ -1810,13 +1905,45 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
   React.useEffect(() => {
     const el = contentRef.current
     if (!el) return
+
+    const updateActiveTurn = () => {
+      if (!userTurns.length) {
+        setActiveUserTurnIndex(null)
+        return
+      }
+      const distance = el.scrollHeight - el.scrollTop - el.clientHeight
+      if (distance < 48) {
+        setActiveUserTurnIndex(userTurns[userTurns.length - 1].index)
+        return
+      }
+      const elRect = el.getBoundingClientRect()
+      const thresholdY = elRect.top + el.clientHeight * 0.4
+      let activeIdx = userTurns[0].index
+      for (let i = 0; i < userTurns.length; i++) {
+        const ut = userTurns[i]
+        const turnEl = document.getElementById(`user-turn-${ut.index}`)
+        if (turnEl) {
+          const rect = turnEl.getBoundingClientRect()
+          if (rect.top <= thresholdY) {
+            activeIdx = ut.index
+          } else {
+            break
+          }
+        }
+      }
+      setActiveUserTurnIndex(activeIdx)
+    }
+
     const onScroll = () => {
       const distance = el.scrollHeight - el.scrollTop - el.clientHeight
       stickToBottomRef.current = distance < 64
+      updateActiveTurn()
     }
+
     el.addEventListener('scroll', onScroll, { passive: true })
+    updateActiveTurn()
     return () => el.removeEventListener('scroll', onScroll)
-  }, [])
+  }, [userTurns])
 
   React.useEffect(() => {
     if (!stickToBottomRef.current) return
@@ -1862,6 +1989,18 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
       { id: crypto.randomUUID(), taskRoundId, role: 'user', text, ...(images.length ? { images } : {}), ...(files.length ? { files } : {}) },
       { id: crypto.randomUUID(), taskRoundId, role: 'assistant', text: '', pending: true }
     ])
+    const startTimingNow = Date.now()
+    setTurnMetrics({
+      running: true,
+      startTime: startTimingNow,
+      firstTokenTime: null,
+      endTime: null,
+      liveSeconds: 0,
+      completionTokens: 0,
+      speedTokPerSec: null,
+      firstTokenLatencySec: null,
+      durationStr: null
+    })
     const gate = { cancelled: false }
     preSendRef.current = gate
     void (async () => {
@@ -2059,6 +2198,17 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
       }
       activeRequestId.current = null
     }
+    setTurnMetrics((prev) => {
+      if (!prev || !prev.running || !prev.startTime) return prev
+      const endTime = Date.now()
+      const totalSec = Math.max(0.1, (endTime - prev.startTime) / 1000)
+      const durationStr = totalSec < 10
+        ? `${totalSec.toFixed(1)}s`
+        : totalSec < 60
+          ? `${Math.round(totalSec)}s`
+          : `${Math.floor(totalSec / 60)}m ${Math.round(totalSec % 60)}s`
+      return { ...prev, running: false, endTime, durationStr }
+    })
     // The user chose to interrupt — hand queued notes back to the input box
     // instead of auto-firing a new request.
     const pending = queuedRef.current
@@ -2165,6 +2315,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
     setActiveTopicId(null)
     setChat([])
     setTodoList(null)
+    setTurnMetrics(null)
     setInput('')
     setShowHistory(false)
     if (initialSession) {
@@ -2239,6 +2390,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
     setQueued([])
     setEditingUser(null)
     setChat(turnsToLoad)
+    setTurnMetrics(null)
     if (topic.model) setSelectedModel(topic.model)
     // Restore the session context saved with the topic. MCP connection state is
     // global: connected servers are always available to Agent, so changing
@@ -2618,9 +2770,26 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
                   )
                 })}
 
-                {generalTasks.length > 0 && (
+                {(generalTasks.length > 0 || projects.length > 0) && (
                   <div className="chat-project-group">
-                    <div className="chat-section-header">{isZh ? '任务' : 'Tasks'}</div>
+                    <div className="chat-section-header">
+                      <span>{isZh ? '任务' : 'Tasks'}</span>
+                      <button
+                        type="button"
+                        className="chat-project-header__add-btn"
+                        title={isZh ? '新建普通对话（无工作区）' : 'New chat (no workspace)'}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          newChat({
+                            workingDir: null,
+                            agentEnabled: false,
+                            searchEnabled
+                          })
+                        }}
+                      >
+                        <Icon name="plus" size={13} />
+                      </button>
+                    </div>
                     {(expandedTasks ? generalTasks : generalTasks.slice(0, 5)).map((topic) => renderTopicItem(topic))}
                     {generalTasks.length > 5 && (
                       <button
@@ -2723,7 +2892,12 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
             if (turn.role === 'user') {
               const editing = editingUser?.index === index
               return (
-                <React.Fragment key={turn.id ?? index}>
+                <div
+                  key={turn.id ?? index}
+                  id={`user-turn-${index}`}
+                  className="chat-user-msg-wrap"
+                  style={{ position: 'relative' }}
+                >
                   <div
                     className={`screenshot-preview__user-msg${turn.injected ? ' screenshot-preview__user-msg--injected' : ''}${editing ? ' screenshot-preview__user-msg--editing' : ''}`}
                   >
@@ -2787,15 +2961,19 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
                       </>
                     )}
                   </div>
-                  {/* Actions live outside the bubble, on their own row below.
-                      Always rendered for the latest user message — hiding via
-                      CSS keeps the row's height so the list doesn't jump when
-                      a request starts/ends. */}
-                  {index === lastUserIndex && !editing && (
+                  {!editing && (
                     <div className={`user-msg-actions${loading ? ' user-msg-actions--hidden' : ''}`}>
                       <button
                         type="button"
-                        title={isZh ? '编辑并重新发送' : 'Edit & resend'}
+                        title={isZh ? '复制内容' : 'Copy'}
+                        className={copiedTurnId === (turn.id ?? `user-${index}`) ? 'user-msg-action--success' : ''}
+                        onClick={() => copyTurnText(turn.id ?? `user-${index}`, turn.text)}
+                      >
+                        <Icon name={copiedTurnId === (turn.id ?? `user-${index}`) ? 'check' : 'copy'} size={12} />
+                      </button>
+                      <button
+                        type="button"
+                        title={isZh ? '编辑' : 'Edit'}
                         disabled={loading}
                         onClick={() => setEditingUser({ index, text: turn.text })}
                       >
@@ -2805,32 +2983,46 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
                         type="button"
                         title={isZh ? '重新发送' : 'Resend'}
                         disabled={loading}
-                        onClick={() => resendLastUser()}
+                        onClick={() => {
+                          if (index === lastUserIndex) {
+                            resendLastUser()
+                          } else {
+                            resendLastUser(turn.text)
+                          }
+                        }}
                       >
                         <Icon name="undo-2" size={12} />
                       </button>
                     </div>
                   )}
-                </React.Fragment>
+                </div>
               )
             }
             const isLastAssistant = index === chat.length - 1
-            const showMessageActions = isLastAssistant && !turn.pending && !loading
+            const showMessageActions = !turn.pending
             return (
-              <div key={turn.id ?? index} className="result markdown-body">
+              <div key={turn.id ?? index} className="result markdown-body" style={{ position: 'relative' }}>
                 <AssistantTurnBody turn={turn} isZh={isZh} t={t} onRevert={revertTool} />
-                {/* Message actions sit under the last assistant turn so they
-                    read as part of the reply, not a floating middle bar. */}
                 {showMessageActions && (
                   <div className="chat-msg-actions">
-                    <button type="button" onClick={retry} disabled={!lastUserTextRef.current} title={t('retry')}>
-                      <Icon name="undo-2" size={13} />
-                      <span>{t('retry')}</span>
+                    <button
+                      type="button"
+                      onClick={() => copyTurnText(turn.id ?? `asst-${index}`, stripForgedRecap(turn.text))}
+                      title={t('copy')}
+                      className={copiedTurnId === (turn.id ?? `asst-${index}`) ? 'chat-msg-action--success' : ''}
+                    >
+                      <Icon name={copiedTurnId === (turn.id ?? `asst-${index}`) ? 'check' : 'copy'} size={13} />
                     </button>
-                    <button type="button" onClick={copyLast} disabled={!hasResult} title={t('copy')}>
-                      <Icon name="copy" size={13} />
-                      <span>{t('copy')}</span>
-                    </button>
+                    {isLastAssistant && (
+                      <button
+                        type="button"
+                        onClick={retry}
+                        disabled={!lastUserTextRef.current || loading}
+                        title={t('retry')}
+                      >
+                        <Icon name="undo-2" size={13} />
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -2838,6 +3030,35 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
           })
         )}
       </div>
+
+      {/* User Baseline Navigator (右侧用户消息节点跳转) */}
+      {userTurns.length >= 1 && (
+        <div className="chat-baseline-nav">
+          {userTurns.map(({ turn, index, displayIdx }) => (
+            <div
+              key={turn.id ?? `baseline-${index}`}
+              className={`chat-baseline-nav__item${activeUserTurnIndex === index ? ' chat-baseline-nav__item--active' : ''}`}
+              onClick={() => scrollToUserTurn(index)}
+              title={isZh ? `跳转到第 ${displayIdx + 1} 条用户消息` : `Jump to message #${displayIdx + 1}`}
+            >
+              <div className="chat-baseline-nav__tick" />
+              <div className="chat-baseline-nav__tooltip">
+                <div className="chat-baseline-nav__tooltip-header">
+                  <span>#{displayIdx + 1} {isZh ? '用户提问' : 'User message'}</span>
+                </div>
+                <div className="chat-baseline-nav__tooltip-text">
+                  {turn.text.slice(0, 120) ||
+                    (turn.files?.length
+                      ? `[${isZh ? '附件' : 'File'}: ${turn.files[0].name}]`
+                      : (turn.images?.length
+                        ? (isZh ? '[图片输入]' : '[Image]')
+                        : '...'))}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {showExtensions && (
         <ExtensionsPanel
@@ -2958,39 +3179,27 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
             <Icon name="globe" size={16} />
           </button>
           <button
-            className={`chat-input__tool${agentEnabled ? ' chat-input__tool--active' : ''}`}
-            title={isZh
-              ? (agentEnabled ? 'Agent 模式已开启（可读写文件/执行命令）' : 'Agent 模式已关闭')
-              : (agentEnabled ? 'Agent mode on (file & command tools)' : 'Agent mode off')}
+            className={`chat-input__tool${agentEnabled ? ' chat-input__tool--active chat-input__tool--agent-active' : ''}`}
+            title={
+              agentEnabled && workingDir
+                ? isZh
+                  ? `Agent 模式已开启\n项目目录：${workingDir.split(/[\\/]/).filter(Boolean).pop()}\n完整路径：${workingDir}\n左键：关闭 Agent 模式\n右键：更换工作目录`
+                  : `Agent mode active\nProject: ${workingDir.split(/[\\/]/).filter(Boolean).pop()}\nPath: ${workingDir}\nLeft-click: Disable Agent mode\nRight-click: Change directory`
+                : isZh
+                  ? '开启 Agent 模式（选择工作区）'
+                  : 'Enable Agent mode (choose workspace)'
+            }
             onClick={() => void toggleAgent()}
+            onContextMenu={(e) => {
+              e.preventDefault()
+              if (agentEnabled) {
+                void changeWorkingDir()
+              }
+            }}
           >
             <Icon name="terminal" size={16} />
+            {agentEnabled && <span className="chat-input__tool-dot" />}
           </button>
-          {agentEnabled && workingDir && (
-            <div className="chat-input__workdir-pill">
-              <button
-                type="button"
-                className="chat-input__workdir"
-                title={`${workingDir}\n${isZh ? '点击更换工作目录' : 'Click to change working directory'}`}
-                onClick={() => void changeWorkingDir()}
-              >
-                <Icon name="folder" size={12} />
-                <span>{workingDir.split(/[\\/]/).filter(Boolean).pop()}</span>
-              </button>
-              <button
-                type="button"
-                className="chat-input__workdir-clear"
-                title={isZh ? '取消工作区' : 'Remove workspace'}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  setWorkingDir(null)
-                  setAgentEnabled(false)
-                }}
-              >
-                <Icon name="x" size={11} />
-              </button>
-            </div>
-          )}
           <button
             className="chat-input__tool"
             title={isZh ? '新对话' : 'New chat'}
@@ -2999,6 +3208,90 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
           >
             <Icon name="new-topic" size={16} />
           </button>
+        </div>
+          <div className="chat-input__spacer" />
+          {turnMetrics && (turnMetrics.running || turnMetrics.durationStr) && (
+            <div
+              className="chat-stats-pill"
+              title={
+                isZh
+                  ? `本轮生成性能统计\n总计耗时：${turnMetrics.durationStr ?? `${turnMetrics.liveSeconds}s`}${turnMetrics.firstTokenLatencySec ? `\n首字延迟 (TTFT)：${turnMetrics.firstTokenLatencySec}s` : ''}${turnMetrics.speedTokPerSec ? `\n输出速率：${turnMetrics.speedTokPerSec} tok/s` : ''}${turnMetrics.completionTokens ? `\n生成词数：${turnMetrics.completionTokens} tokens` : ''}`
+                  : `Turn metrics\nDuration: ${turnMetrics.durationStr ?? `${turnMetrics.liveSeconds}s`}${turnMetrics.firstTokenLatencySec ? `\nTTFT: ${turnMetrics.firstTokenLatencySec}s` : ''}${turnMetrics.speedTokPerSec ? `\nSpeed: ${turnMetrics.speedTokPerSec} tok/s` : ''}${turnMetrics.completionTokens ? `\nTokens: ${turnMetrics.completionTokens}` : ''}`
+              }
+            >
+              <span className={`chat-stats-pill__dot${turnMetrics.running ? ' chat-stats-pill__dot--pulse' : ''}`} />
+              {turnMetrics.running ? (
+                <span>
+                  {isZh ? '生成中' : 'Generating'}{' '}
+                  {Math.floor(turnMetrics.liveSeconds / 60)}:{String(turnMetrics.liveSeconds % 60).padStart(2, '0')}
+                </span>
+              ) : (
+                <>
+                  <span>{turnMetrics.durationStr}</span>
+                  {turnMetrics.firstTokenLatencySec !== null && (
+                    <>
+                      <span className="chat-stats-pill__sep">·</span>
+                      <span>
+                        ttf <span className="chat-stats-pill__num">{turnMetrics.firstTokenLatencySec}s</span>
+                      </span>
+                    </>
+                  )}
+                  {turnMetrics.speedTokPerSec !== null && turnMetrics.speedTokPerSec > 0 && (
+                    <>
+                      <span className="chat-stats-pill__sep">·</span>
+                      <span className="chat-stats-pill__accent">
+                        {turnMetrics.speedTokPerSec} tok/s
+                      </span>
+                    </>
+                  )}
+                  {turnMetrics.completionTokens > 0 && (
+                    <>
+                      <span className="chat-stats-pill__sep">·</span>
+                      <span>
+                        <span className="chat-stats-pill__num">
+                          {turnMetrics.completionTokens >= 1000
+                            ? `${(turnMetrics.completionTokens / 1000).toFixed(1)}k`
+                            : turnMetrics.completionTokens}
+                        </span>{' '}
+                        tok
+                      </span>
+                    </>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+          <div className="chat-reasoning-wrap" ref={reasoningWrapRef}>
+            <button
+              type="button"
+              className={`chat-reasoning-btn${reasoningMode === 'off' ? ' chat-reasoning-btn--off' : ''}`}
+              title={isZh ? `思考强度：${reasoningLabel}（点击切换）` : `Reasoning: ${reasoningLabel} (click to change)`}
+              aria-label={isZh ? '思考强度' : 'Reasoning intensity'}
+              onClick={() => setShowReasoningMenu((v) => !v)}
+            >
+              <Icon name="brain" size={15} />
+              <span>{reasoningLabel}</span>
+              <Icon name="chevron-down" size={12} />
+            </button>
+            {showReasoningMenu && (
+              <div className="chat-reasoning-menu" role="menu">
+                {REASONING_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    className={`chat-reasoning-item${reasoningMode === opt.value ? ' chat-reasoning-item--active' : ''}`}
+                    onClick={() => {
+                      setShowReasoningMenu(false)
+                      void window.assistantLite.settings.update({ provider: { reasoning: opt.value } })
+                    }}
+                  >
+                    <span>{isZh ? opt.zh : opt.en}</span>
+                    {reasoningMode === opt.value && <Icon name="check" size={12} />}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
           {chat.length > 0 && (() => {
             // Ring fill reflects provider-reported context usage. The actual
             // pre-send decision also has a replay-token estimate when this is
@@ -3056,39 +3349,6 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
               </div>
             )
           })()}
-        </div>
-          <div className="chat-input__spacer" />
-          <div className="chat-reasoning-wrap" ref={reasoningWrapRef}>
-            <button
-              type="button"
-              className={`chat-reasoning-btn${reasoningMode === 'off' ? ' chat-reasoning-btn--off' : ''}`}
-              title={isZh ? `思考强度：${reasoningLabel}（点击切换）` : `Reasoning: ${reasoningLabel} (click to change)`}
-              aria-label={isZh ? '思考强度' : 'Reasoning intensity'}
-              onClick={() => setShowReasoningMenu((v) => !v)}
-            >
-              <Icon name="brain" size={15} />
-              <span>{reasoningLabel}</span>
-              <Icon name="chevron-down" size={12} />
-            </button>
-            {showReasoningMenu && (
-              <div className="chat-reasoning-menu" role="menu">
-                {REASONING_OPTIONS.map((opt) => (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    className={`chat-reasoning-item${reasoningMode === opt.value ? ' chat-reasoning-item--active' : ''}`}
-                    onClick={() => {
-                      setShowReasoningMenu(false)
-                      void window.assistantLite.settings.update({ provider: { reasoning: opt.value } })
-                    }}
-                  >
-                    <span>{isZh ? opt.zh : opt.en}</span>
-                    {reasoningMode === opt.value && <Icon name="check" size={12} />}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
           {loading ? (
             <button
               className="chat-input__btn chat-input__btn--stop"

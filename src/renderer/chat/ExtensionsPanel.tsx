@@ -51,6 +51,7 @@ export function ExtensionsPanel({ settings, isZh, workingDir, onClose }: Extensi
   const [skills, setSkills] = React.useState<SkillInfo[]>([])
   const [mcp, setMcp] = React.useState<McpServerStatus[]>([])
   const [showAdd, setShowAdd] = React.useState(false)
+  const [editingId, setEditingId] = React.useState<string | null>(null)
   const [addMode, setAddMode] = React.useState<'form' | 'json'>('form')
   const [form, setForm] = React.useState({ name: '', transport: 'stdio' as McpTransport, command: '', url: '', env: '' })
   const [jsonText, setJsonText] = React.useState('')
@@ -109,30 +110,70 @@ export function ExtensionsPanel({ settings, isZh, workingDir, onClose }: Extensi
     patchServers(settings.mcpServers.map((s) => (s.id === id ? { ...s, enabled } : s)))
   }
 
+  const startEdit = (serverConfig: McpServerConfig): void => {
+    setEditingId(serverConfig.id)
+    setAddMode('form')
+    setForm({
+      name: serverConfig.name,
+      transport: serverConfig.transport,
+      command: serverConfig.command ?? '',
+      url: serverConfig.url ?? '',
+      env: serverConfig.env ?? ''
+    })
+    setShowAdd(true)
+  }
+
+  const cancelEdit = (): void => {
+    setEditingId(null)
+    setForm({ name: '', transport: 'stdio', command: '', url: '', env: '' })
+    setShowAdd(false)
+  }
+
   const removeServer = (id: string): void => {
+    if (editingId === id) cancelEdit()
     patchServers(settings.mcpServers.filter((s) => s.id !== id))
   }
 
   // New servers start disabled: the pill switch decides when to connect.
-  const addFromForm = (): void => {
+  // When editing, preserve existing enabled status and id.
+  const saveForm = (): void => {
     const name = form.name.trim()
     const target = form.transport === 'stdio' ? form.command.trim() : form.url.trim()
     if (!name || !target) return
-    patchServers([
-      ...settings.mcpServers,
-      {
-        id: crypto.randomUUID(),
-        name,
-        transport: form.transport,
-        command: form.transport === 'stdio' ? form.command.trim() : undefined,
-        env: form.transport === 'stdio' && form.env.trim() ? form.env.trim() : undefined,
-        url: form.transport === 'http' ? form.url.trim() : undefined,
-        enabled: false
-      }
-    ])
+
+    if (editingId) {
+      patchServers(
+        settings.mcpServers.map((s) => {
+          if (s.id !== editingId) return s
+          return {
+            ...s,
+            name,
+            transport: form.transport,
+            command: form.transport === 'stdio' ? form.command.trim() : undefined,
+            env: form.transport === 'stdio' && form.env.trim() ? form.env.trim() : undefined,
+            url: form.transport === 'http' ? form.url.trim() : undefined
+          }
+        })
+      )
+      setEditingId(null)
+    } else {
+      patchServers([
+        ...settings.mcpServers,
+        {
+          id: crypto.randomUUID(),
+          name,
+          transport: form.transport,
+          command: form.transport === 'stdio' ? form.command.trim() : undefined,
+          env: form.transport === 'stdio' && form.env.trim() ? form.env.trim() : undefined,
+          url: form.transport === 'http' ? form.url.trim() : undefined,
+          enabled: false
+        }
+      ])
+    }
     setForm({ name: '', transport: 'stdio', command: '', url: '', env: '' })
     setShowAdd(false)
   }
+
 
   const addFromJson = (): void => {
     let parsed: ParsedMcpServer[]
@@ -364,7 +405,18 @@ export function ExtensionsPanel({ settings, isZh, workingDir, onClose }: Extensi
         <div className="ext-panel__section">
           <div className="ext-panel__title">
             <span>{isZh ? '服务器' : 'Servers'}</span>
-            <button className="ext-panel__link" onClick={() => setShowAdd((v) => !v)}>
+            <button
+              className="ext-panel__link"
+              onClick={() => {
+                if (showAdd) {
+                  cancelEdit()
+                } else {
+                  setEditingId(null)
+                  setForm({ name: '', transport: 'stdio', command: '', url: '', env: '' })
+                  setShowAdd(true)
+                }
+              }}
+            >
               {showAdd ? (isZh ? '收起' : 'Cancel') : (isZh ? '添加服务器' : 'Add server')}
             </button>
           </div>
@@ -374,8 +426,13 @@ export function ExtensionsPanel({ settings, isZh, workingDir, onClose }: Extensi
           {mcp.map((server) => {
             const config = settings.mcpServers.find((s) => s.id === server.id)
             const enabled = config?.enabled === true
+            const isEditing = editingId === server.id
             return (
-              <div key={server.id} className="ext-panel__item" title={server.error ?? server.toolNames.join(', ')}>
+              <div
+                key={server.id}
+                className={`ext-panel__item${isEditing ? ' ext-panel__item--active' : ''}`}
+                title={server.error ?? server.toolNames.join(', ')}
+              >
                 <span className="ext-panel__dot" style={{ background: STATE_COLORS[server.state] }} />
                 <span className="ext-panel__item-name">{server.name}</span>
                 <span className="ext-panel__item-desc">
@@ -396,7 +453,26 @@ export function ExtensionsPanel({ settings, isZh, workingDir, onClose }: Extensi
                     <Icon name="refresh-cw" size={12} />
                   </button>
                 )}
-                <button className="ext-panel__icon-btn ext-panel__icon-btn--danger" title={isZh ? '删除' : 'Remove'} onClick={() => removeServer(server.id)}>
+                {config && (
+                  <button
+                    className={`ext-panel__icon-btn${isEditing ? ' ext-panel__icon-btn--active' : ''}`}
+                    title={isZh ? '编辑' : 'Edit'}
+                    onClick={() => {
+                      if (isEditing) {
+                        cancelEdit()
+                      } else {
+                        startEdit(config)
+                      }
+                    }}
+                  >
+                    <Icon name="pencil" size={12} />
+                  </button>
+                )}
+                <button
+                  className="ext-panel__icon-btn ext-panel__icon-btn--danger"
+                  title={isZh ? '删除' : 'Remove'}
+                  onClick={() => removeServer(server.id)}
+                >
                   <Icon name="trash-2" size={12} />
                 </button>
                 <div className="ext-panel__mcp-controls">
@@ -415,21 +491,27 @@ export function ExtensionsPanel({ settings, isZh, workingDir, onClose }: Extensi
           })}
           {showAdd && (
             <div className="ext-panel__form">
-              <div className="ext-panel__seg">
-                <button
-                  className={addMode === 'form' ? 'ext-panel__seg--active' : ''}
-                  onClick={() => setAddMode('form')}
-                >
-                  {isZh ? '表单' : 'Form'}
-                </button>
-                <button
-                  className={addMode === 'json' ? 'ext-panel__seg--active' : ''}
-                  onClick={() => setAddMode('json')}
-                >
-                  JSON
-                </button>
-              </div>
-              {addMode === 'form' ? (
+              {editingId ? (
+                <div className="ext-panel__form-title">
+                  <span>{isZh ? '编辑 MCP 服务器' : 'Edit MCP server'}</span>
+                </div>
+              ) : (
+                <div className="ext-panel__seg">
+                  <button
+                    className={addMode === 'form' ? 'ext-panel__seg--active' : ''}
+                    onClick={() => setAddMode('form')}
+                  >
+                    {isZh ? '表单' : 'Form'}
+                  </button>
+                  <button
+                    className={addMode === 'json' ? 'ext-panel__seg--active' : ''}
+                    onClick={() => setAddMode('json')}
+                  >
+                    JSON
+                  </button>
+                </div>
+              )}
+              {editingId || addMode === 'form' ? (
                 <>
                   <input
                     placeholder={isZh ? '名称' : 'Name'}
@@ -464,13 +546,22 @@ export function ExtensionsPanel({ settings, isZh, workingDir, onClose }: Extensi
                       onChange={(e) => setForm({ ...form, url: e.target.value })}
                     />
                   )}
-                  <button
-                    className="ext-panel__primary"
-                    disabled={!form.name.trim() || !(form.transport === 'stdio' ? form.command.trim() : form.url.trim())}
-                    onClick={addFromForm}
-                  >
-                    {isZh ? '添加（默认关闭，用开关连接）' : 'Add (off by default)'}
-                  </button>
+                  <div className="ext-panel__form-actions">
+                    <button
+                      className="ext-panel__primary"
+                      disabled={!form.name.trim() || !(form.transport === 'stdio' ? form.command.trim() : form.url.trim())}
+                      onClick={saveForm}
+                    >
+                      {editingId
+                        ? (isZh ? '保存修改' : 'Save changes')
+                        : (isZh ? '添加（默认关闭，用开关连接）' : 'Add (off by default)')}
+                    </button>
+                    {editingId && (
+                      <button className="ext-panel__secondary" onClick={cancelEdit}>
+                        {isZh ? '取消' : 'Cancel'}
+                      </button>
+                    )}
+                  </div>
                 </>
               ) : (
                 <>
@@ -491,6 +582,7 @@ export function ExtensionsPanel({ settings, isZh, workingDir, onClose }: Extensi
               )}
             </div>
           )}
+
         </div>
       )}
     </div>

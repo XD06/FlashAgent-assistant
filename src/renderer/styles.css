@@ -2344,17 +2344,20 @@ html[data-theme='dark'] .footer button:last-child {
   overflow-wrap: anywhere;
   word-break: break-word;
 }
-/* Edit & resend on the latest user message — its own grid row right below
-   the bubble (not inside it), pulled close against the 12px content gap. */
+/* Edit & resend / copy on user messages — hover revealed, icon-only */
 .user-msg-actions {
   justify-self: end;
   display: flex;
   justify-content: flex-end;
-  gap: 2px;
-  margin-top: -8px;
-  opacity: 0.55;
+  align-items: center;
+  gap: 3px;
+  margin-top: 3px;
+  margin-bottom: 2px;
+  opacity: 0;
+  transition: opacity 0.15s ease-in-out;
 }
-.user-msg-actions:hover {
+.chat-user-msg-wrap:hover .user-msg-actions,
+.screenshot-preview__user-msg-container:hover .user-msg-actions {
   opacity: 1;
 }
 /* Streaming: keep the row's box (height) but make it inert & invisible so
@@ -2366,16 +2369,28 @@ html[data-theme='dark'] .footer button:last-child {
 .user-msg-actions button {
   display: inline-flex;
   align-items: center;
-  padding: 3px 5px;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  min-height: 0;
+  max-height: 24px;
+  min-width: 0;
+  max-width: 24px;
+  box-sizing: border-box;
+  padding: 0;
   border: 0;
   border-radius: 6px;
   background: transparent;
   color: var(--muted);
   cursor: pointer;
+  transition: all 0.15s ease;
 }
-.user-msg-actions button:hover {
+.user-msg-actions button:hover:not(:disabled) {
   background: var(--hover);
   color: var(--text-soft);
+}
+.user-msg-actions button.user-msg-action--success {
+  color: #16a34a;
 }
 .screenshot-preview__user-msg--editing {
   width: 85%;
@@ -2613,7 +2628,7 @@ html[data-theme='dark'] .toolbar-button.toolbar-button--primary:hover {
 
 /* ===== Chat window ===== */
 .chat-content {
-  padding: 14px;
+  padding: 14px 28px 14px 14px;
   overflow-x: hidden;
   min-width: 0;
   max-width: 100%;
@@ -3177,65 +3192,28 @@ html[data-theme='dark'] .chat-input--temporary:focus-within {
   border-color: var(--text);
   box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.14), var(--shadow);
 }
-.chat-input__workdir-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  max-width: 140px;
-  min-height: 0;
-  border-radius: 6px;
-  background: color-mix(in srgb, #4C8DF6 10%, transparent);
+.chat-input__tool--agent-active {
+  position: relative;
   color: #4C8DF6;
-  padding: 1px 4px 1px 8px;
-  font-size: 11px;
-  box-sizing: border-box;
+  background: color-mix(in srgb, #4C8DF6 14%, transparent);
+  border: 1px solid color-mix(in srgb, #4C8DF6 32%, transparent);
 }
 
-.chat-input__workdir-pill .chat-input__workdir {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  max-width: 105px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  border: 0;
-  border-radius: 4px;
-  background: transparent;
-  color: inherit;
-  font-size: 11px;
-  cursor: pointer;
-  padding: 2px 0;
-  min-height: 0;
-  line-height: 1.2;
+.chat-input__tool--agent-active:hover:not(:disabled) {
+  color: #4C8DF6;
+  background: color-mix(in srgb, #4C8DF6 22%, transparent);
+  border-color: color-mix(in srgb, #4C8DF6 48%, transparent);
 }
 
-.chat-input__workdir-pill:hover {
-  background: color-mix(in srgb, #4C8DF6 16%, transparent);
-}
-
-.chat-input__workdir-clear {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 15px;
-  height: 15px;
-  min-height: 0;
-  padding: 0;
-  border: 0;
+.chat-input__tool-dot {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 5.5px;
+  height: 5.5px;
   border-radius: 50%;
-  background: transparent;
-  color: #4C8DF6;
-  opacity: 0.7;
-  cursor: pointer;
-  line-height: 1;
-  transition: all 0.12s ease;
-  flex-shrink: 0;
-}
-
-.chat-input__workdir-clear:hover {
-  opacity: 1;
-  background: color-mix(in srgb, #4C8DF6 24%, transparent);
+  background: #22c55e;
+  box-shadow: 0 0 0 1.5px var(--panel);
 }
 
 /* ---- Agent tool groups (Codex-style compact rows) ---- */
@@ -4194,28 +4172,39 @@ letter-spacing: 0.01em;
   50% { opacity: 1; }
 }
 
-/* ===== Chat message actions (retry/copy under last assistant turn) ===== */
+/* ===== Chat message actions (hover revealed under assistant turn, icon-only) ===== */
 .chat-msg-actions {
   display: flex;
   align-items: center;
-  gap: 2px;
-  margin-top: 8px;
+  gap: 4px;
+  margin-top: 6px;
   padding-top: 2px;
+  opacity: 0;
+  transition: opacity 0.15s ease-in-out;
+}
+
+.result:hover .chat-msg-actions {
+  opacity: 1;
 }
 
 .chat-msg-actions button {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 3px 7px;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  min-height: 0;
+  max-height: 26px;
+  min-width: 0;
+  max-width: 26px;
+  box-sizing: border-box;
+  padding: 0;
   border: 0;
   border-radius: 6px;
   background: transparent;
   color: var(--muted);
-  font: inherit;
-  font-size: 12px;
-  line-height: 1.2;
   cursor: pointer;
+  transition: all 0.15s ease;
 }
 
 .chat-msg-actions button:hover:not(:disabled) {
@@ -4223,33 +4212,203 @@ letter-spacing: 0.01em;
   color: var(--text-soft);
 }
 
+.chat-msg-actions button.chat-msg-action--success {
+  color: #16a34a;
+}
+
 .chat-msg-actions button:disabled {
   opacity: 0.3;
   cursor: not-allowed;
 }
 
-/* Context ring sits in the composer tool row (not a middle floating bar). */
-.chat-input__toolbar .chat-context-ring {
+.chat-msg-actions__time {
+  font-size: 11px;
+  color: var(--muted);
+  margin-left: 4px;
+  user-select: none;
+}
+
+/* ===== Chat Baseline Navigator (右侧用户消息节点跳转) ===== */
+.chat-baseline-nav {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 7px;
+  padding: 6px 2px;
+  z-index: 45;
+  pointer-events: auto;
+  user-select: none;
+}
+
+.chat-baseline-nav__item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  height: 14px;
+  cursor: pointer;
+  padding: 2px 0;
+}
+
+.chat-baseline-nav__tick {
+  width: 12px;
+  height: 2.5px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--text) 32%, transparent);
+  opacity: 0.9;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.chat-baseline-nav__item:hover .chat-baseline-nav__tick {
+  width: 18px;
+  background: var(--text);
+  opacity: 1;
+}
+
+.chat-baseline-nav__item--active .chat-baseline-nav__tick {
+  width: 22px;
+  height: 3.5px;
+  background: #635454;
+  opacity: 1;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+
+html[data-theme='dark'] .chat-baseline-nav__item--active .chat-baseline-nav__tick {
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgba(255, 255, 255, 0.25);
+}
+
+.chat-baseline-nav__tooltip {
+  position: absolute;
+  right: 28px;
+  top: 50%;
+  transform: translateY(-50%) scale(0.95);
+  transform-origin: right center;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.16);
+  border-radius: 8px;
+  padding: 8px 12px;
+  width: max-content;
+  max-width: 280px;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.15s ease, transform 0.15s ease, visibility 0.15s;
+  z-index: 100;
+}
+
+.chat-baseline-nav__item:hover .chat-baseline-nav__tooltip {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(-50%) scale(1);
+}
+
+.chat-baseline-nav__tooltip-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-soft);
+}
+
+.chat-baseline-nav__tooltip-text {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  word-break: break-word;
+}
+
+/* ===== Chat performance & timing stats pill (输入框底部数据统计) ===== */
+.chat-stats-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  line-height: 1.2;
+  color: var(--text-soft);
+  background: color-mix(in srgb, var(--border) 25%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 45%, transparent);
+  user-select: none;
+  margin-right: 6px;
+  white-space: nowrap;
+}
+
+.chat-stats-pill__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #22c55e;
+  flex-shrink: 0;
+}
+
+.chat-stats-pill__dot--pulse {
+  animation: stats-pulse 1.4s infinite;
+}
+
+@keyframes stats-pulse {
+  0% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7);
+  }
+  70% {
+    transform: scale(1.15);
+    box-shadow: 0 0 0 5px rgba(34, 197, 94, 0);
+  }
+  100% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(34, 197, 94, 0);
+  }
+}
+
+.chat-stats-pill__sep {
+  color: var(--divider);
+}
+
+.chat-stats-pill__accent {
+  color: #f59e0b;
+  font-weight: 500;
+}
+
+.chat-stats-pill__num {
+  color: var(--text-main);
+  font-weight: 500;
+}
+
+/* Context ring sits next to the send button in the composer bar. */
+.chat-context-ring {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  margin-left: 2px;
+  margin: 0 4px;
   padding: 4px;
   cursor: default;
   opacity: 0.85;
 }
 
-.chat-input__toolbar .chat-context-ring:hover {
+.chat-context-ring:hover {
   opacity: 1;
 }
 
-.chat-input__toolbar .chat-context-ring--clickable {
+.chat-context-ring--clickable {
   cursor: pointer;
   border-radius: 4px;
   transition: opacity 0.15s ease, transform 0.15s ease, background-color 0.15s ease;
 }
 
-.chat-input__toolbar .chat-context-ring--clickable:hover {
+.chat-context-ring--clickable:hover {
   opacity: 1;
   transform: scale(1.12);
   background: var(--hover);
@@ -4409,7 +4568,12 @@ letter-spacing: 0.01em;
 }
 
 .chat-section-header {
-  padding: 6px 6px 2px;
+  box-sizing: border-box;
+  min-height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 6px;
   font-size: 11px;
   font-weight: 650;
   color: var(--muted-soft);
@@ -4660,7 +4824,7 @@ letter-spacing: 0.01em;
 /* ===== Chat compact notice ===== */
 .chat-compact-notice {
   position: fixed;
-  bottom: 64px;
+  bottom: 61px;
   left: 50%;
   transform: translateX(-50%);
   display: flex;
@@ -4785,11 +4949,13 @@ html[data-theme='light'] .chat-toast {
   cursor: pointer;
 }
 .ext-panel__icon-btn:hover { background: color-mix(in srgb, var(--text) 8%, transparent); color: var(--text); }
+.ext-panel__icon-btn--active { color: var(--accent); }
 /* Destructive icon buttons (remove server / unlink skill) turn red on hover. */
 .ext-panel__icon-btn--danger:hover {
   background: color-mix(in srgb, #f85149 14%, transparent);
   color: #f85149;
 }
+
 .ext-panel__section { padding-top: 10px; }
 .ext-panel__title {
   display: flex;
@@ -4834,6 +5000,8 @@ html[data-theme='light'] .chat-toast {
   border-radius: 6px;
 }
 .ext-panel__item:hover { background: color-mix(in srgb, var(--text) 4%, transparent); }
+.ext-panel__item--active { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+
 .ext-panel__item-name { font-weight: 500; white-space: nowrap; }
 .ext-panel__item--model-settings { margin-top: 4px; }
 /* Tiny chain icon marking a linked (reused-in-place) skill folder. */
@@ -4933,7 +5101,32 @@ html[data-theme='light'] .chat-toast {
   resize: vertical;
 }
 .ext-panel__form textarea { font-family: ui-monospace, Consolas, monospace; }
+.ext-panel__form-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  padding: 2px 0;
+}
+.ext-panel__form-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.ext-panel__secondary {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: color-mix(in srgb, var(--text) 70%, transparent);
+  padding: 4px 10px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.ext-panel__secondary:hover {
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  color: var(--text);
+}
 .ext-panel__error { color: #f85149; }
+
 .ext-panel__seg {
   display: inline-flex;
   gap: 2px;

@@ -13,6 +13,7 @@ export interface ProxyTestResult {
  * Returns e.g. "http://127.0.0.1:7890" or null when the system is direct. */
 async function resolveSystemProxy(): Promise<string | null> {
   try {
+    if (!session?.defaultSession?.resolveProxy) return null
     const resolved = await session.defaultSession.resolveProxy('https://example.com/')
     const match = /PROXY\s+([^;\s]+)/i.exec(resolved)
     return match ? `http://${match[1]}` : null
@@ -20,6 +21,24 @@ async function resolveSystemProxy(): Promise<string | null> {
     return null
   }
 }
+
+/** Get the effective proxy URL for child processes and external utilities.
+ * Priority: manual proxy (from settings) > system proxy > parent process environment. */
+export async function getEffectiveProxyUrl(manualProxyUrl?: string): Promise<string | null> {
+  const manual = manualProxyUrl?.trim()
+  if (manual) return manual
+  const system = await resolveSystemProxy()
+  if (system) return system
+  const env =
+    process.env.HTTPS_PROXY ||
+    process.env.HTTP_PROXY ||
+    process.env.https_proxy ||
+    process.env.http_proxy ||
+    process.env.ALL_PROXY ||
+    process.env.all_proxy
+  return env?.trim() || null
+}
+
 
 const AGENT_OPTIONS = {
   connections: 64,

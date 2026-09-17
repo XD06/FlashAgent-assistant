@@ -6,6 +6,7 @@ import {
   isMcpToolName,
   mcpConfigKey,
   parseEnvBlock,
+  sanitizeMcpCommandTokens,
   tokenizeCommand
 } from './mcpUtil'
 import type { McpServerConfig } from '@shared/types'
@@ -124,3 +125,51 @@ describe('assessMcpRisk', () => {
     expect(assessMcpRisk('mcp__custom__tool', { nested: { cmd: ':(){ :|:& };:' } })).toBe('forbidden')
   })
 })
+
+describe('sanitizeMcpCommandTokens', () => {
+  it('strips redundant cmd /c prefix', () => {
+    const res = sanitizeMcpCommandTokens(['cmd', '/c', 'npx', '-y', 'tavily-mcp'])
+    if (process.platform === 'win32') {
+      expect(res.command).toMatch(/cmd(?:\.exe)?$/i)
+      expect(res.args).toEqual(['/c', 'npx', '-y', 'tavily-mcp'])
+    } else {
+      expect(res.command).toBe('npx')
+      expect(res.args).toEqual(['-y', 'tavily-mcp'])
+    }
+  })
+
+  it('automatically adds -y to npx commands if missing', () => {
+    const res = sanitizeMcpCommandTokens(['npx', 'chrome-devtools-mcp@latest', '--autoConnect'])
+    if (process.platform === 'win32') {
+      expect(res.args).toEqual(['/c', 'npx', '-y', 'chrome-devtools-mcp@latest', '--autoConnect'])
+    } else {
+      expect(res.command).toBe('npx')
+      expect(res.args).toEqual(['-y', 'chrome-devtools-mcp@latest', '--autoConnect'])
+    }
+  })
+
+  it('keeps existing -y or --yes for npx', () => {
+    const res = sanitizeMcpCommandTokens(['npx', '-y', 'my-pkg'])
+    if (process.platform === 'win32') {
+      expect(res.args).toEqual(['/c', 'npx', '-y', 'my-pkg'])
+    } else {
+      expect(res.command).toBe('npx')
+      expect(res.args).toEqual(['-y', 'my-pkg'])
+    }
+  })
+
+  it('preserves non-npx commands without adding -y', () => {
+    const res = sanitizeMcpCommandTokens(['python', '-m', 'myserver'])
+    if (process.platform === 'win32') {
+      expect(res.args).toEqual(['/c', 'python', '-m', 'myserver'])
+    } else {
+      expect(res.command).toBe('python')
+      expect(res.args).toEqual(['-m', 'myserver'])
+    }
+  })
+
+  it('throws on empty tokens', () => {
+    expect(() => sanitizeMcpCommandTokens([])).toThrow('Command is empty')
+  })
+})
+

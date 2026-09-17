@@ -1,7 +1,13 @@
 import { exec } from 'node:child_process'
 import type { McpServerConfig, McpServerStatus } from '@shared/types'
 import type { ToolDefinition } from '../ai/OpenAICompatibleClient'
-import { buildMcpToolName, mcpConfigKey, parseEnvBlock, tokenizeCommand } from './mcpUtil'
+import {
+  buildMcpToolName,
+  mcpConfigKey,
+  parseEnvBlock,
+  sanitizeMcpCommandTokens,
+  tokenizeCommand
+} from './mcpUtil'
 
 // MCP SDK is large (~hundreds of KB). Load it only when a server is actually
 // connected — most installs never enable MCP and should not pay the cost at boot.
@@ -70,6 +76,59 @@ function loadMcpSdk() {
  * enabled servers from settings, and routes prefixed tool calls. */
 export class McpManager {
   private servers = new Map<string, ManagedServer>()
+  private proxyResolver?: () => Promise<string | null> | string | null | undefined
+
+  /** Set dynamic resolver for effective proxy URL (injected from main app). */
+  setProxyResolver(resolver: () => Promise<string | null> | string | null | undefined): void {
+    this.proxyResolver = resolver
+  }
+
+  /** Build full child process environment for stdio MCP servers.
+   * Injects proxy settings and essential OS variables stripped by SDK's default environment. */
+  private async buildMcpEnvironment(configEnv?: string): Promise<Record<string, string>> {
+    const sdk = await loadMcpSdk()
+    const baseEnv = sdk.getDefaultEnvironment()
+
+    // Forward critical OS variables
+    const extraSysEnv: Record<string, string> = {}
+    for (const key of ['COMSPEC', 'PATHEXT', 'TMP', 'TEMP', 'USERPROFILE', 'HOME', 'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE']) {
+      const val = process.env[key]
+      if (val) extraSysEnv[key] = val
+    }
+
+    // Inject proxy so npx / npm / python can download packages without timing out
+    const proxyEnv: Record<string, string> = {}
+    try {
+      const effectiveProxy = this.proxyResolver
+        ? await this.proxyResolver()
+        : (process.env.HTTPS_PROXY || process.env.HTTP_PROXY || process.env.ALL_PROXY || null)
+      if (effectiveProxy) {
+        proxyEnv.HTTP_PROXY = effectiveProxy
+        proxyEnv.HTTPS_PROXY = effectiveProxy
+        proxyEnv.http_proxy = effectiveProxy
+        proxyEnv.https_proxy = effectiveProxy
+        proxyEnv.ALL_PROXY = effectiveProxy
+        proxyEnv.all_proxy = effectiveProxy
+        proxyEnv.npm_config_proxy = effectiveProxy
+        proxyEnv.npm_config_https_proxy = effectiveProxy
+      }
+    } catch {
+      /* ignore proxy lookup errors during boot */
+    }
+
+    const noProxy = process.env.NO_PROXY || process.env.no_proxy
+    if (noProxy) {
+      proxyEnv.NO_PROXY = noProxy
+      proxyEnv.no_proxy = noProxy
+    }
+
+    return {
+      ...baseEnv,
+      ...extraSysEnv,
+      ...proxyEnv,
+      ...parseEnvBlock(configEnv)
+    }
+  }
 
   /** Reconcile connections with the configured server list. */
   sync(configs: McpServerConfig[]): void {
@@ -78,6 +137,17 @@ export class McpManager {
       const next = wanted.get(id)
       if (!next || mcpConfigKey(next) !== entry.configKey) {
         this.drop(id)
+      } else if (entry.config.name !== next.name) {
+        entry.config = next
+        entry.tools = entry.tools.map((tool) => ({
+          ...tool,
+          exposedName: buildMcpToolName(next.name, tool.toolName),
+          definition: {
+            ...tool.definition,
+            name: buildMcpToolName(next.name, tool.toolName),
+            description: `[MCP:${next.name}] ${tool.definition.description.replace(/^\[MCP:[^\]]+\]\s*/, '')}`
+          }
+        }))
       }
     }
     for (const config of wanted.values()) {
@@ -117,14 +187,16 @@ export class McpManager {
       tools: []
     }
     this.servers.set(config.id, entry)
+    const stderrBuffer: string[] = []
+    let client: Client | null = null
     try {
-      const client = await this.openClient(config)
+      client = await this.openClient(config, stderrBuffer)
       // The server may have been removed/edited while we were connecting.
       if (this.servers.get(config.id) !== entry) {
         closeClient(client)
         return
       }
-      const listed = await client.listTools()
+      const listed = await client.listTools(undefined, { timeout: CALL_TIMEOUT_MS })
       entry.client = client
       entry.tools = listed.tools.map((tool) => ({
         exposedName: buildMcpToolName(config.name, tool.name),
@@ -139,38 +211,49 @@ export class McpManager {
     } catch (error) {
       if (this.servers.get(config.id) !== entry) return
       entry.state = 'error'
-      entry.error = error instanceof Error ? error.message : String(error)
+      const baseErr = error instanceof Error ? error.message : String(error)
+      const recentLogs = stderrBuffer.length > 0 ? stderrBuffer.slice(-2).join('; ') : ''
+      entry.error = recentLogs && !baseErr.includes(recentLogs) ? `${baseErr} (${recentLogs})` : baseErr
+      console.error(`[MCP:${config.name}] Connection failed: ${entry.error}`)
     }
   }
 
-  private async openClient(config: McpServerConfig): Promise<Client> {
+  private async openClient(config: McpServerConfig, stderrBuffer: string[]): Promise<Client> {
     const sdk = await loadMcpSdk()
     if (config.transport === 'stdio') {
-      const tokens = tokenizeCommand(config.command ?? '')
-      if (!tokens.length) throw new Error('Command is empty')
-      // Route through cmd on Windows so .cmd shims (npx, uvx, ...) resolve.
-      const [command, args] =
-        process.platform === 'win32' ? ['cmd.exe', ['/c', ...tokens]] : [tokens[0], tokens.slice(1)]
+      const rawTokens = tokenizeCommand(config.command ?? '')
+      const { command, args } = sanitizeMcpCommandTokens(rawTokens)
+      const env = await this.buildMcpEnvironment(config.env)
+      const transport = new sdk.StdioClientTransport({
+        command,
+        args,
+        env,
+        stderr: 'pipe'
+      })
+      transport.stderr?.on('data', (chunk: Buffer | string) => {
+        const text = typeof chunk === 'string' ? chunk : chunk.toString('utf8')
+        for (const line of text.split(/\r?\n/)) {
+          const trimmed = line.trim()
+          if (trimmed) {
+            console.log(`[MCP:${config.name}] ${trimmed}`)
+            stderrBuffer.push(trimmed)
+            if (stderrBuffer.length > 20) stderrBuffer.shift()
+          }
+        }
+      })
       const client = new sdk.Client({ name: 'flashagent-assistant', version: '1.0.0' })
-      await client.connect(
-        new sdk.StdioClientTransport({
-          command,
-          args,
-          env: { ...sdk.getDefaultEnvironment(), ...parseEnvBlock(config.env) },
-          stderr: 'ignore'
-        })
-      )
+      await client.connect(transport, { timeout: CALL_TIMEOUT_MS })
       return client
     }
     const url = new URL(config.url ?? '')
     // Streamable HTTP is the current standard; fall back to legacy SSE.
     try {
       const client = new sdk.Client({ name: 'flashagent-assistant', version: '1.0.0' })
-      await client.connect(new sdk.StreamableHTTPClientTransport(url))
+      await client.connect(new sdk.StreamableHTTPClientTransport(url), { timeout: CALL_TIMEOUT_MS })
       return client
     } catch {
       const client = new sdk.Client({ name: 'flashagent-assistant', version: '1.0.0' })
-      await client.connect(new sdk.SSEClientTransport(url))
+      await client.connect(new sdk.SSEClientTransport(url), { timeout: CALL_TIMEOUT_MS })
       return client
     }
   }
