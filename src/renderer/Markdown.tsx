@@ -1,5 +1,5 @@
 import React from 'react'
-import { marked } from 'marked'
+import { marked, Marked } from 'marked'
 import DOMPurify from 'dompurify'
 import hljs from 'highlight.js'
 
@@ -153,8 +153,12 @@ marked.setOptions({
   breaks: true
 })
 
-marked.use({
-  renderer: {
+/** Code-block renderer factory. `useHighlight=false` powers the streaming
+ * path: highlight.js is ~97% of parse cost (61ms vs 0.9ms on a 150KB turn
+ * with 4 HTML blocks), so an unclosed growing fence renders escaped-only
+ * until the turn settles and the highlighted parse runs once. */
+function codeRenderer(useHighlight: boolean) {
+  return {
     code({ text, lang }: { text: string; lang?: string }) {
       const cleanLang = (lang || '').match(/^\S*/)?.[0] || ''
       const lowerLang = cleanLang.toLowerCase()
@@ -162,7 +166,7 @@ marked.use({
         return `<pre><code class="language-mermaid">${escapeHtml(text)}</code></pre>\n`
       }
 
-      const highlighted = highlightCode(text, cleanLang)
+      const highlighted = useHighlight ? highlightCode(text, cleanLang) : escapeHtml(text)
       const isPreviewable = lowerLang === 'html' || lowerLang === 'htm' || lowerLang === 'svg'
       const langClass = cleanLang ? ` class="language-${escapeHtml(cleanLang)}"` : ''
 
@@ -206,7 +210,13 @@ marked.use({
 </div>\n`
     }
   }
-})
+}
+
+marked.use({ renderer: codeRenderer(true) })
+
+// Streaming parser: byte-identical block structure, highlight.js skipped.
+export const streamingParser = new Marked({ gfm: true, breaks: true })
+streamingParser.use({ renderer: codeRenderer(false) })
 
 // Mermaid is ~1.5 MB — load lazily. Cache rendered SVG by source+theme so
 // remounts / re-effects never re-parse a finished diagram.
@@ -219,6 +229,67 @@ let mermaidSeq = 0
 // rebuild can overrun the 50ms cadence and jam the main thread. Cap the parse
 // at ~6.7Hz while pending; the final text is parsed immediately on settle.
 const MARKDOWN_STREAM_PARSE_THROTTLE_MS = 150
+
+// No 'iframe' in ADD_TAGS: preview frames are created programmatically, and
+// model-emitted raw iframes must not become live browsing contexts.
+const SANITIZE_CONFIG = {
+  ADD_TAGS: ['button', 'svg', 'path', 'rect', 'circle', 'polygon', 'polyline', 'line', 'span'],
+  ADD_ATTR: [
+    'target',
+    'rel',
+    'class',
+    'type',
+    'aria-label',
+    'title',
+    'viewBox',
+    'width',
+    'height',
+    'fill',
+    'stroke',
+    'stroke-width',
+    'stroke-linecap',
+    'stroke-linejoin',
+    'cx',
+    'cy',
+    'r',
+    'points',
+    'd',
+    'x',
+    'y',
+    'x1',
+    'y1',
+    'x2',
+    'y2',
+    'rx',
+    'data-action',
+    'data-lines',
+    'loading'
+  ]
+}
+
+/** True when the text ends inside an unterminated ``` fence (odd fence count)
+ * — the streaming tail renders highlight-free until it closes. */
+function hasUnclosedFence(markdown: string): boolean {
+  return ((markdown.match(/```/g)?.length ?? 0) & 1) === 1
+}
+
+/** One top-level markdown block. Memoized on its raw source so a streaming
+ * flush that only touches the tail block re-parses nothing else — the whole
+ * subtree (highlight spans, code-block DOM) of settled blocks is reused. */
+const MarkdownSegment = React.memo(function MarkdownSegment({
+  raw,
+  plainCode = false
+}: {
+  raw: string
+  /** Unclosed-fence tail while streaming: escaped-only parse (no hljs). */
+  plainCode?: boolean
+}) {
+  const html = React.useMemo(() => {
+    const parsed = (plainCode ? streamingParser : marked).parse(raw, { async: false }) as string
+    return DOMPurify.sanitize(parsed, SANITIZE_CONFIG)
+  }, [raw, plainCode])
+  return <div className="md-seg" dangerouslySetInnerHTML={{ __html: html }} />
+})
 
 function isMermaidFenceClosed(markdown: string): boolean {
   // Count ```mermaid fences vs closing ```. While streaming the fence is often
@@ -427,45 +498,14 @@ export const MarkdownView = React.memo(function MarkdownView({
     []
   )
 
-  const html = React.useMemo(() => {
-    const raw = marked.parse(displayedText, { async: false }) as string
-    return DOMPurify.sanitize(raw, {
-      // No 'iframe' in ADD_TAGS: preview frames are created programmatically,
-      // and model-emitted raw iframes must not become live browsing contexts.
-      ADD_TAGS: ['button', 'svg', 'path', 'rect', 'circle', 'polygon', 'polyline', 'line', 'span'],
-      ADD_ATTR: [
-        'target',
-        'rel',
-        'class',
-        'type',
-        'aria-label',
-        'title',
-        'viewBox',
-        'width',
-        'height',
-        'fill',
-        'stroke',
-        'stroke-width',
-        'stroke-linecap',
-        'stroke-linejoin',
-        'cx',
-        'cy',
-        'r',
-        'points',
-        'd',
-        'x',
-        'y',
-        'x1',
-        'y1',
-        'x2',
-        'y2',
-        'rx',
-        'data-action',
-        'data-lines',
-        'loading'
-      ]
-    })
-  }, [displayedText])
+  // Block-split streaming: lex the latest text into top-level blocks so each
+  // flush re-parses only the tail block (lexer is ~1ms on 150KB vs ~60ms for a
+  // full highlighted parse). Settled blocks keep their DOM untouched — the
+  // memoized MarkdownSegment bails on unchanged raw source.
+  const segments = React.useMemo(() => {
+    if (!pending) return [displayedText]
+    return marked.lexer(displayedText).map((token) => token.raw)
+  }, [displayedText, pending])
 
   React.useEffect(() => {
     const container = containerRef.current
@@ -680,7 +720,17 @@ export const MarkdownView = React.memo(function MarkdownView({
     void tryMermaid()
 
     return () => cleanups.forEach((fn) => fn())
-  }, [html, pending, displayedText])
+  }, [segments, pending, displayedText])
 
-  return <div ref={containerRef} className="markdown-body" dangerouslySetInnerHTML={{ __html: html }} />
+  return (
+    <div ref={containerRef} className="markdown-body">
+      {segments.map((raw, i) => (
+        <MarkdownSegment
+          key={i}
+          raw={raw}
+          plainCode={pending && i === segments.length - 1 && hasUnclosedFence(raw)}
+        />
+      ))}
+    </div>
+  )
 })

@@ -1327,6 +1327,16 @@ html[data-theme='dark'] .titlebar button:hover {
   margin-bottom: 0;
 }
 
+/* Streaming renders one top-level block per .md-seg wrapper; mirror the
+ * first/last-child margin reset past the wrappers. */
+.markdown-body > .md-seg > :first-child {
+  margin-top: 0;
+}
+
+.markdown-body > .md-seg > :last-child {
+  margin-bottom: 0;
+}
+
 .markdown-body p,
 .markdown-body ul,
 .markdown-body ol,
@@ -4272,8 +4282,8 @@ letter-spacing: 0.01em;
 }
 
 .chat-baseline-nav__item--active .chat-baseline-nav__tick {
-  width: 22px;
-  height: 3.5px;
+  width: 20px;
+  height: 2.5px;
   background: #635454;
   opacity: 1;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { marked } from 'marked'
-import { highlightCode, buildHtmlPreviewDoc, buildSvgPreviewDoc } from './Markdown'
+import { highlightCode, buildHtmlPreviewDoc, buildSvgPreviewDoc, streamingParser } from './Markdown'
 
 describe('Markdown Code Block & Syntax Highlighting', () => {
   it('highlights recognized languages with highlight.js span tags', () => {
@@ -94,5 +94,14 @@ describe('Markdown Code Block & Syntax Highlighting', () => {
     const parsed = marked.parse(md, { async: false }) as string
     expect(parsed).toBe('<pre><code class="language-mermaid">graph TD;\nA--&gt;B;</code></pre>\n')
     expect(parsed).not.toContain('code-block')
+  })
+
+  it('streaming parser mirrors block structure with highlight.js skipped', () => {
+    const md = '```html\n<div class="card">Hello World</div>\n'
+    const parsed = streamingParser.parse(md, { async: false }) as string
+    expect(parsed).toContain('code-block--previewable')
+    expect(parsed).toContain('data-lang="html"')
+    expect(parsed).not.toContain('hljs-')
+    expect(parsed).toContain('&lt;div class=&quot;card&quot;&gt;Hello World&lt;/div&gt;')
   })
 })
