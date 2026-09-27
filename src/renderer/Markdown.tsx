@@ -178,6 +178,10 @@ marked.use({
         return `<div class="code-block${collapseClass}"${linesAttr}><button type="button" class="code-copy" data-action="copy-code" aria-label="Copy code" title="Copy">${COPY_ICON_SVG}</button><pre><code${langClass}>${highlighted}</code></pre>${expandBtnHtml}</div>\n`
       }
 
+      // Parse output is deliberately iframe-free: every previewable block
+      // would otherwise pin a browsing context (Document + layout objects)
+      // even when never previewed. Frames are created on demand by
+      // ensurePreviewFrame() and destroyed on switching back to code.
       return `<div class="code-block code-block--previewable${collapseClass}" data-lang="${escapeHtml(lowerLang)}"${linesAttr}>
   <div class="code-block__header">
     <div class="code-block__tabs">
@@ -198,9 +202,7 @@ marked.use({
     <pre><code${langClass}>${highlighted}</code></pre>
     ${expandBtnHtml}
   </div>
-  <div class="code-panel-preview">
-    <iframe class="html-preview-frame" sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups"></iframe>
-  </div>
+  <div class="code-panel-preview"></div>
 </div>\n`
     }
   }
@@ -341,6 +343,34 @@ async function handleCopyClick(btn: HTMLButtonElement): Promise<void> {
   }
 }
 
+/** Create the preview iframe on demand. Parse output is deliberately
+ * iframe-free — a frame per previewable block would pin a browsing context
+ * (Document + layout objects) for the life of the message even when the
+ * preview is never opened. Created here, destroyed on switching back. */
+function ensurePreviewFrame(codeBlock: HTMLElement): HTMLIFrameElement | null {
+  const panel = codeBlock.querySelector<HTMLDivElement>('.code-panel-preview')
+  if (!panel) return null
+  let iframe = panel.querySelector<HTMLIFrameElement>('.html-preview-frame')
+  if (!iframe) {
+    iframe = document.createElement('iframe')
+    iframe.className = 'html-preview-frame'
+    iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-modals allow-popups')
+    panel.appendChild(iframe)
+  }
+  return iframe
+}
+
+/** Build the preview document for a previewable code block (html/htm/svg). */
+function buildPreviewDoc(codeBlock: HTMLElement): string {
+  const rawCode = codeBlock.querySelector('pre code')?.textContent ?? ''
+  const lang = (
+    codeBlock.getAttribute('data-lang') || codeBlock.querySelector('.code-block__lang')?.textContent || ''
+  )
+    .toLowerCase()
+    .trim()
+  return lang === 'svg' ? buildSvgPreviewDoc(rawCode) : buildHtmlPreviewDoc(rawCode)
+}
+
 /**
  * MarkdownView — renders markdown as sanitized HTML via `marked` + `DOMPurify`.
  *
@@ -365,7 +395,9 @@ export const MarkdownView = React.memo(function MarkdownView({
   const html = React.useMemo(() => {
     const raw = marked.parse(children, { async: false }) as string
     return DOMPurify.sanitize(raw, {
-      ADD_TAGS: ['button', 'svg', 'path', 'rect', 'circle', 'polygon', 'polyline', 'line', 'iframe', 'span'],
+      // No 'iframe' in ADD_TAGS: preview frames are created programmatically,
+      // and model-emitted raw iframes must not become live browsing contexts.
+      ADD_TAGS: ['button', 'svg', 'path', 'rect', 'circle', 'polygon', 'polyline', 'line', 'span'],
       ADD_ATTR: [
         'target',
         'rel',
@@ -393,9 +425,6 @@ export const MarkdownView = React.memo(function MarkdownView({
         'x2',
         'y2',
         'rx',
-        'sandbox',
-        'srcdoc',
-        'data-srcdoc',
         'data-action',
         'data-lines',
         'loading'
@@ -423,24 +452,21 @@ export const MarkdownView = React.memo(function MarkdownView({
       if (tabBtn && container.contains(tabBtn)) {
         e.preventDefault()
         e.stopPropagation()
-        const codeBlock = tabBtn.closest('.code-block')
+        const codeBlock = tabBtn.closest<HTMLElement>('.code-block')
         if (!codeBlock) return
         const isPreview = tabBtn.dataset.action === 'tab-preview'
         const codeTab = codeBlock.querySelector<HTMLButtonElement>('[data-action="tab-code"]')
         const previewTab = codeBlock.querySelector<HTMLButtonElement>('[data-action="tab-preview"]')
-        const iframe = codeBlock.querySelector<HTMLIFrameElement>('.html-preview-frame')
 
         if (isPreview) {
           if (codeBlock.classList.contains('is-previewing')) return
           codeBlock.classList.add('is-previewing')
           codeTab?.classList.remove('active')
           previewTab?.classList.add('active')
+          const iframe = ensurePreviewFrame(codeBlock)
           if (iframe) {
-            const rawCode = codeBlock.querySelector('pre code')?.textContent ?? ''
-            const lang = (codeBlock.getAttribute('data-lang') || codeBlock.querySelector('.code-block__lang')?.textContent || '').toLowerCase().trim()
-            const doc = lang === 'svg' ? buildSvgPreviewDoc(rawCode) : buildHtmlPreviewDoc(rawCode)
+            const doc = buildPreviewDoc(codeBlock)
             if (iframe.dataset.loadedDoc !== doc) {
-              iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-modals allow-popups')
               iframe.dataset.loadedDoc = doc
               iframe.srcdoc = doc
             }
@@ -457,27 +483,30 @@ export const MarkdownView = React.memo(function MarkdownView({
           }
           previewTab?.classList.remove('active')
           codeTab?.classList.add('active')
+          // Dropping the element releases its browsing context immediately —
+          // an idle frame would otherwise keep the parsed preview document
+          // alive for as long as the message stays on screen.
+          codeBlock.querySelector<HTMLIFrameElement>('.html-preview-frame')?.remove()
         }
         return
       }
 
       // 2. Reload preview
-      const reloadBtn = target.closest<HTMLButtonElement>('[data-action="reload-preview"]')
-      if (reloadBtn && container.contains(reloadBtn)) {
-        e.preventDefault()
-        e.stopPropagation()
-        const codeBlock = reloadBtn.closest('.code-block')
-        const iframe = codeBlock?.querySelector<HTMLIFrameElement>('.html-preview-frame')
-        if (codeBlock && iframe) {
-          iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-modals allow-popups')
-          const rawCode = codeBlock.querySelector('pre code')?.textContent ?? ''
-          const lang = (codeBlock.getAttribute('data-lang') || codeBlock.querySelector('.code-block__lang')?.textContent || '').toLowerCase().trim()
-          const doc = lang === 'svg' ? buildSvgPreviewDoc(rawCode) : buildHtmlPreviewDoc(rawCode)
-          iframe.dataset.loadedDoc = doc
-          iframe.srcdoc = ''
-          requestAnimationFrame(() => {
-            iframe.srcdoc = doc
-          })
+        const reloadBtn = target.closest<HTMLButtonElement>('[data-action="reload-preview"]')
+        if (reloadBtn && container.contains(reloadBtn)) {
+          e.preventDefault()
+          e.stopPropagation()
+          const codeBlock = reloadBtn.closest<HTMLElement>('.code-block')
+        if (codeBlock) {
+          const iframe = ensurePreviewFrame(codeBlock)
+          if (iframe) {
+            const doc = buildPreviewDoc(codeBlock)
+            iframe.dataset.loadedDoc = doc
+            iframe.srcdoc = ''
+            requestAnimationFrame(() => {
+              iframe.srcdoc = doc
+            })
+          }
         }
         return
       }
@@ -572,7 +601,7 @@ export const MarkdownView = React.memo(function MarkdownView({
     cleanups.push(() => {
       container.querySelectorAll('.code-block.is-fullscreen').forEach((el) => el.classList.remove('is-fullscreen'))
       container.querySelectorAll<HTMLIFrameElement>('.html-preview-frame').forEach((iframe) => {
-        iframe.srcdoc = 'about:blank'
+        iframe.remove()
       })
     })
 

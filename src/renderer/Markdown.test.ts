@@ -68,7 +68,7 @@ describe('Markdown Code Block & Syntax Highlighting', () => {
     expect(parsed).toContain('展开全部 (20 行)')
   })
 
-  it('renders HTML code blocks as previewable with code/preview tabs and sandboxed iframe', () => {
+  it('renders HTML code blocks as previewable with code/preview tabs and a lazy preview panel', () => {
     const md = '```html\n<div class="card">Hello World</div>\n```'
     const parsed = marked.parse(md, { async: false }) as string
     expect(parsed).toContain('code-block--previewable')
@@ -81,8 +81,11 @@ describe('Markdown Code Block & Syntax Highlighting', () => {
     expect(parsed).toContain('data-action="reload-preview"')
     expect(parsed).toContain('data-action="toggle-fullscreen"')
     expect(parsed).not.toContain('preview-toolbar')
-    expect(parsed).toContain('class="html-preview-frame"')
-    expect(parsed).toContain('sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups"')
+    // Parse output must stay iframe-free: every previewable block would
+    // otherwise pin a browsing context even when the preview is never opened.
+    // The frame is created on demand (ensurePreviewFrame) on first tab click.
+    expect(parsed).not.toContain('<iframe')
+    expect(parsed).toContain('<div class="code-panel-preview"></div>')
     expect(parsed).toContain('Hello World')
   })
 
