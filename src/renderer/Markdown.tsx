@@ -214,6 +214,12 @@ let mermaidModule: Promise<typeof import('mermaid').default> | null = null
 const mermaidCache = new Map<string, string>()
 let mermaidSeq = 0
 
+// While a turn streams, MarkdownView re-parses its whole (growing) text on
+// every upstream flush — marked + highlight.js + DOMPurify + a full innerHTML
+// rebuild can overrun the 50ms cadence and jam the main thread. Cap the parse
+// at ~6.7Hz while pending; the final text is parsed immediately on settle.
+const MARKDOWN_STREAM_PARSE_THROTTLE_MS = 150
+
 function isMermaidFenceClosed(markdown: string): boolean {
   // Count ```mermaid fences vs closing ```. While streaming the fence is often
   // incomplete — rendering mid-stream causes parse thrash and flicker.
@@ -392,8 +398,37 @@ export const MarkdownView = React.memo(function MarkdownView({
   // (React set) can restore finished diagrams without a blank flash.
   const diagramDomCache = React.useRef(new Map<string, HTMLElement>())
 
+  // Streaming throttle: commit the latest text to the parser at most every
+  // MARKDOWN_STREAM_PARSE_THROTTLE_MS while pending, then render the final
+  // text immediately when the stream settles.
+  const [displayedText, setDisplayedText] = React.useState(children)
+  const latestTextRef = React.useRef(children)
+  latestTextRef.current = children
+  const parseThrottleRef = React.useRef<number | null>(null)
+  React.useEffect(() => {
+    if (!pending) {
+      if (parseThrottleRef.current !== null) {
+        window.clearTimeout(parseThrottleRef.current)
+        parseThrottleRef.current = null
+      }
+      setDisplayedText(latestTextRef.current)
+      return
+    }
+    if (parseThrottleRef.current !== null) return
+    parseThrottleRef.current = window.setTimeout(() => {
+      parseThrottleRef.current = null
+      setDisplayedText(latestTextRef.current)
+    }, MARKDOWN_STREAM_PARSE_THROTTLE_MS)
+  }, [children, pending])
+  React.useEffect(
+    () => () => {
+      if (parseThrottleRef.current !== null) window.clearTimeout(parseThrottleRef.current)
+    },
+    []
+  )
+
   const html = React.useMemo(() => {
-    const raw = marked.parse(children, { async: false }) as string
+    const raw = marked.parse(displayedText, { async: false }) as string
     return DOMPurify.sanitize(raw, {
       // No 'iframe' in ADD_TAGS: preview frames are created programmatically,
       // and model-emitted raw iframes must not become live browsing contexts.
@@ -430,7 +465,7 @@ export const MarkdownView = React.memo(function MarkdownView({
         'loading'
       ]
     })
-  }, [children])
+  }, [displayedText])
 
   React.useEffect(() => {
     const container = containerRef.current
@@ -617,7 +652,7 @@ export const MarkdownView = React.memo(function MarkdownView({
     // this effect re-runs, we can put the SVG back immediately.
     const tryMermaid = async () => {
       if (pending || cancelled) return
-      if (!isMermaidFenceClosed(children)) return
+      if (!isMermaidFenceClosed(displayedText)) return
       await renderMermaidBlocks(container, () => cancelled)
       if (cancelled) return
       // Snapshot upgraded diagrams for instant restore on the next html rewrite.
@@ -645,7 +680,7 @@ export const MarkdownView = React.memo(function MarkdownView({
     void tryMermaid()
 
     return () => cleanups.forEach((fn) => fn())
-  }, [html, pending, children])
+  }, [html, pending, displayedText])
 
   return <div ref={containerRef} className="markdown-body" dangerouslySetInnerHTML={{ __html: html }} />
 })
