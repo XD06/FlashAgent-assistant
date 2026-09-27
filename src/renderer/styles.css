@@ -3139,6 +3139,10 @@ html[data-theme='dark'] .chat-empty--temporary .chat-empty__icon {
 display: flex;
 align-items: center;
 gap: 2px;
+/* Anchor for the absolutely-centered turn-stats pill: the pill must stay at
+ * the horizontal middle of the bar at any window width, which flex + spacer
+ * cannot guarantee (side clusters have different widths). */
+position: relative;
 }
 .chat-input__spacer {
 flex: 1 1 auto;
@@ -4354,8 +4358,17 @@ html[data-theme='dark'] .chat-baseline-nav__item--active .chat-baseline-nav__tic
   background: color-mix(in srgb, var(--border) 25%, transparent);
   border: 1px solid color-mix(in srgb, var(--border) 45%, transparent);
   user-select: none;
-  margin-right: 6px;
   white-space: nowrap;
+  /* Out-of-flow and pinned to the true horizontal center of the bar at any
+   * window width (flex + spacer would glue it to the right cluster, whose
+   * offset grows with the window). Also removes the layout squeeze when the
+   * pill appears mid-generation. Clamped for very narrow windows. */
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  max-width: min(60%, 340px);
+  overflow: hidden;
 }
 
 .chat-stats-pill__dot {
