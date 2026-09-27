@@ -1841,6 +1841,10 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
             ...t,
             pending: false
           }))
+          // The turn array now lives in the topic store — stop pinning it here
+          // too, or every finished topic keeps its whole history in this map
+          // for the window's lifetime.
+          runningTurnsRef.current.delete(targetTopicId)
           if (finalTurns.length) {
             setTopics((prev) => {
               const idx = prev.findIndex((t) => t.id === targetTopicId)
@@ -2190,6 +2194,10 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
       if (curTopicId) {
         topicToRequestId.current.delete(curTopicId)
         requestToTopicId.current.delete(reqId)
+        // Drop the live turn snapshot too — the visible state is already in
+        // `chat`, and a stale entry would pin the whole turn array (with any
+        // large streamed text) for the window's lifetime.
+        runningTurnsRef.current.delete(curTopicId)
         setRunningTopicIds((prev) => {
           const next = new Set(prev)
           next.delete(curTopicId)
@@ -2428,6 +2436,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
         return next
       })
     }
+    runningTurnsRef.current.delete(id)
     const next = topicsRef.current.filter((tp) => tp.id !== id)
     saveTopics(next)
     setTopics(next)
