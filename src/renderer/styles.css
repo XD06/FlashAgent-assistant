@@ -1755,7 +1755,9 @@ html[data-theme='dark'] .markdown-body .hljs-builtin-name {
   border-radius: 5px;
   cursor: pointer;
   line-height: 1;
-  transition: all 0.12s ease;
+  /* Colors only — `all` also transitions layout properties, which shows up as
+   * laggy button feedback while the main thread is busy streaming. */
+  transition: background-color 0.12s ease, color 0.12s ease, box-shadow 0.12s ease;
   user-select: none;
 }
 
@@ -1829,7 +1831,7 @@ html[data-theme='dark'] .markdown-body .hljs-builtin-name {
   font-size: 11px;
   line-height: 1;
   cursor: pointer;
-  transition: all 0.12s ease;
+  transition: background-color 0.12s ease, color 0.12s ease, box-shadow 0.12s ease;
   user-select: none;
   -webkit-app-region: no-drag !important;
   pointer-events: auto !important;
