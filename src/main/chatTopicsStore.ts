@@ -38,7 +38,10 @@ export async function saveTopicsToDisk(topics: unknown[], customDir?: string): P
       try {
         const path = getTopicsFilePath(next.customDir)
         const tmp = `${path}.tmp`
-        await fs.writeFile(tmp, JSON.stringify(next.topics, null, 2), 'utf8')
+        // Compact JSON: pretty-printing doubles a multi-megabyte history file
+        // and its stringify cost on every debounced save (and every close
+        // inside the debounce window). The file is machine-read only.
+        await fs.writeFile(tmp, JSON.stringify(next.topics), 'utf8')
         await fs.rename(tmp, path)
       } catch (err) {
         ok = false

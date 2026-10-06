@@ -1197,6 +1197,9 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
         void window.assistantLite.ai.abort(activeRequestId.current)
         activeRequestId.current = null
       }
+      // Flush a pending debounced persist (defined alongside persistTopic):
+      // a close/quit inside the 500ms window still keeps the latest turns.
+      flushPersistRef.current()
     }
     window.addEventListener('beforeunload', onBeforeUnload)
     return () => window.removeEventListener('beforeunload', onBeforeUnload)
@@ -1234,6 +1237,10 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
 
   // ---- Persist topic whenever chat changes (debounced 500ms) ----
   const persistTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Synchronously flushes a pending debounced save. Wired to the
+  // beforeunload handler above so closing inside the debounce window still
+  // persists the latest turns instead of dropping them.
+  const flushPersistRef = React.useRef<() => void>(() => {})
   const topicsRef = React.useRef<ChatTopic[]>(topics)
   React.useEffect(() => {
     topicsRef.current = topics
@@ -1273,55 +1280,75 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
     }
   }, [agentEnabled, workingDir, searchEnabled, activeTopicId, selectedModel, settings.mcpServers])
 
+  // Synchronous persist core. Shared by the debounced auto-save and the
+  // unload flush (a timer scheduled during beforeunload would never fire).
+  const persistNow = React.useCallback((turns: ChatTurn[], model?: string) => {
+    if (temporaryChatRef.current || !turns.length) return
+    // Compute the next list outside the setState updater so the side effects
+    // (localStorage write, toast, active-topic switch) run exactly once.
+    const prev = topicsRef.current
+    const id = activeTopicId ?? crypto.randomUUID()
+    const firstUser = turns.find((t) => t.role === 'user')
+    const existing = prev.find((tp) => tp.id === id)
+    const topic: ChatTopic = {
+      id,
+      // A user-renamed or AI-named topic keeps its title across auto-saves.
+      title: existing && (existing.customTitle || existing.aiTitle)
+        ? existing.title
+        : firstUser
+          ? makeTitle(firstUser.text) ||
+            (firstUser.images?.length ? (isZh ? '[图片]' : '[Image]') : firstUser.files?.[0]?.name || 'New chat')
+          : 'New chat',
+      ...(existing?.customTitle ? { customTitle: true } : {}),
+      ...(existing?.aiTitle ? { aiTitle: true } : {}),
+      ...(existing?.isPinned ? { isPinned: true } : {}),
+      turns: turns.map((t) => ({ ...t, pending: false })),
+      model: model || existing?.model || selectedModel,
+      updatedAt: Date.now(),
+      compact: compactRef.current ?? undefined,
+      // Snapshot the usage indicator with the topic — reopening must not
+      // reset the context gauge (and the compact trigger) to the fallback.
+      ...(contextUsageRef.current !== null
+        ? { usage: { tokens: contextUsageRef.current, atTurns: usageTurnsRef.current } }
+        : {}),
+      session: { ...sessionSnapshotRef.current }
+    }
+    const exists = prev.findIndex((tp) => tp.id === id)
+    let next: ChatTopic[]
+    if (exists >= 0) {
+      next = [...prev]
+      next[exists] = topic
+    } else {
+      next = [topic, ...prev]
+    }
+    next = next.slice(0, MAX_TOPICS)
+    if (!saveTopics(next)) {
+      setToast(isZh ? '对话历史保存失败（存储空间不足）' : 'Failed to save history (storage quota exceeded)')
+    }
+    if (!activeTopicId) setActiveTopicId(id)
+    setTopics(next)
+  }, [activeTopicId, isZh, selectedModel])
+
   const persistTopic = React.useCallback((turns: ChatTurn[], model?: string) => {
     if (temporaryChatRef.current || !turns.length) return
     if (persistTimerRef.current) clearTimeout(persistTimerRef.current)
     persistTimerRef.current = setTimeout(() => {
-      // Compute the next list outside the setState updater so the side effects
-      // (localStorage write, toast, active-topic switch) run exactly once.
-      const prev = topicsRef.current
-      const id = activeTopicId ?? crypto.randomUUID()
-      const firstUser = turns.find((t) => t.role === 'user')
-      const existing = prev.find((tp) => tp.id === id)
-      const topic: ChatTopic = {
-        id,
-        // A user-renamed or AI-named topic keeps its title across auto-saves.
-        title: existing && (existing.customTitle || existing.aiTitle)
-          ? existing.title
-          : firstUser
-            ? makeTitle(firstUser.text) ||
-              (firstUser.images?.length ? (isZh ? '[图片]' : '[Image]') : firstUser.files?.[0]?.name || 'New chat')
-            : 'New chat',
-        ...(existing?.customTitle ? { customTitle: true } : {}),
-        ...(existing?.aiTitle ? { aiTitle: true } : {}),
-        ...(existing?.isPinned ? { isPinned: true } : {}),
-        turns: turns.map((t) => ({ ...t, pending: false })),
-        model: model || existing?.model || selectedModel,
-        updatedAt: Date.now(),
-        compact: compactRef.current ?? undefined,
-        // Snapshot the usage indicator with the topic — reopening must not
-        // reset the context gauge (and the compact trigger) to the fallback.
-        ...(contextUsageRef.current !== null
-          ? { usage: { tokens: contextUsageRef.current, atTurns: usageTurnsRef.current } }
-          : {}),
-        session: { ...sessionSnapshotRef.current }
-      }
-      const exists = prev.findIndex((tp) => tp.id === id)
-      let next: ChatTopic[]
-      if (exists >= 0) {
-        next = [...prev]
-        next[exists] = topic
-      } else {
-        next = [topic, ...prev]
-      }
-      next = next.slice(0, MAX_TOPICS)
-      if (!saveTopics(next)) {
-        setToast(isZh ? '对话历史保存失败（存储空间不足）' : 'Failed to save history (storage quota exceeded)')
-      }
-      if (!activeTopicId) setActiveTopicId(id)
-      setTopics(next)
+      persistTimerRef.current = null
+      persistNow(turns, model)
     }, 500)
-  }, [activeTopicId, isZh, selectedModel])
+  }, [persistNow])
+
+  // Keep the unload-flush closure fresh: persistNow identity follows
+  // activeTopicId/language/model, and the flush must see the latest one.
+  React.useEffect(() => {
+    flushPersistRef.current = () => {
+      if (persistTimerRef.current) {
+        clearTimeout(persistTimerRef.current)
+        persistTimerRef.current = null
+        persistNow(chatRef.current, selectedModel)
+      }
+    }
+  }, [persistNow, selectedModel])
 
   React.useEffect(() => {
     chatRef.current = chat
