@@ -1594,6 +1594,11 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
   // actually arrived in (multiple tool rounds each get their own block).
   const pendingItemsRef = React.useRef<Array<{ kind: 'text' | 'reasoning'; value: string }>>([])
   const flushTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Tool-argument streaming arrives per token just like text deltas. Buffer
+  // the latest snapshot per callId and flush with the same 50ms timer so a
+  // 4000-char edit_file argument stream doesn't re-render the whole chat
+  // (and every tool row) once per chunk.
+  const pendingToolsRef = React.useRef<Map<string, AgentToolEvent>>(new Map())
   React.useEffect(() => {
     // Close any still-streaming thinking block (a text delta or tool call
     // means the model moved on; the block auto-collapses in the UI).
@@ -1633,6 +1638,49 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
         return next
       })
     }
+    // Same merge logic the immediate path used, but applied to a batch of
+    // buffered tool snapshots: one setChat per flush no matter how many tool
+    // chunks arrived. Each chunk carries a full snapshot of its call, so the
+    // latest buffered snapshot per callId wins — identical to sequential
+    // application order.
+    const applyBufferedTools = (tools: AgentToolEvent[]): void => {
+      if (!tools.length) return
+      const latestTodo = [...tools].reverse().find((tool) => tool.todoList && tool.todoList.length > 0)
+      if (latestTodo?.todoList) setTodoList(latestTodo.todoList)
+      setChat((current) => {
+        if (!current.length) return current
+        const next = [...current]
+        const last = { ...next[next.length - 1] }
+        let blocks = [...(last.blocks ?? [])]
+        for (const tool of tools) {
+          let found = false
+          for (let i = blocks.length - 1; i >= 0 && !found; i--) {
+            const block = blocks[i]
+            if (block.kind !== 'tools') continue
+            const eventIndex = block.events.findIndex((ev) => ev.callId === tool.callId)
+            if (eventIndex >= 0) {
+              const events = [...block.events]
+              events[eventIndex] = { ...events[eventIndex], ...tool }
+              blocks[i] = { kind: 'tools', events }
+              found = true
+            }
+          }
+          if (!found) {
+            blocks = settleThinking(blocks)
+            const tail = blocks[blocks.length - 1]
+            if (tail?.kind === 'tools') {
+              blocks[blocks.length - 1] = { kind: 'tools', events: [...tail.events, tool] }
+            } else {
+              blocks.push({ kind: 'tools', events: [tool] })
+            }
+          }
+        }
+        last.blocks = blocks
+        last.pending = true
+        next[next.length - 1] = last
+        return next
+      })
+    }
     const flush = (): void => {
       if (flushTimerRef.current) {
         clearTimeout(flushTimerRef.current)
@@ -1640,7 +1688,13 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
       }
       const items = pendingItemsRef.current
       pendingItemsRef.current = []
+      const tools = [...pendingToolsRef.current.values()]
+      pendingToolsRef.current = new Map()
       applyBuffered(items)
+      applyBufferedTools(tools)
+    }
+    const scheduleFlush = (): void => {
+      if (!flushTimerRef.current) flushTimerRef.current = setTimeout(flush, 50)
     }
     const unsubscribe = window.assistantLite.ai.onChunk((chunk: AiChunkPayload) => {
       const reqId = chunk.requestId
@@ -1665,7 +1719,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
             if (tail?.kind === kind) tail.value += value
             else queue.push({ kind, value })
           }
-          if (!flushTimerRef.current) flushTimerRef.current = setTimeout(flush, 50)
+          scheduleFlush()
           return
         }
         if (chunk.type === 'usage') {
@@ -1695,7 +1749,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
           })
           return
         }
-        // Non-text events must see buffered text applied first
+        // Non-text events must see buffered text/tools applied first
         flush()
         if (chunk.type === 'injected') {
           const note = chunk.text ?? ''
@@ -1716,40 +1770,24 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
           })
           return
         }
+        // Tool snapshots join the same 50ms buffer as text deltas: one setChat
+        // per flush no matter how many tool chunks arrived. Status/done/error
+        // and injected chunks call flush() first (above), so buffered tools
+        // always land before them — order is preserved.
+        if (chunk.type === 'tool' && chunk.tool) {
+          pendingToolsRef.current.set(chunk.tool.callId, chunk.tool)
+          if (chunk.tool.todoList && chunk.tool.todoList.length > 0) {
+            setTodoList(chunk.tool.todoList)
+          }
+          scheduleFlush()
+          return
+        }
         setChat((current) => {
           if (!current.length) return current
           const next = [...current]
           const last = { ...next[next.length - 1] }
           if (chunk.type === 'status') {
             last.searchQuery = chunk.text ?? ''
-          } else if (chunk.type === 'tool' && chunk.tool) {
-            if (chunk.tool.todoList && chunk.tool.todoList.length > 0) {
-              setTodoList(chunk.tool.todoList)
-            }
-            let blocks = [...(last.blocks ?? [])]
-            let found = false
-            for (let i = blocks.length - 1; i >= 0 && !found; i--) {
-              const block = blocks[i]
-              if (block.kind !== 'tools') continue
-              const eventIndex = block.events.findIndex((ev) => ev.callId === chunk.tool!.callId)
-              if (eventIndex >= 0) {
-                const events = [...block.events]
-                events[eventIndex] = { ...events[eventIndex], ...chunk.tool }
-                blocks[i] = { kind: 'tools', events }
-                found = true
-              }
-            }
-            if (!found) {
-              blocks = settleThinking(blocks)
-              const tail = blocks[blocks.length - 1]
-              if (tail?.kind === 'tools') {
-                blocks[blocks.length - 1] = { kind: 'tools', events: [...tail.events, chunk.tool] }
-              } else {
-                blocks.push({ kind: 'tools', events: [chunk.tool] })
-              }
-            }
-            last.blocks = blocks
-            last.pending = true
           } else if (chunk.type === 'done') {
             last.pending = false
             last.reasoningPending = false
@@ -1938,6 +1976,8 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
         clearTimeout(flushTimerRef.current)
         flushTimerRef.current = null
       }
+      pendingItemsRef.current = []
+      pendingToolsRef.current = new Map()
     }
   }, [t])
 
