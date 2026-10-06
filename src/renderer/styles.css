@@ -1765,9 +1765,9 @@ html[data-theme='dark'] .markdown-body .hljs-builtin-name {
   border-radius: 5px;
   cursor: pointer;
   line-height: 1;
-  /* Colors only — `all` also transitions layout properties, which shows up as
-   * laggy button feedback while the main thread is busy streaming. */
-  transition: background-color 0.12s ease, color 0.12s ease, box-shadow 0.12s ease;
+  /* No transition by design: this tab is clicked rapidly during streaming and
+   * any 120ms background fade reads as "the click didn't register" when the
+   * main thread is busy. State feedback must be instantaneous. */
   user-select: none;
 }
 

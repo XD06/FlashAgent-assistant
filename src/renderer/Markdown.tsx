@@ -427,6 +427,11 @@ async function handleCopyClick(btn: HTMLButtonElement): Promise<void> {
  * iframe-free — a frame per previewable block would pin a browsing context
  * (Document + layout objects) for the life of the message even when the
  * preview is never opened. Created here, destroyed on switching back. */
+// Last-loaded preview document per frame. A WeakMap — not a data attribute —
+// so the (potentially large) document string is never duplicated into the DOM
+// and is released automatically when the frame is removed.
+const loadedPreviewDocs = new WeakMap<HTMLIFrameElement, string>()
+
 function ensurePreviewFrame(codeBlock: HTMLElement): HTMLIFrameElement | null {
   const panel = codeBlock.querySelector<HTMLDivElement>('.code-panel-preview')
   if (!panel) return null
@@ -543,8 +548,8 @@ export const MarkdownView = React.memo(function MarkdownView({
           const iframe = ensurePreviewFrame(codeBlock)
           if (iframe) {
             const doc = buildPreviewDoc(codeBlock)
-            if (iframe.dataset.loadedDoc !== doc) {
-              iframe.dataset.loadedDoc = doc
+            if (loadedPreviewDocs.get(iframe) !== doc) {
+              loadedPreviewDocs.set(iframe, doc)
               // Let the active tab paint before Chromium parses/loads the
               // sandbox document. This keeps rapid tab clicks responsive.
               requestAnimationFrame(() => {
@@ -595,7 +600,7 @@ export const MarkdownView = React.memo(function MarkdownView({
           const iframe = ensurePreviewFrame(codeBlock)
           if (iframe) {
             const doc = buildPreviewDoc(codeBlock)
-            iframe.dataset.loadedDoc = doc
+            loadedPreviewDocs.set(iframe, doc)
             iframe.srcdoc = ''
             requestAnimationFrame(() => {
               if (iframe?.isConnected && codeBlock.classList.contains('is-previewing')) iframe.srcdoc = doc
