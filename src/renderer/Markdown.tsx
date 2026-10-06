@@ -166,8 +166,11 @@ function codeRenderer(useHighlight: boolean) {
         return `<pre><code class="language-mermaid">${escapeHtml(text)}</code></pre>\n`
       }
 
-      const highlighted = useHighlight ? highlightCode(text, cleanLang) : escapeHtml(text)
       const isPreviewable = lowerLang === 'html' || lowerLang === 'htm' || lowerLang === 'svg'
+      // Previewable blocks are already backed by a sandboxed document. Running
+      // highlight.js over every HTML/SVG block creates a large span-heavy DOM
+      // that is never used by the preview and makes streaming/interaction slow.
+      const highlighted = isPreviewable ? escapeHtml(text) : useHighlight ? highlightCode(text, cleanLang) : escapeHtml(text)
       const langClass = cleanLang ? ` class="language-${escapeHtml(cleanLang)}"` : ''
 
       const lineCount = text.replace(/\r\n/g, '\n').split('\n').length
@@ -543,7 +546,11 @@ export const MarkdownView = React.memo(function MarkdownView({
             const doc = buildPreviewDoc(codeBlock)
             if (iframe.dataset.loadedDoc !== doc) {
               iframe.dataset.loadedDoc = doc
-              iframe.srcdoc = doc
+              // Let the active tab paint before Chromium parses/loads the
+              // sandbox document. This keeps rapid tab clicks responsive.
+              requestAnimationFrame(() => {
+                if (iframe?.isConnected && codeBlock.classList.contains('is-previewing')) iframe.srcdoc = doc
+              })
             }
           }
         } else {
@@ -558,10 +565,23 @@ export const MarkdownView = React.memo(function MarkdownView({
           }
           previewTab?.classList.remove('active')
           codeTab?.classList.add('active')
-          // Dropping the element releases its browsing context immediately —
-          // an idle frame would otherwise keep the parsed preview document
-          // alive for as long as the message stays on screen.
-          codeBlock.querySelector<HTMLIFrameElement>('.html-preview-frame')?.remove()
+          // Destroying a browsing context can synchronously spend several
+          // milliseconds tearing down its document. Defer that work until the
+          // active tab has painted so rapid source/preview clicks get prompt
+          // visual feedback. If preview is reopened first, keep the frame.
+          const iframe = codeBlock.querySelector<HTMLIFrameElement>('.html-preview-frame')
+          if (iframe) {
+            requestAnimationFrame(() => {
+              // A second task runs after the frame's style/class update has
+              // painted, keeping browsing-context teardown off the click's
+              // critical visual path.
+              window.setTimeout(() => {
+                if (iframe.isConnected && !codeBlock.classList.contains('is-previewing')) {
+                  iframe.remove()
+                }
+              }, 0)
+            })
+          }
         }
         return
       }
@@ -579,7 +599,7 @@ export const MarkdownView = React.memo(function MarkdownView({
             iframe.dataset.loadedDoc = doc
             iframe.srcdoc = ''
             requestAnimationFrame(() => {
-              iframe.srcdoc = doc
+              if (iframe?.isConnected && codeBlock.classList.contains('is-previewing')) iframe.srcdoc = doc
             })
           }
         }
