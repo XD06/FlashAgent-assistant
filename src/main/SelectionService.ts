@@ -22,6 +22,10 @@ const TOOLBAR_SHADOW_PADDING = 16
 const ACTION_WIDTH = 560
 const ACTION_HEIGHT = 420
 const ACTION_SHADOW_PADDING = 0
+// A hidden action/chat window still holds its renderer (tens of MB plus chat
+// DOM). Same trade-off as the settings window: keep close-to-hide instant
+// reopen, destroy the renderer after 60s hidden.
+const ACTION_IDLE_DESTROY_MS = 60_000
 
 // selection-hook ships a "clipboard fallback" that simulates Ctrl+Insert then
 // Ctrl+C when UIA/IAccessible can't read the selection. Simulated copies are
@@ -41,6 +45,12 @@ export class SelectionService {
   private started = false
   private toolbarIdleTimer: NodeJS.Timeout | null = null
   private toolbarWidth = DEFAULT_TOOLBAR_WIDTH
+  // Hidden action windows keep their renderer (≈ settings-window pattern:
+  // instant reopen, idle destroy). One timer per hidden window.
+  private actionIdleTimers = new Map<BrowserWindow, NodeJS.Timeout>()
+  // True once dispose() runs (app quit): close events must proceed to destroy
+  // instead of hide, otherwise quit would hang on a prevented close.
+  private quitting = false
   private lastActionSize = { width: 0, height: 0 } // lazily initialized from settings
   private hideListenerActive = false
 
@@ -96,13 +106,18 @@ export class SelectionService {
     this.toolbarWindow?.close()
     this.toolbarWindow = null
     for (const win of this.actionWindows) {
-      if (!win.isDestroyed()) win.close()
+      // destroy() bypasses the 'close' handler (which hides for reuse) —
+      // disabling the feature must release renderers, not park them hidden.
+      if (!win.isDestroyed()) win.destroy()
     }
+    for (const timer of this.actionIdleTimers.values()) clearTimeout(timer)
+    this.actionIdleTimers.clear()
     this.actionWindows.clear()
     this.started = false
   }
 
   dispose(): void {
+    this.quitting = true
     this.stop()
     this.hook = null
   }
@@ -154,6 +169,26 @@ export class SelectionService {
     }
   }
 
+  // A hidden action window is instant to reopen but pins its renderer.
+  // Destroy it after 60s hidden; the next open recreates it lazily. Reuse
+  // (openActionWindow) and 'show' cancel the timer.
+  private scheduleActionIdleDestroy(win: BrowserWindow): void {
+    this.cancelActionIdleDestroy(win)
+    const timer = setTimeout(() => {
+      this.actionIdleTimers.delete(win)
+      if (!win.isDestroyed() && !win.isVisible()) win.destroy()
+    }, ACTION_IDLE_DESTROY_MS)
+    this.actionIdleTimers.set(win, timer)
+  }
+
+  private cancelActionIdleDestroy(win: BrowserWindow): void {
+    const timer = this.actionIdleTimers.get(win)
+    if (timer) {
+      clearTimeout(timer)
+      this.actionIdleTimers.delete(win)
+    }
+  }
+
   writeClipboard(text: string): boolean {
     if (this.hook && this.started) {
       try {
@@ -202,12 +237,16 @@ export class SelectionService {
   }
 
   // A visible window is already mounted: hand it the new payload and re-show it.
-  // A fresh window stashes its payload for the renderer to pull on first render,
-  // and is shown only once its first frame is painted (ready-to-show) — so it
-  // appears once, already populated, instead of flashing empty then filling in.
+  // A hidden window (close turned into hide, see createActionWindow) is reused
+  // the same way — its renderer is warm, so reopening is instant instead of a
+  // full reload. A fresh window stashes its payload for the renderer to pull
+  // on first render, and is shown only once its first frame is painted
+  // (ready-to-show) — so it appears once, already populated, instead of
+  // flashing empty then filling in.
   private openActionWindow(payload: ActionPayload, show: (win: BrowserWindow) => void): void {
-    const existing = Array.from(this.actionWindows).find((win) => !win.isDestroyed() && win.isVisible())
+    const existing = Array.from(this.actionWindows).find((win) => !win.isDestroyed())
     if (existing) {
+      this.cancelActionIdleDestroy(existing)
       existing.webContents.send(IPC.SelectionProcessAction, payload)
       show(existing)
       return
@@ -323,7 +362,12 @@ export class SelectionService {
     })
 
     const wcId = win.webContents.id
-    win.on('close', () => {
+    win.on('close', (event) => {
+      // Quitting/disabled teardown uses destroy() and never lands here; a
+      // user/OS close hides for fast reuse instead of destroying the renderer
+      // (close → full reload was the reported open/close jank).
+      if (this.quitting) return
+      event.preventDefault()
       if (!win.isDestroyed() && this.getSettings().rememberWindowSize) {
         const bounds = win.getBounds()
         this.lastActionSize = {
@@ -335,10 +379,16 @@ export class SelectionService {
           actionWindowHeight: this.lastActionSize.height
         })
       }
+      if (!win.isDestroyed() && win.isVisible()) win.hide()
+      this.scheduleActionIdleDestroy(win)
+    })
+    win.on('show', () => {
+      this.cancelActionIdleDestroy(win)
     })
     win.on('closed', () => {
       this.actionWindows.delete(win)
       this.pendingInitialPayload.delete(wcId)
+      this.cancelActionIdleDestroy(win)
     })
     win.on('resized', () => {
       if (this.getSettings().rememberWindowSize && !win.isDestroyed()) {

@@ -243,6 +243,31 @@ function cancelSettingsIdleDestroy(): void {
   }
 }
 
+// The chat window carries the full ChatMode renderer (topics, markdown DOM).
+// Close hides for instant reopen; the renderer is destroyed after 60s hidden
+// — the same trade-off as the settings window. Destroy path (quit, idle
+// timer) uses destroy() and bypasses the 'close' handler below.
+const CHAT_IDLE_DESTROY_MS = 60_000
+let chatIdleTimer: NodeJS.Timeout | null = null
+
+function scheduleChatIdleDestroy(): void {
+  if (chatIdleTimer) clearTimeout(chatIdleTimer)
+  chatIdleTimer = setTimeout(() => {
+    chatIdleTimer = null
+    if (chatWindow && !chatWindow.isDestroyed() && !chatWindow.isVisible()) {
+      chatWindow.destroy()
+      chatWindow = null
+    }
+  }, CHAT_IDLE_DESTROY_MS)
+}
+
+function cancelChatIdleDestroy(): void {
+  if (chatIdleTimer) {
+    clearTimeout(chatIdleTimer)
+    chatIdleTimer = null
+  }
+}
+
 function createSettingsWindow(): BrowserWindow {
   if (settingsWindow && !settingsWindow.isDestroyed()) {
     if (settingsWindow.isMinimized()) settingsWindow.restore()
@@ -299,11 +324,13 @@ function toggleSettingsWindow(): void {
 
 function openChatWindow(): void {
   if (chatWindow && !chatWindow.isDestroyed()) {
+    cancelChatIdleDestroy()
     if (chatWindow.isMinimized()) chatWindow.restore()
     chatWindow.show()
     chatWindow.focus()
     return
   }
+  cancelChatIdleDestroy()
   const settings = getSettings()
   // Chat window always remembers its size (independent of rememberWindowSize toggle)
   const chatWidth = settings.chatWindowWidth ?? CHAT_DEFAULT_WIDTH
@@ -332,15 +359,20 @@ function openChatWindow(): void {
     }
   })
   const win = chatWindow
-  // Save window size when closing (always, for chat window)
-  win.on('close', () => {
+  // Save window size when closing (always, for chat window), then hide
+  // instead of destroying: reopening shows the warm renderer instantly.
+  win.on('close', (event) => {
+    if (isQuitting) return
+    event.preventDefault()
     if (!win.isDestroyed()) {
       const bounds = win.getBounds()
       void updateSettings({
         chatWindowWidth: Math.max(360, bounds.width - CHAT_SHADOW_PADDING * 2),
         chatWindowHeight: Math.max(360, bounds.height - CHAT_SHADOW_PADDING * 2)
       })
+      win.hide()
     }
+    scheduleChatIdleDestroy()
   })
   win.on('closed', () => {
     if (chatWindow === win) chatWindow = null
