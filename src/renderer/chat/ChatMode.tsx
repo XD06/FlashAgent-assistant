@@ -317,16 +317,24 @@ function loadLocalTopics(): ChatTopic[] {
   }
 }
 
+function loadInitialTopics(): ChatTopic[] {
+  // The main process owns the durable history. Avoid synchronously parsing a
+  // potentially multi-megabyte legacy localStorage snapshot on normal startup.
+  // The fallback remains for non-Electron/browser previews and migration when
+  // the disk store is unavailable.
+  const bridge = (window as Window & { assistantLite?: { chat?: { loadTopics?: unknown } } }).assistantLite
+  return typeof bridge?.chat?.loadTopics === 'function' ? [] : loadLocalTopics()
+}
+
 function saveTopics(topics: ChatTopic[]): boolean {
   try {
     if (window.assistantLite?.chat?.saveTopics) {
       void window.assistantLite.chat.saveTopics(topics)
     }
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(topics.slice(0, 50)))
-    } catch {
-      // ignore localStorage quota errors
-    }
+    // The main process owns the full history file. Serializing the first 50
+    // complete topics into localStorage on every update duplicates potentially
+    // megabytes of text on the renderer's main thread and made normal-mode
+    // close noticeably slower than privacy mode.
     return true
   } catch {
     return false
@@ -837,7 +845,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
   const reasoningWrapRef = React.useRef<HTMLDivElement>(null)
 
   // ---- Topics (persisted conversation history) ----
-  const [topics, setTopics] = React.useState<ChatTopic[]>(() => loadLocalTopics())
+  const [topics, setTopics] = React.useState<ChatTopic[]>(() => loadInitialTopics())
   const [activeTopicId, setActiveTopicId] = React.useState<string | null>(null)
   const activeTopicIdRef = React.useRef<string | null>(null)
   React.useEffect(() => {
@@ -855,10 +863,37 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
   // Load full topics asynchronously from main process disk store
   React.useEffect(() => {
     if (window.assistantLite?.chat?.loadTopics) {
-      void window.assistantLite.chat.loadTopics().then((list) => {
+      void window.assistantLite.chat.loadTopics().then(async (list) => {
         if (list && Array.isArray(list) && list.length > 0) {
           setTopics(list as ChatTopic[])
           topicsRef.current = list as ChatTopic[]
+        }
+        // Release the redundant pre-disk-store snapshot left by older builds.
+        // Do this after the async load so an empty/new disk store can still use
+        // it as a one-time migration fallback below.
+        if (list && Array.isArray(list) && list.length > 0) {
+          try {
+            localStorage.removeItem(STORAGE_KEY)
+          } catch {
+            // ignore storage cleanup errors
+          }
+        } else if (!list?.length) {
+          // Let the first chat frame paint before parsing a legacy snapshot;
+          // migration must not recreate the startup hitch it is removing.
+          await new Promise<void>((resolve) => window.setTimeout(resolve, 0))
+          const legacy = loadLocalTopics()
+          if (legacy.length) {
+            setTopics(legacy)
+            topicsRef.current = legacy
+            const saved = await window.assistantLite.chat.saveTopics(legacy)
+            if (saved) {
+              try {
+                localStorage.removeItem(STORAGE_KEY)
+              } catch {
+                // ignore storage cleanup errors
+              }
+            }
+          }
         }
       })
     }
