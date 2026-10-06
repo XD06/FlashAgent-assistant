@@ -2335,7 +2335,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
     }
   }
 
-  const newChat = (initialSession?: TopicSession) => {
+  const newChat = (initialSession?: TopicSession, options?: { preserveHistoryOpen?: boolean }) => {
     if (preSendRef.current) {
       preSendRef.current.cancelled = true
       preSendRef.current = null
@@ -2360,13 +2360,17 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
     setTodoList(null)
     setTurnMetrics(null)
     setInput('')
-    setShowHistory(false)
+    if (!options?.preserveHistoryOpen) {
+      setShowHistory(false)
+    }
     if (initialSession) {
       setWorkingDir(initialSession.workingDir)
       setAgentEnabled(initialSession.agentEnabled && !!initialSession.workingDir)
       setSearchEnabled(initialSession.searchEnabled)
     }
-    setTimeout(() => inputRef.current?.focus(), 0)
+    if (!options?.preserveHistoryOpen) {
+      setTimeout(() => inputRef.current?.focus(), 0)
+    }
   }
 
   const toggleTemporaryChat = () => {
@@ -2476,7 +2480,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
     saveTopics(next)
     setTopics(next)
     if (activeTopicId === id) {
-      newChat()
+      newChat(undefined, { preserveHistoryOpen: true })
     }
   }
 
