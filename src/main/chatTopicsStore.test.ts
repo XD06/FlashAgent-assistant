@@ -32,4 +32,16 @@ describe('chatTopicsStore', () => {
     const loaded = await loadTopicsFromDisk(testDir)
     expect(loaded).toEqual(sampleTopics)
   })
+
+  it('coalesces overlapping saves and leaves the newest snapshot on disk', async () => {
+    await fs.mkdir(testDir, { recursive: true })
+    const first = Array.from({ length: 20_000 }, (_, index) => ({ id: `old-${index}`, turns: [] }))
+    const latest = [{ id: 'latest', turns: [] }]
+
+    const firstWrite = saveTopicsToDisk(first, testDir)
+    const latestWrite = saveTopicsToDisk(latest, testDir)
+    await Promise.all([firstWrite, latestWrite])
+
+    await expect(loadTopicsFromDisk(testDir)).resolves.toEqual(latest)
+  })
 })
