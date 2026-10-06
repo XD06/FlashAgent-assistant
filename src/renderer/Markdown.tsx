@@ -510,15 +510,14 @@ export const MarkdownView = React.memo(function MarkdownView({
     return marked.lexer(displayedText).map((token) => token.raw)
   }, [displayedText, pending])
 
+  // Mount-once delegated interactions (click delegation + Escape-to-exit).
+  // Deliberately decoupled from content updates: re-attaching listeners on
+  // every streaming flush cost listener churn and — worse — the old shared
+  // cleanup destroyed every open preview iframe on each flush. Streaming
+  // updates must never disturb open preview frames.
   React.useEffect(() => {
     const container = containerRef.current
     if (!container) return
-
-    const cleanups: (() => void)[] = []
-    let cancelled = false
-    cleanups.push(() => {
-      cancelled = true
-    })
 
     // Delegated click handling on the container:
     // Captures preview tabs, reloads, fullscreen toggles, copy button clicks, expand/collapse toggles, and external link opens with zero per-node listeners.
@@ -674,7 +673,6 @@ export const MarkdownView = React.memo(function MarkdownView({
     }
 
     container.addEventListener('click', onContainerClick)
-    cleanups.push(() => container.removeEventListener('click', onContainerClick))
 
     // Escape key exits fullscreen preview
     const onKeyDown = (e: KeyboardEvent) => {
@@ -692,13 +690,32 @@ export const MarkdownView = React.memo(function MarkdownView({
       }
     }
     window.addEventListener('keydown', onKeyDown)
-    cleanups.push(() => window.removeEventListener('keydown', onKeyDown))
-    cleanups.push(() => {
-      container.querySelectorAll('.code-block.is-fullscreen').forEach((el) => el.classList.remove('is-fullscreen'))
-      container.querySelectorAll<HTMLIFrameElement>('.html-preview-frame').forEach((iframe) => {
+    return () => {
+      container.removeEventListener('click', onContainerClick)
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [])
+
+  // Unmount-only teardown: leave fullscreen state and destroy preview
+  // browsing contexts. Runs solely on unmount — never on streaming updates —
+  // so an open preview survives text flushes while its turn keeps streaming.
+  React.useEffect(() => {
+    const container = containerRef.current
+    return () => {
+      container?.querySelectorAll('.code-block.is-fullscreen').forEach((el) => el.classList.remove('is-fullscreen'))
+      container?.querySelectorAll<HTMLIFrameElement>('.html-preview-frame').forEach((iframe) => {
         iframe.remove()
       })
-    })
+    }
+  }, [])
+
+  // Per-content upgrades: link targets + mermaid rendering. Runs when the
+  // parsed segments settle; touches only anchors and mermaid nodes, never
+  // preview frames.
+  React.useEffect(() => {
+    const container = containerRef.current
+    if (!container) return
+    let cancelled = false
 
     // Set link target/rel on anchors
     const links = container.querySelectorAll('a[href]')
@@ -739,7 +756,9 @@ export const MarkdownView = React.memo(function MarkdownView({
 
     void tryMermaid()
 
-    return () => cleanups.forEach((fn) => fn())
+    return () => {
+      cancelled = true
+    }
   }, [segments, pending, displayedText])
 
   return (
