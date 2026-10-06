@@ -563,7 +563,12 @@ function DiffBlock({
   )
 }
 
-function AgentToolRow({
+// Memoized: settled events keep their object identity across streaming
+// flushes (only the updated call is replaced), so per-flush re-renders of the
+// streaming turn reconcile here instead of rebuilding every row's DOM.
+// Props are memo-safe: `event` is identity-stable, `live`/`isZh` are
+// primitives, `onRevert` is a useCallback.
+const AgentToolRow = React.memo(function AgentToolRow({
   event,
   live,
   isZh,
@@ -688,7 +693,7 @@ function AgentToolRow({
       )}
     </div>
   )
-}
+})
 
 /** A run of consecutive tool calls. Stays expanded — which commands ran,
  * what was edited/read is part of the transcript and must remain visible
@@ -735,6 +740,25 @@ function AgentToolGroup({
   )
 }
 
+/** Memoized text block of an assistant turn. Streaming updates only replace
+ * the tail block's object identity, so every settled text block bails out
+ * here — no stripForgedRecap re-scan, no MarkdownView re-render — on each
+ * 50ms flush. Props are primitives, so the default shallow compare suffices. */
+const AssistantTextBlock = React.memo(function AssistantTextBlock({
+  text,
+  pending
+}: {
+  text: string
+  pending: boolean
+}) {
+  // Display path also drops model-imitated tool-record blocks:
+  // the real execution blocks are rendered right here, so a
+  // hand-written ledger is pure noise (and often confusing).
+  const stripped = text ? stripForgedRecap(text) : ''
+  if (!stripped) return null
+  return <MarkdownView pending={pending}>{stripped}</MarkdownView>
+})
+
 /** Memoized body of an assistant turn (search status, thinking, text and
  * tool blocks). The streaming setChat updates are immutable and only replace
  * the LAST turn's object identity, so every settled turn bails out here
@@ -772,15 +796,7 @@ const AssistantTurnBody = React.memo(function AssistantTurnBody({
           : []
       ).map((block, blockIndex, blockList) => {
         if (block.kind === 'text') {
-          // Display path also drops model-imitated tool-record blocks:
-          // the real execution blocks are rendered right here, so a
-          // hand-written ledger is pure noise (and often confusing).
-          const stripped = block.text ? stripForgedRecap(block.text) : ''
-          return stripped ? (
-            <MarkdownView key={blockIndex} pending={!!turn.pending}>
-              {stripped}
-            </MarkdownView>
-          ) : null
+          return <AssistantTextBlock key={blockIndex} text={block.text} pending={!!turn.pending} />
         }
         if (block.kind === 'thinking') {
           return (
@@ -2030,8 +2046,12 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
     if (!el) return
     // Covers both new turns and streaming updates (each delta produces a new
     // chat array). rAF batches the scroll after paint to avoid layout thrash.
+    // Early-out when already pinned: the scrollHeight read still costs a
+    // layout, but the write (and the invalidation it triggers) is skipped.
     const raf = requestAnimationFrame(() => {
-      el.scrollTop = el.scrollHeight
+      if (el.scrollHeight - el.scrollTop - el.clientHeight > 2) {
+        el.scrollTop = el.scrollHeight
+      }
     })
     return () => cancelAnimationFrame(raf)
   }, [chat])

@@ -2648,6 +2648,15 @@ html[data-theme='dark'] .toolbar-button.toolbar-button--primary:hover {
   box-sizing: border-box;
   grid-template-columns: minmax(0, 1fr);
 }
+/* Offscreen turns skip layout/style/paint until scrolled near the viewport.
+ * Each streaming flush replaces the tail block's DOM; without containment
+ * Blink re-lays-out the whole (potentially huge) transcript per flush.
+ * scrollIntoView / anchor navigation still force-render on demand. */
+.chat-content > .chat-user-msg-wrap,
+.chat-content > .result {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 240px;
+}
 .chat-empty {
   margin: auto;
   display: flex;
