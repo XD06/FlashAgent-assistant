@@ -1340,13 +1340,17 @@ export async function streamChatMessages(
 
 export async function listModels(provider: ProviderSettings, options: ProviderRequestOptions = {}): Promise<string[]> {
   assertProviderReady(provider, false)
-  const response = await fetchProvider(
+  // Bound like the streaming path: a provider that accepts the connection and
+  // never answers would otherwise leave the settings page spinning forever —
+  // the renderer has no timeout of its own for this call.
+  const response = await fetchWithAttemptTimeout(
     buildProviderUrl(provider, 'models'),
     {
       method: 'GET',
       headers: buildProviderHeaders(provider)
     },
-    options
+    options,
+    undefined
   )
 
   if (!response.ok) throw new Error(await readProviderError(response))
@@ -1381,14 +1385,15 @@ export async function testModel(provider: ProviderSettings, options: ProviderReq
           ]
         }
 
-  const response = await fetchProvider(
+  const response = await fetchWithAttemptTimeout(
     buildProviderUrl(provider, provider.apiType === 'anthropic' ? 'messages' : 'chat/completions'),
     {
       method: 'POST',
       headers: buildProviderHeaders(provider),
       body: JSON.stringify(body)
     },
-    options
+    options,
+    undefined
   )
 
   if (!response.ok) throw new Error(await readProviderError(response))

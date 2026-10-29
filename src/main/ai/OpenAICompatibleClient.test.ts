@@ -122,7 +122,9 @@ describe('OpenAI-compatible stream parser', () => {
       headers: {
         'content-type': 'application/json',
         authorization: 'Bearer test-key'
-      }
+      },
+      // Bounded by the same headers timeout as the streaming path.
+      signal: expect.any(AbortSignal)
     })
   })
 
@@ -144,7 +146,8 @@ describe('OpenAI-compatible stream parser', () => {
       headers: {
         'content-type': 'application/json',
         authorization: 'Bearer test-key'
-      }
+      },
+      signal: expect.any(AbortSignal)
     })
   })
 
@@ -195,7 +198,8 @@ describe('OpenAI-compatible stream parser', () => {
         'content-type': 'application/json',
         'x-api-key': 'anthropic-key',
         'anthropic-version': '2023-06-01'
-      }
+      },
+      signal: expect.any(AbortSignal)
     })
   })
 

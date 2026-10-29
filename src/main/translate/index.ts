@@ -157,6 +157,12 @@ export function registerTranslateIpc(providerFetch: ProviderFetch): void {
           const message = error instanceof Error ? error.message : String(error)
           sendChunk({ requestId, serviceId, state: 'error', error: message })
         })
+        .finally(() => {
+          controllers.delete(controller)
+          // Drop the run once its last service settled, otherwise a long
+          // session keeps one dead Set per translation.
+          if (!controllers.size && liveRequests.get(requestId) === controllers) liveRequests.delete(requestId)
+        })
     }
 
     for (const serviceId of enabled) {

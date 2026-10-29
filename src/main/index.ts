@@ -753,7 +753,11 @@ function registerIpc(): void {
         console.error('[AiChunk] send error:', err)
       }
     }
-    event.sender.once('destroyed', () => controller.abort())
+    // Abort if the requesting window dies mid-stream, and detach the listener
+    // on completion: `once` only removes itself when it fires, so a window that
+    // survives many streams would accumulate one listener per request.
+    const onSenderDestroyed = (): void => controller.abort()
+    event.sender.once('destroyed', onSenderDestroyed)
     try {
       // Paired with endStream in the finally below — the idle-destroy timers
       // must not tear down a window that is still driving this request.
@@ -1107,6 +1111,7 @@ function registerIpc(): void {
       abortControllers.delete(request.requestId)
       injectionQueues.delete(request.requestId)
       endStream(senderId)
+      event.sender.removeListener('destroyed', onSenderDestroyed)
     }
   })
 
