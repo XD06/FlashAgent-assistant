@@ -1,4 +1,4 @@
-import { exec } from 'node:child_process'
+import { exec, spawn } from 'node:child_process'
 import { existsSync, promises as fs } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, relative, resolve } from 'node:path'
@@ -465,60 +465,98 @@ function runCommandTool(
   const timeoutSeconds = typeof args.timeout_seconds === 'number' ? args.timeout_seconds : 0
   const timeout = Math.min(MAX_COMMAND_TIMEOUT_MS, Math.max(1000, timeoutSeconds > 0 ? timeoutSeconds * 1000 : DEFAULT_COMMAND_TIMEOUT_MS))
 
-  let shell: string | undefined
-  let execCommand = command
+  // The command always travels as ONE argv entry, never re-assembled into a
+  // command line: handing `"bash" -c "…"` to exec lets cmd.exe re-parse the
+  // quoted line, so a `"` inside the approved bash command flips cmd's quoting
+  // state and a following `&` starts a second OS command.
   const resolved = resolveCommandShell(shellPref)
+  let file: string
+  let shellArgs: string[]
+  let verbatim = false
   if (resolved === 'gitbash') {
-    shell = undefined
-    // exec quoting for bash -c is fragile on Windows; pass through cmd with the
-    // bash binary quoted and the command single-argument escaped.
-    execCommand = `"${findGitBash()}" -c "${command.replace(/(["\\$`])/g, '\\$1')}"`
+    file = findGitBash() ?? 'bash.exe'
+    shellArgs = ['-c', command]
   } else if (resolved === 'pwsh') {
-    shell = findPwsh() ?? 'powershell.exe'
+    file = findPwsh() ?? 'powershell.exe'
+    shellArgs = ['-c', command]
   } else if (resolved === 'powershell') {
-    shell = 'powershell.exe'
+    file = 'powershell.exe'
+    shellArgs = ['-c', command]
   } else if (resolved === 'cmd') {
-    shell = 'cmd.exe'
+    // cmd.exe has its own quoting rules — hand it the pre-quoted line verbatim,
+    // the same shape exec's shell mode used.
+    file = 'cmd.exe'
+    shellArgs = ['/d', '/s', '/c', `"${command}"`]
+    verbatim = true
   } else {
-    shell = '/bin/bash'
+    file = '/bin/bash'
+    shellArgs = ['-c', command]
   }
 
   return new Promise<string>((promiseResolve, promiseReject) => {
-    const child = exec(
-      execCommand,
-      {
-        cwd: workingDir,
-        timeout,
-        maxBuffer: MAX_COMMAND_OUTPUT + 1024,
-        windowsHide: true,
-        // Force UTF-8 for piped Python output — on zh-CN Windows it defaults
-        // to GBK, which Node then mis-decodes as UTF-8 (mojibake).
-        env: { ...process.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' },
-        ...(shell ? { shell } : {})
-      },
-      (error, stdout, stderr) => {
-        const merged = [stdout, stderr].filter(Boolean).join('\n---stderr---\n').trim()
-        const truncated =
-          merged.length > MAX_COMMAND_OUTPUT ? `${merged.slice(0, MAX_COMMAND_OUTPUT)}\n... (output truncated)` : merged
-        if (error) {
-          if (error.killed) {
-            promiseReject(new Error(`Command timed out after ${Math.round(timeout / 1000)}s.\n${truncated}`))
-          } else {
-            // Non-zero exit is useful signal for the model, not a hard failure.
-            promiseResolve(`Exit code ${error.code ?? 1}\n${truncated || '(no output)'}`)
-          }
-          return
-        }
-        promiseResolve(truncated || '(no output)')
+    const child = spawn(file, shellArgs, {
+      cwd: workingDir,
+      windowsHide: true,
+      windowsVerbatimArguments: verbatim,
+      // Force UTF-8 for piped Python output — on zh-CN Windows it defaults to
+      // GBK, which Node then mis-decodes as UTF-8 (mojibake).
+      env: { ...process.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' }
+    })
+    const cap = MAX_COMMAND_OUTPUT + 1024
+    let stdout = ''
+    let stderr = ''
+    let settled = false
+    let timedOut = false
+    let timer: ReturnType<typeof setTimeout> | null = null
+
+    const onData = (target: 'out' | 'err') => (chunk: Buffer): void => {
+      const text = chunk.toString('utf8')
+      if (target === 'out') {
+        if (stdout.length < cap) stdout += text
+      } else if (stderr.length < cap) {
+        stderr += text
       }
-    )
-    if (onOutput) {
-      // Live output for the UI while the command runs; the exec callback above
-      // still delivers the complete (merged, truncated) result to the model.
-      child.stdout?.on('data', (data) => onOutput(String(data)))
-      child.stderr?.on('data', (data) => onOutput(String(data)))
+      // Live output for the UI while the command runs; the promise below still
+      // delivers the complete (merged, truncated) result to the model.
+      onOutput?.(text)
     }
-    signal?.addEventListener('abort', () => child.kill(), { once: true })
+    child.stdout?.on('data', onData('out'))
+    child.stderr?.on('data', onData('err'))
+
+    // The shell forks the real command, so killing the wrapper alone leaves the
+    // work running (and the abort button lying). Take the whole tree down.
+    const killTree = (): void => {
+      if (child.pid === undefined || child.exitCode !== null) return
+      if (isWin) exec(`taskkill /pid ${child.pid} /t /f`, () => undefined)
+      else child.kill()
+    }
+    const onAbort = (): void => killTree()
+
+    const finish = (code: number | string | null): void => {
+      if (settled) return
+      settled = true
+      if (timer) clearTimeout(timer)
+      signal?.removeEventListener('abort', onAbort)
+      const merged = [stdout, stderr].filter(Boolean).join('\n---stderr---\n').trim()
+      const truncated =
+        merged.length > MAX_COMMAND_OUTPUT ? `${merged.slice(0, MAX_COMMAND_OUTPUT)}\n... (output truncated)` : merged
+      if (timedOut) {
+        promiseReject(new Error(`Command timed out after ${Math.round(timeout / 1000)}s.\n${truncated}`))
+        return
+      }
+      // Non-zero exit is useful signal for the model, not a hard failure.
+      if (code === 0) promiseResolve(truncated || '(no output)')
+      else promiseResolve(`Exit code ${code ?? 1}\n${truncated || '(no output)'}`)
+    }
+
+    signal?.addEventListener('abort', onAbort, { once: true })
+    timer = setTimeout(() => {
+      timedOut = true
+      killTree()
+    }, timeout)
+    child.on('error', (error: NodeJS.ErrnoException) => finish(error.code ?? 1))
+    child.on('close', (code) => finish(code))
+    if (signal?.aborted) killTree()
   })
 }
 

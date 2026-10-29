@@ -7,6 +7,7 @@ import {
   assessCommandRisk,
   executeAgentTool,
   findLatestChecklistState,
+  findGitBash,
   formatChecklistAnchor,
   isForbiddenCommand,
   isReadOnlyTool,
@@ -497,6 +498,41 @@ describe('run_command live output', () => {
     )
     expect(output).toContain('streamed-line')
     expect(chunks.join('')).toContain('streamed-line')
+  })
+})
+
+describe('run_command shell invocation', () => {
+  const isWin = process.platform === 'win32'
+  const gitBash = isWin ? findGitBash() : null
+
+  it.runIf(!!gitBash)('keeps a quoted & inside the approved bash command', async () => {
+    // exec used to re-parse this line through cmd.exe, where the inner quote
+    // flips cmd's quoting state and `&` starts a second OS command.
+    const output = await executeAgentTool(
+      'run_command',
+      { command: 'echo "left & right"' },
+      workDir,
+      undefined,
+      undefined,
+      'gitbash'
+    )
+    expect(output.trim()).toBe('left & right')
+  })
+
+  it.runIf(isWin)('runs through Windows PowerShell when selected', async () => {
+    const output = await executeAgentTool('run_command', { command: 'echo ps-ok' }, workDir, undefined, undefined, 'powershell')
+    expect(output).toContain('ps-ok')
+  })
+
+  it.runIf(isWin)('hands cmd.exe its pre-quoted command line verbatim', async () => {
+    const output = await executeAgentTool('run_command', { command: 'echo cmd-ok' }, workDir, undefined, undefined, 'cmd')
+    expect(output).toContain('cmd-ok')
+  })
+
+  it.runIf(!!gitBash)('rejects and kills the tree when the command times out', async () => {
+    await expect(
+      executeAgentTool('run_command', { command: 'sleep 5', timeout_seconds: 1 }, workDir, undefined, undefined, 'gitbash')
+    ).rejects.toThrow(/timed out/)
   })
 })
 
