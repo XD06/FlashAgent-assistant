@@ -63,7 +63,7 @@ graph TD
 - **划词问答**：`selection-hook`（原生全局钩子）→ `SelectionService`（主进程）→ 划词工具栏窗口 → 用户选动作 → `SelectionProcessAction` IPC → 复用 action 窗口（`selectionAction.html`）→ `AiStream` IPC → 主进程 Agent 循环调 AI 服务商 → chunk 流式回传。
 - **截图识别文字**：热键 → `ScreenshotService.startCapture` → GDI helper exe（`csc.exe` 现场编译，写临时 PNG，读入内存后立即删除）→ 全屏遮罩选区 → confirm 后主进程裁剪 → 按 `settings.ocrEngine` 分发：系统引擎（`WinRtOcr.exe`，PNG 走 stdin）或 paddle 引擎包（userData 内按需下载）→ 文本进剪贴板 + toast。
 - **快速翻译与语音合成**：回车 → `translate:run` → 主进程**并行**执行所有启用服务（每服务独立 15s 超时与 AbortController）→ 逐服务回 `translate:chunk` → 渲染层按 `serviceId` 更新卡片；中英文双向智能互切；词典卡片附带生词本自动收录钩子；全局语音合成（TTS）根据设置调度 Edge TTS 或小米 MiMo 大模型规范播音服务。
-- **Agent 工具调用与执行流**：模型工具调用 → 未闭合 JSON 启发式参数流式解析（`parseStreamingToolArgs`）与实时字符计数/展开动效 → 基于 `(round, index)` 轮次物理隔离的稳定 Call ID 派发 → `validateAgentToolArgs` → 连续只读工具并发批处理（`Promise.all`）加速读取 → 细粒度风险分级（内置与 MCP 工具均评估：`forbidden` 毁灭性指令直接拦截 / `dangerous` 危险操作即便在全权限模式也强制暂停审批 / 普通操作全权限自动放行）→ 动态防幻觉守护（拦截虚假测试报告与无工具调用的伪完成声明）→ 编辑后验证引导（自动提示跑测试/构建检查）→ 执行并落盘快照（可回退）与工具输出（截断至 12k 回传）；主进程全局未捕获异常/拒绝拦截与 IPC 4000 字符流式文本有界截断保证进程常驻稳定。
+- **Agent 工具调用与执行流**：模型工具调用 → 未闭合 JSON 启发式参数流式解析（`parseStreamingToolArgs`）与实时字符计数/展开动效 → 基于 `(round, index)` 轮次物理隔离的稳定 Call ID 派发 → `validateAgentToolArgs` → 连续只读工具并发批处理（`Promise.all`）加速读取 → 细粒度风险分级（内置与 MCP 工具均评估：`forbidden` 毁灭性指令直接拦截 / `dangerous` 危险操作即便在全权限模式也强制暂停审批 / 普通操作全权限自动放行）→ 动态防幻觉守护（拦截虚假测试报告与无工具调用的伪完成声明）→ 编辑后验证引导（自动提示跑测试/构建检查）→ 执行并落盘快照（可回退）与工具输出（截断至 12k 回传）；主进程全局未捕获异常/拒绝拦截与 IPC 4000 字符流式文本有界截断保证进程常驻稳定。读取类工具（`read_file` / `list_dir` / `search_files`）以工作目录为声明的操作范围：越界或命中敏感文件名时暂停审批，`search_files` 直接跳过敏感文件内容（结果里说明），避免搜索成为读取审批的旁路；`run_command` 以单个 argv 交给目标 shell（不再经 cmd.exe 二次拼接命令行），abort/超时按进程树终止。
 - **对话上下文与历史压缩流**：默认注意力预算 200k tokens（保留区 85% ~170k，触发线 95% ~190k）；长任务单轮/多轮采用死锁破局退避，在发送前或用户点击输入框左下角圆环就地压缩；旧历史经由结构自愈的 `IPC.AiSummarize` 提炼为 5 节复工文档（Recap Doc），若指定压缩模型 404 则无缝降级当前聊天模型；UI 视图完整保留全部轮次，线路层以「复工文档 + 保留区轮次 + 刚输入指令」按需组装重放。
 
 ## 4. 核心抽象与设计模式
@@ -77,16 +77,17 @@ graph TD
 ## 5. 外部依赖与集成点
 
 - **AI 服务商**：OpenAI-compatible（`/chat/completions` 流式）与 Anthropic；请求层统一采用 Node 原生 / undici 栈（挂接全局 dispatcher，配置 64 连接池、15s 连接超时与 30s Headers Timeout），零 Chromium 跨进程 IPC 缓冲，支持 `[DONE]` 毫秒级流终止与指数退避重试；渲染器仍通过 Chromium 代理。
-- **渲染视图与实时预览**：代码块采用 highlight.js 高亮与自适应高度折叠，HTML/SVG 支持无缝切入独立沙箱 iframe 实时预览与全屏覆盖，采用虚拟隐藏与 DOM 缓存杜绝 RenderFrame 重建卡顿。
+- **渲染视图与实时预览**：代码块采用 highlight.js 高亮与自适应高度折叠，HTML/SVG 支持无缝切入独立沙箱 iframe 实时预览与全屏覆盖，采用虚拟隐藏与 DOM 缓存杜绝 RenderFrame 重建卡顿；预览帧为 opaque origin（刻意不授予 `allow-same-origin`，srcdoc 继承父源后能经 `window.parent` 拿到 contextBridge）。
 - **翻译/词典/TTS 上游**：均为 Web API，各自需要签名或固定请求头；Edge TTS 补充请求头防盗链绕过，小米 MiMo TTS 走 OpenAI 兼容聊天补全端点合成音频；有道 dictvoice 音频有防盗链，经主进程代理换 data URL。
 - **MCP**：`@modelcontextprotocol/sdk` 懒加载（首次连接才 import），自动向 stdio 子进程与远程 MCP 注入系统/应用网络代理、清洗嵌套 `cmd /c` 与补充 `-y` 参数、实时捕获 stderr 管道排查日志，并支持行内配置可视化修改与热重载。
 
-- **OS 集成**：`selection-hook`（划词，Windows/macOS 双实现）、`csc.exe` 编译的 helper、`Windows.Media.Ocr`、系统托盘与全局快捷键。
+- **OS 集成**：`selection-hook`（划词，Windows/macOS 双实现）、`csc.exe` 编译的 helper、`Windows.Media.Ocr`、系统托盘与全局快捷键。交给系统外壳的链接只有 `app:open-external` 一条通道且只放行 http(s)/mailto（Windows 的 `shell.openExternal` 会执行盘符路径与 `file:` 指向的 .lnk/.exe）；`will-navigate` 一律阻止，仅放行当前文档重载。
 
 ## 6. 技术债务与已知取舍
 
 - **主进程依赖散装进 asar**（`externalizeDepsPlugin`，约 3,500 文件）：改为捆绑可再减体积并小幅加快冷启动，但 MCP/undici/conf→ajv 打包有坑，已决定推迟。
 - **ChatMode 单文件约 2,400 行**：已做消息体级 memo 化，完整按域拆分等新功能页面需求明确后进行。
 - **darwin 引擎包路径未实机验证**：引擎包 manifest 支持 macOS，但没有 macOS 机器跑过完整下载→加载→识别链路。
-- **速度 vs 内存取舍**：设置窗口、划词结果窗口、聊天窗口关闭均为隐藏 + 60s 闲置后销毁（保留秒开体验，不再常驻渲染进程；彻底禁用/退出走 destroy 直接释放）。托盘常驻依赖 `window-all-closed` 处理器，勿删。
+- **速度 vs 内存取舍**：设置窗口、划词结果窗口、聊天窗口关闭均为隐藏 + 60s 闲置后销毁（保留秒开体验，不再常驻渲染进程；彻底禁用/退出走 destroy 直接释放）；销毁前检查该窗口是否还有活跃 AI 请求，有则顺延一个周期，避免长任务被静默中断。托盘常驻依赖 `window-all-closed` 处理器，勿删。
+- **审批门禁仍在渲染进程侧（未修）**：`agent.approveTool` / `settings.update` 不校验 sender，且每个窗口都持有全量桥，任一窗口被 XSS 后可直接改 `agentFullAccess`、加 MCP 服务器或改 `proxyUrl` 拿到 RCE；根治方向是把确认改为主进程原生对话框，仅校验 sender 不足以覆盖聊天窗口自身被注入的情况。
 - **`--max-old-space-size=512`**：为 4K 截图 dataUrl 预留的有意上限，非泄漏症状。
