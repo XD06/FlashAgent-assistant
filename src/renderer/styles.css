@@ -2657,6 +2657,14 @@ html[data-theme='dark'] .toolbar-button.toolbar-button--primary:hover {
   content-visibility: auto;
   contain-intrinsic-size: auto 240px;
 }
+/* An open fullscreen preview must escape its turn: layout containment (from
+ * content-visibility) makes the turn the containing block for position:fixed
+ * descendants, which clipped the "fullscreen" frame to the message box. Only
+ * the turn that actually holds the frame gives containment up. */
+.chat-content > .chat-user-msg-wrap:has(.is-fullscreen),
+.chat-content > .result:has(.is-fullscreen) {
+  content-visibility: visible;
+}
 .chat-empty {
   margin: auto;
   display: flex;
