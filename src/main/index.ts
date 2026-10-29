@@ -35,6 +35,7 @@ import { destroyOcr, registerOcrIpc } from './ocr'
 import { getSettings, onSettingsChanged, updateSettings } from './settingsStore'
 import { isSupportedPlatform, isWin } from './platform'
 import { isExternalUrlAllowed } from './urlSafety'
+import { beginStream, endStream, hasActiveStream } from './activeStreams'
 
 // Global crash prevention for uncaught background errors
 process.on('uncaughtException', (err) => {
@@ -255,10 +256,16 @@ function scheduleChatIdleDestroy(): void {
   if (chatIdleTimer) clearTimeout(chatIdleTimer)
   chatIdleTimer = setTimeout(() => {
     chatIdleTimer = null
-    if (chatWindow && !chatWindow.isDestroyed() && !chatWindow.isVisible()) {
-      chatWindow.destroy()
-      chatWindow = null
+    if (!chatWindow || chatWindow.isDestroyed() || chatWindow.isVisible()) return
+    // A hidden window can still be driving an agent run. Destroying it aborts
+    // the stream (the 'destroyed' listener in AiStream) and silently kills the
+    // task, so keep it alive and check again once the run is over.
+    if (hasActiveStream(chatWindow.webContents.id)) {
+      scheduleChatIdleDestroy()
+      return
     }
+    chatWindow.destroy()
+    chatWindow = null
   }, CHAT_IDLE_DESTROY_MS)
 }
 
@@ -730,6 +737,7 @@ function registerIpc(): void {
   ipcMain.handle(IPC.AiStream, async (event, request: AiStreamRequest) => {
     const controller = new AbortController()
     const settings = getSettings()
+    const senderId = event.sender.id
     abortControllers.set(request.requestId, controller)
     injectionQueues.set(request.requestId, [])
     // If the requesting window dies mid-stream, stop the request instead of
@@ -747,6 +755,9 @@ function registerIpc(): void {
     }
     event.sender.once('destroyed', () => controller.abort())
     try {
+      // Paired with endStream in the finally below — the idle-destroy timers
+      // must not tear down a window that is still driving this request.
+      beginStream(senderId)
       const messages = request.messages?.length
         ? request.messages
         : [{ role: 'user' as const, text: request.prompt ?? '' }]
@@ -1095,6 +1106,7 @@ function registerIpc(): void {
       cancelApprovalsForRequest(request.requestId)
       abortControllers.delete(request.requestId)
       injectionQueues.delete(request.requestId)
+      endStream(senderId)
     }
   })
 

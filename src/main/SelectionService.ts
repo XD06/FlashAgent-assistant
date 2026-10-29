@@ -4,6 +4,7 @@ import { IPC } from '@shared/ipc'
 import { shouldProcessProgram } from '@shared/selectionFilter'
 import type { ActionItem, ActionPayload, AppSettings, SelectedTextPayload } from '@shared/types'
 import { isMac, isWin } from './platform'
+import { hasActiveStream } from './activeStreams'
 import type {
   KeyboardEventData,
   MouseEventData,
@@ -176,7 +177,14 @@ export class SelectionService {
     this.cancelActionIdleDestroy(win)
     const timer = setTimeout(() => {
       this.actionIdleTimers.delete(win)
-      if (!win.isDestroyed() && !win.isVisible()) win.destroy()
+      if (win.isDestroyed() || win.isVisible()) return
+      // Still streaming: destroying the renderer aborts the request and kills
+      // the action mid-answer. Keep the window and check again later.
+      if (hasActiveStream(win.webContents.id)) {
+        this.scheduleActionIdleDestroy(win)
+        return
+      }
+      win.destroy()
     }, ACTION_IDLE_DESTROY_MS)
     this.actionIdleTimers.set(win, timer)
   }
