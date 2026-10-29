@@ -576,6 +576,7 @@ async function searchFilesTool(workingDir: string, args: Record<string, unknown>
   const contextLines = Math.min(3, Math.max(0, typeof args.context_lines === 'number' ? Math.floor(args.context_lines) : 0))
   const results: string[] = []
   let visited = 0
+  let skippedSensitive = 0
   const walk = async (dir: string): Promise<void> => {
     if (results.length >= maxResults || visited >= MAX_SEARCH_VISITED) return
     let entries
@@ -601,6 +602,12 @@ async function searchFilesTool(workingDir: string, args: Record<string, unknown>
         try {
           const stat = await fs.stat(full)
           if (stat.size > MAX_SEARCH_FILE_SIZE) continue
+          // Never return the contents of a file read_file would gate behind an
+          // approval card: search must not become a silent bypass of it.
+          if (isSensitivePath(full)) {
+            skippedSensitive += 1
+            continue
+          }
           const content = await fs.readFile(full, 'utf8')
           if (content.includes('\u0000')) continue // binary
           const lines = content.split(/\r?\n/)
@@ -625,22 +632,34 @@ async function searchFilesTool(workingDir: string, args: Record<string, unknown>
     }
   }
   await walk(root)
-  if (!results.length) return `No matches under ${root}`
+  const sensitiveNote = skippedSensitive
+    ? `\n(${skippedSensitive} sensitive file(s) skipped; read one with read_file to request approval)`
+    : ''
+  if (!results.length) return `No matches under ${root}${sensitiveNote}`
   const capped = results.length >= maxResults ? ` (capped at ${maxResults})` : ''
-  return `${results.length} match(es) under ${root}${capped}:\n${results.join('\n')}`
+  return `${results.length} match(es) under ${root}${capped}:\n${results.join('\n')}${sensitiveNote}`
 }
 
 /** True when this call must be approved by the user before running. */
 export function requiresApproval(name: string, args: Record<string, unknown>, workingDir: string): boolean {
   if (name === 'write_file' || name === 'edit_file' || name === 'run_command') return true
-  if (name === 'read_file') {
-    try {
-      return isSensitivePath(resolveAgentPath(workingDir, asString(args.path)))
-    } catch {
-      return false
-    }
+  if (name !== 'read_file' && name !== 'list_dir' && name !== 'search_files') return false
+  try {
+    // No path means the working directory itself (list_dir / search_files).
+    const resolved = resolveAgentPath(workingDir, asString(args.path) || '.')
+    // The working directory is the agent's declared scope: reading outside it is
+    // an escape hatch (browser profile DBs, other projects, shell history) and
+    // must be a deliberate, visible decision — a filename blacklist alone cannot
+    // cover every credential store on the machine.
+    return isSensitivePath(resolved) || isOutsideDir(workingDir, resolved)
+  } catch {
+    return false
   }
-  return false
+}
+
+function isOutsideDir(dir: string, target: string): boolean {
+  const rel = relative(resolve(dir), target)
+  return rel.startsWith('..') || isAbsolute(rel)
 }
 
 export type CommandRisk = 'safe' | 'dangerous' | 'forbidden'
@@ -687,7 +706,7 @@ export function summarizeToolCall(name: string, args: Record<string, unknown>, w
     case 'run_command':
       return asString(args.command)
     case 'search_files':
-      return [asString(args.glob), asString(args.pattern)].filter(Boolean).join(' · ')
+      return [asString(args.path), asString(args.glob), asString(args.pattern)].filter(Boolean).join(' · ')
     case 'read_tool_output':
       return asString(args.call_id)
     case 'read_file':

@@ -181,10 +181,13 @@ describe('requiresApproval', () => {
     expect(requiresApproval('run_command', { command: 'ls' }, workDir)).toBe(true)
   })
 
-  it('requires approval only for sensitive reads', () => {
+  it('requires approval for sensitive reads and reads outside the working directory', () => {
     expect(requiresApproval('read_file', { path: 'src/main.ts' }, workDir)).toBe(false)
     expect(requiresApproval('read_file', { path: '.env' }, workDir)).toBe(true)
     expect(requiresApproval('list_dir', { path: '.' }, workDir)).toBe(false)
+    const outside = resolve(tmpdir(), 'elsewhere')
+    expect(requiresApproval('read_file', { path: join(outside, 'notes.txt') }, workDir)).toBe(true)
+    expect(requiresApproval('list_dir', { path: outside }, workDir)).toBe(true)
   })
 })
 
@@ -444,6 +447,19 @@ describe('search_files', () => {
     expect(output).toContain('No matches')
   })
 
+  it('skips sensitive files instead of bypassing read_file approval', async () => {
+    const { mkdirSync } = await import('node:fs')
+    mkdirSync(searchDir, { recursive: true })
+    writeFileSync(join(searchDir, '.env'), 'secretNeedle=1\n', 'utf8')
+    writeFileSync(join(searchDir, 'plain.ts'), 'secretNeedle=2\n', 'utf8')
+
+    const output = await executeAgentTool('search_files', { path: searchDir, pattern: 'secretNeedle' }, workDir)
+
+    expect(output).toContain('plain.ts')
+    expect(output).not.toContain('secretNeedle=1')
+    expect(output).toContain('sensitive file(s) skipped')
+  })
+
   it('requires glob or pattern', async () => {
     await expect(executeAgentTool('search_files', {}, workDir)).rejects.toThrow(/glob.*pattern|pattern.*glob/)
   })
@@ -452,12 +468,20 @@ describe('search_files', () => {
     await expect(executeAgentTool('search_files', { pattern: '([' }, workDir)).rejects.toThrow(/invalid regex/)
   })
 
-  it('runs without approval (read-only tool)', () => {
+  it('runs without approval when it stays inside the working directory', () => {
     expect(requiresApproval('search_files', { pattern: 'x' }, workDir)).toBe(false)
   })
 
-  it('summarizes glob and pattern', () => {
+  it('requires approval when the search root leaves the working directory', () => {
+    const outside = resolve(tmpdir(), 'elsewhere')
+    expect(requiresApproval('search_files', { path: outside, pattern: 'x' }, workDir)).toBe(true)
+  })
+
+  it('summarizes the search root with glob and pattern', () => {
     expect(summarizeToolCall('search_files', { glob: '*.ts', pattern: 'foo' })).toBe('*.ts · foo')
+    expect(summarizeToolCall('search_files', { path: 'C:\\other', glob: '*.ts', pattern: 'foo' })).toBe(
+      'C:\\other · *.ts · foo'
+    )
   })
 })
 
