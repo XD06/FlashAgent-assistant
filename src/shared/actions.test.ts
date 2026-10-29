@@ -3,7 +3,7 @@ import {
   buildAssistantSystemPrompt,
   buildSearchUrl,
   interpolatePrompt,
-  isUriOrFilePath,
+  isDirectUrl,
   mergeSettings,
   normalizeSettings
 } from './actions'
@@ -109,10 +109,13 @@ describe('selection actions', () => {
     ).toBe('https://example.com?q=hello%20world')
   })
 
-  it('passes direct URLs and file paths through for search actions', () => {
-    expect(isUriOrFilePath('https://example.com')).toBe(true)
-    expect(isUriOrFilePath('/Users/me/file.txt')).toBe(true)
-    expect(isUriOrFilePath('hello world')).toBe(false)
+  it('passes web/mail URLs through but searches local paths as text', () => {
+    expect(isDirectUrl('https://example.com')).toBe(true)
+    expect(isDirectUrl('mailto:someone@example.com')).toBe(true)
+    // Local paths must never reach shell.openExternal (executes on Windows).
+    expect(isDirectUrl('/Users/me/file.txt')).toBe(false)
+    expect(isDirectUrl('C:\\Users\\Public\\payload.lnk')).toBe(false)
+    expect(isDirectUrl('hello world')).toBe(false)
   })
 
   it('includes a default speak action for reading selected text aloud', () => {

@@ -61,16 +61,19 @@ export function interpolatePrompt(
 export function buildSearchUrl(action: ActionItem, selectedText: string): string {
   const text = selectedText.trim()
   if (!text) return ''
-  if (isUriOrFilePath(text)) return text
+  if (isDirectUrl(text)) return text
 
   const template = action.searchUrlTemplate || 'https://www.google.com/search?q={{query}}'
   return template.replaceAll('{{query}}', encodeURIComponent(text)).replaceAll('{{text}}', encodeURIComponent(text))
 }
 
-export function isUriOrFilePath(value: string): boolean {
+/** True for a bare web/mail URL the shell may open directly. Local file paths
+ * are excluded on purpose: they are searched as text instead, so selected text
+ * can never be handed to shell.openExternal (which executes paths on Windows). */
+export function isDirectUrl(value: string): boolean {
   const text = value.trim()
   if (!text || /\s/.test(text)) return false
-  return /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(text) || /^[a-zA-Z]:[/\\]/.test(text) || /^\/[^/]/.test(text)
+  return /^(?:https?|mailto):/i.test(text)
 }
 
 export function mergeSettings(current: AppSettings, patch: SettingsPatch): AppSettings {

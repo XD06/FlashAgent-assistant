@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { marked } from 'marked'
-import { highlightCode, buildHtmlPreviewDoc, buildSvgPreviewDoc, streamingParser } from './Markdown'
+import { highlightCode, buildHtmlPreviewDoc, buildSvgPreviewDoc, streamingParser, PREVIEW_IFRAME_SANDBOX } from './Markdown'
 
 describe('Markdown Code Block & Syntax Highlighting', () => {
   it('highlights recognized languages with highlight.js span tags', () => {
@@ -94,6 +94,13 @@ describe('Markdown Code Block & Syntax Highlighting', () => {
     const parsed = marked.parse(md, { async: false }) as string
     expect(parsed).toBe('<pre><code class="language-mermaid">graph TD;\nA--&gt;B;</code></pre>\n')
     expect(parsed).not.toContain('code-block')
+  })
+
+  it('never grants the preview frame same-origin access to the app window', () => {
+    // srcdoc inherits the parent origin, so allow-same-origin would let
+    // model-generated HTML reach window.parent.assistantLite.
+    expect(PREVIEW_IFRAME_SANDBOX).not.toContain('allow-same-origin')
+    expect(PREVIEW_IFRAME_SANDBOX).toContain('allow-scripts')
   })
 
   it('streaming parser mirrors block structure with highlight.js skipped', () => {

@@ -432,6 +432,12 @@ async function handleCopyClick(btn: HTMLButtonElement): Promise<void> {
 // and is released automatically when the frame is removed.
 const loadedPreviewDocs = new WeakMap<HTMLIFrameElement, string>()
 
+/** Sandbox for the preview frame. `allow-same-origin` is deliberately absent:
+ * a srcdoc frame inherits the parent origin, so with it the preview document
+ * could read `window.parent`'s contextBridge — settings.get() hands out
+ * provider API keys and settings.update can grant the agent full access. */
+export const PREVIEW_IFRAME_SANDBOX = 'allow-scripts allow-forms allow-modals allow-popups'
+
 function ensurePreviewFrame(codeBlock: HTMLElement): HTMLIFrameElement | null {
   const panel = codeBlock.querySelector<HTMLDivElement>('.code-panel-preview')
   if (!panel) return null
@@ -439,7 +445,7 @@ function ensurePreviewFrame(codeBlock: HTMLElement): HTMLIFrameElement | null {
   if (!iframe) {
     iframe = document.createElement('iframe')
     iframe.className = 'html-preview-frame'
-    iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-modals allow-popups')
+    iframe.setAttribute('sandbox', PREVIEW_IFRAME_SANDBOX)
     panel.appendChild(iframe)
   }
   return iframe

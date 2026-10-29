@@ -34,6 +34,7 @@ import { initVocabulary, registerVocabularyIpc } from './vocabulary'
 import { destroyOcr, registerOcrIpc } from './ocr'
 import { getSettings, onSettingsChanged, updateSettings } from './settingsStore'
 import { isSupportedPlatform, isWin } from './platform'
+import { isExternalUrlAllowed } from './urlSafety'
 
 // Global crash prevention for uncaught background errors
 process.on('uncaughtException', (err) => {
@@ -668,11 +669,11 @@ function registerIpc(): void {
   ipcMain.handle(IPC.ProxyTest, (_event, proxyUrl: string) => testProxy(typeof proxyUrl === 'string' ? proxyUrl : ''))
 
   // Only allow protocols that make sense to hand to the OS shell. Selected
-  // text can be an arbitrary URI, so never forward schemes like javascript:.
+  // text can be an arbitrary URI, so never forward schemes like javascript: —
+  // and never local paths: on Windows openExternal executes them.
   ipcMain.handle(IPC.OpenExternal, (_event, url: string) => {
     if (typeof url !== 'string') return
-    const allowed = /^(https?|mailto|file):/i.test(url) || /^[a-z]:[\\/]/i.test(url)
-    if (allowed) return shell.openExternal(url)
+    if (isExternalUrlAllowed(url)) return shell.openExternal(url)
   })
   ipcMain.handle(IPC.MemoryOpen, async () => {
     // Open the global memory file in the system editor, creating it on first use.
@@ -1398,16 +1399,18 @@ if (!app.requestSingleInstanceLock()) {
     // Prevent in-app navigation: all external links open in the default browser.
     app.on('web-contents-created', (_event, contents) => {
       contents.setWindowOpenHandler(({ url }) => {
-        if (url.startsWith('http://') || url.startsWith('https://')) {
+        if (isExternalUrlAllowed(url)) {
           void shell.openExternal(url)
         }
         return { action: 'deny' }
       })
       contents.on('will-navigate', (event, url) => {
-        if (url.startsWith('http://') || url.startsWith('https://')) {
-          event.preventDefault()
-          void shell.openExternal(url)
-        }
+        // Never let a page replace the app shell: a file:// document would load
+        // into a window that still has the preload bridge attached. Reloads of
+        // the current document stay allowed (dev HMR calls location.reload()).
+        if (url === contents.getURL()) return
+        event.preventDefault()
+        if (isExternalUrlAllowed(url)) void shell.openExternal(url)
       })
     })
 

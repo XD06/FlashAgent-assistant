@@ -72,16 +72,18 @@
         }
 
         // ---- buildSearchUrl (from shared/actions.ts) ----
-        function isUriOrFilePath(value) {
+        // Local file paths are searched as text, never opened: openExternal on
+        // Windows executes paths, and the selection is attacker-controlled.
+        function isDirectUrl(value) {
           var text = value.trim();
           if (!text || /\s/.test(text)) return false;
-          return /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(text) || /^[a-zA-Z]:[/\\]/.test(text) || /^\/[^/]/.test(text);
+          return /^(?:https?|mailto):/i.test(text);
         }
 
         function buildSearchUrl(action, selectedText) {
           var text = selectedText.trim();
           if (!text) return '';
-          if (isUriOrFilePath(text)) return text;
+          if (isDirectUrl(text)) return text;
           var template = action.searchUrlTemplate || 'https://www.google.com/search?q={{query}}';
           return template.replaceAll('{{query}}', encodeURIComponent(text)).replaceAll('{{text}}', encodeURIComponent(text));
         }
