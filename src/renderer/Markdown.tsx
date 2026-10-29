@@ -24,10 +24,31 @@ export function highlightCode(code: string, lang?: string): string {
   return escapeHtml(code)
 }
 
+/** Appended to every HTML preview document: reports the content height to the
+ * parent (see onPreviewHeightMessage). Degrades silently when the model's
+ * document carries its own CSP or stops parsing — the frame then keeps its
+ * default height. A trailing script still runs after `</html>` (the parser
+ * reprocesses it in body). */
+const PREVIEW_HEIGHT_SCRIPT = `<script>
+(function () {
+  var last = 0;
+  function report() {
+    var root = document.documentElement;
+    var h = Math.ceil(Math.max(root ? root.scrollHeight : 0, document.body ? document.body.scrollHeight : 0));
+    if (!h || Math.abs(h - last) < 2) return;
+    last = h;
+    parent.postMessage({ type: 'preview-height', height: h }, '*');
+  }
+  window.addEventListener('load', report);
+  if (window.ResizeObserver && document.body) new ResizeObserver(report).observe(document.body);
+  setTimeout(report, 60);
+})();
+</script>`
+
 export function buildHtmlPreviewDoc(code: string): string {
   const trimmed = code.trim()
   if (trimmed.toLowerCase().startsWith('<!doctype') || trimmed.toLowerCase().startsWith('<html')) {
-    return trimmed
+    return `${trimmed}\n${PREVIEW_HEIGHT_SCRIPT}`
   }
   return `<!DOCTYPE html>
 <html>
@@ -71,7 +92,8 @@ export function buildHtmlPreviewDoc(code: string): string {
 <body>
 ${trimmed}
 </body>
-</html>`
+</html>
+${PREVIEW_HEIGHT_SCRIPT}`
 }
 
 export function buildSvgPreviewDoc(code: string): string {
@@ -438,6 +460,48 @@ const loadedPreviewDocs = new WeakMap<HTMLIFrameElement, string>()
  * provider API keys and settings.update can grant the agent full access. */
 export const PREVIEW_IFRAME_SANDBOX = 'allow-scripts allow-forms allow-modals allow-popups'
 
+/** Content-height reporting. The sandbox gives the frame an opaque origin, so
+ * the parent cannot read its DOM; the document measures itself and posts the
+ * result, and the parent clamps it (a model page must not be able to request a
+ * 100k-pixel frame). Kept in sync with `.html-preview-frame` min/max-height. */
+const PREVIEW_MIN_HEIGHT = 180
+const PREVIEW_MAX_HEIGHT = 600
+const PREVIEW_HEIGHT_MESSAGE = 'preview-height'
+
+/** Last height a document asked for, so leaving fullscreen can restore it. */
+const previewHeights = new WeakMap<HTMLIFrameElement, number>()
+/** Frame lookup by `MessageEvent.source` — a WeakMap so removed frames and
+ * their WindowProxies are collectable without any cleanup pass. */
+const previewFrameByWindow = new WeakMap<WindowProxy, HTMLIFrameElement>()
+let previewHeightListenerInstalled = false
+
+export function clampPreviewHeight(height: number): number {
+  return Math.min(PREVIEW_MAX_HEIGHT, Math.max(PREVIEW_MIN_HEIGHT, Math.round(height)))
+}
+
+function onPreviewHeightMessage(event: MessageEvent): void {
+  const data = event.data as { type?: unknown; height?: unknown } | null
+  if (!data || data.type !== PREVIEW_HEIGHT_MESSAGE || typeof data.height !== 'number') return
+  if (!Number.isFinite(data.height)) return
+  const iframe = previewFrameByWindow.get(event.source as WindowProxy)
+  if (!iframe || !iframe.isConnected) return
+  // Fullscreen drives the frame height through flex; an inline height would
+  // pin it back to the message-sized box.
+  if (iframe.closest('.code-block')?.classList.contains('is-fullscreen')) return
+  const height = clampPreviewHeight(data.height)
+  previewHeights.set(iframe, height)
+  if (Math.abs(height - iframe.offsetHeight) < 2) return
+  iframe.style.height = `${height}px`
+}
+
+function trackPreviewFrame(iframe: HTMLIFrameElement): void {
+  const frameWindow = iframe.contentWindow
+  if (frameWindow) previewFrameByWindow.set(frameWindow, iframe)
+  if (previewHeightListenerInstalled) return
+  previewHeightListenerInstalled = true
+  window.addEventListener('message', onPreviewHeightMessage)
+}
+
 function ensurePreviewFrame(codeBlock: HTMLElement): HTMLIFrameElement | null {
   const panel = codeBlock.querySelector<HTMLDivElement>('.code-panel-preview')
   if (!panel) return null
@@ -447,6 +511,7 @@ function ensurePreviewFrame(codeBlock: HTMLElement): HTMLIFrameElement | null {
     iframe.className = 'html-preview-frame'
     iframe.setAttribute('sandbox', PREVIEW_IFRAME_SANDBOX)
     panel.appendChild(iframe)
+    trackPreviewFrame(iframe)
   }
   return iframe
 }
@@ -556,6 +621,10 @@ export const MarkdownView = React.memo(function MarkdownView({
             const doc = buildPreviewDoc(codeBlock)
             if (loadedPreviewDocs.get(iframe) !== doc) {
               loadedPreviewDocs.set(iframe, doc)
+              // New document: drop the previous content height so the frame
+              // starts from the default and the new report can shrink it too.
+              iframe.style.height = ''
+              previewHeights.delete(iframe)
               // Let the active tab paint before Chromium parses/loads the
               // sandbox document. This keeps rapid tab clicks responsive.
               requestAnimationFrame(() => {
@@ -624,13 +693,22 @@ export const MarkdownView = React.memo(function MarkdownView({
         const codeBlock = fsBtn.closest('.code-block')
         if (!codeBlock) return
         const isFs = codeBlock.classList.contains('is-fullscreen')
+        const frame = codeBlock.querySelector<HTMLIFrameElement>('.html-preview-frame')
         if (isFs) {
           codeBlock.classList.remove('is-fullscreen')
+          // Restore the content height the frame had before fullscreen.
+          if (frame) {
+            const height = previewHeights.get(frame)
+            if (height) frame.style.height = `${height}px`
+          }
           fsBtn.innerHTML = FULLSCREEN_ENTER_ICON_SVG
           fsBtn.title = '全屏预览'
           fsBtn.setAttribute('aria-label', '全屏预览')
         } else {
           codeBlock.classList.add('is-fullscreen')
+          // Fullscreen sizes the frame through flex; an inline content height
+          // would pin it to the message box size.
+          if (frame) frame.style.height = ''
           fsBtn.innerHTML = FULLSCREEN_EXIT_ICON_SVG
           fsBtn.title = '退出全屏 (Esc)'
           fsBtn.setAttribute('aria-label', '退出全屏')
@@ -691,6 +769,9 @@ export const MarkdownView = React.memo(function MarkdownView({
         const fsBlock = container.querySelector('.code-block.is-fullscreen')
         if (fsBlock) {
           fsBlock.classList.remove('is-fullscreen')
+          const frame = fsBlock.querySelector<HTMLIFrameElement>('.html-preview-frame')
+          const height = frame ? previewHeights.get(frame) : undefined
+          if (frame && height) frame.style.height = `${height}px`
           const fsBtn = fsBlock.querySelector<HTMLButtonElement>('[data-action="toggle-fullscreen"]')
           if (fsBtn) {
             fsBtn.innerHTML = FULLSCREEN_ENTER_ICON_SVG

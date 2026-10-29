@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { marked } from 'marked'
-import { highlightCode, buildHtmlPreviewDoc, buildSvgPreviewDoc, streamingParser, PREVIEW_IFRAME_SANDBOX } from './Markdown'
+import {
+  clampPreviewHeight,
+  highlightCode,
+  buildHtmlPreviewDoc,
+  buildSvgPreviewDoc,
+  streamingParser,
+  PREVIEW_IFRAME_SANDBOX
+} from './Markdown'
 
 describe('Markdown Code Block & Syntax Highlighting', () => {
   it('highlights recognized languages with highlight.js span tags', () => {
@@ -27,12 +34,22 @@ describe('Markdown Code Block & Syntax Highlighting', () => {
     expect(doc).toContain('prefers-color-scheme: dark')
     expect(doc).toContain('::-webkit-scrollbar')
     expect(doc).toContain(snippet)
+    expect(doc).toContain("postMessage({ type: 'preview-height'")
   })
 
-  it('preserves complete HTML documents intact', () => {
+  it('preserves complete HTML documents and appends the height reporter', () => {
     const fullDoc = '<!DOCTYPE html><html><head><title>Test</title></head><body><h1>Hi</h1></body></html>'
     const doc = buildHtmlPreviewDoc(fullDoc)
-    expect(doc).toBe(fullDoc)
+    expect(doc.startsWith(fullDoc)).toBe(true)
+    expect(doc).toContain("postMessage({ type: 'preview-height'")
+  })
+
+  it('clamps the height a preview document may request', () => {
+    // The frame is a sandboxed opaque origin; a model page reporting 100k px
+    // must not be able to blow up the transcript.
+    expect(clampPreviewHeight(80)).toBe(180)
+    expect(clampPreviewHeight(320.4)).toBe(320)
+    expect(clampPreviewHeight(5000)).toBe(600)
   })
 
   it('wraps SVG snippets with checkerboard background and responsive SVG styling', () => {
