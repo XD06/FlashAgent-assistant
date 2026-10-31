@@ -20,13 +20,14 @@ const MAX_COMMAND_TIMEOUT_MS = 300_000
 
 /** Catastrophic commands are refused outright, even if the user clicks allow. */
 const FORBIDDEN_COMMAND_PATTERNS: RegExp[] = [
-  /\brm\s+(-[a-z]*[rf][a-z]*\s+)+(\/|\\|~\/?|"?[a-z]:[\\/]?"?)\s*$/i, // rm -rf on a root/home/drive
+  // Flags accept --long forms; a trailing comment must not defeat the $ anchor.
+  /\brm\s+(-{1,2}[a-z]*[rf][a-z-]*\s+)+(\/|\\|~\/?|"?[a-z]:[\\/]?"?)\s*(?:[#;].*)?$/i,
   /\bmkfs\b/i,
   /\bformat(\.com)?\s+[a-z]:/i,
   /\bshutdown\b|\breboot\b/i,
-  /\bdel\s+\/[sq].*[a-z]:\\(\s|$)/i, // del /s /q C:\
-  /\brd\s+\/s.*[a-z]:\\(\s|$)/i,
-  /\breg\s+(add|delete)\b/i,
+  /\bdel\s+\/[sq].*[a-z]:\\?"?(\s|$)/i, // del /s /q C:\ (quoted drive included)
+  /\b(?:rd|rmdir)\s+\/s.*[a-z]:/i, // recursive dir removal reaching a drive path
+  /\breg(?:\.exe)?\s+(add|delete|import)\b/i,
   /\bdd\s+.*\bof=\/dev\//i,
   /:\(\)\s*\{\s*:\|:&\s*\}\s*;/ // fork bomb
 ]
@@ -35,10 +36,15 @@ const FORBIDDEN_COMMAND_PATTERNS: RegExp[] = [
 const SENSITIVE_PATH_PATTERNS: RegExp[] = [
   /(^|[\\/])\.env([.-]|$)/i,
   /(^|[\\/])\.ssh([\\/]|$)/i,
-  /(^|[\\/])(id_rsa|id_ed25519|id_ecdsa)(\.pub)?$/i,
+  /(^|[\\/])(id_rsa|id_ed25519|id_ecdsa|id_dsa)([._-][\w.-]*)?$/i,
   /\.(pem|pfx|p12|key)$/i,
   /(^|[\\/])(credentials|secrets?)(\.[a-z]+)?$/i,
-  /(^|[\\/])\.(npmrc|netrc|git-credentials)$/i
+  /(^|[\\/])\.(npmrc|netrc|git-credentials|pypirc|vault-token)$/i,
+  /(^|[\\/])\.(bash|zsh|sh)_history$/i,
+  /(^|[\\/])\.kube([\\/]|$)/i,
+  /(^|[\\/])\.gnupg([\\/]|$)/i,
+  /(^|[\\/])\.docker[\\/]config\.json$/i,
+  /(^|[\\/])\.config[\\/]gcloud([\\/]|$)/i
 ]
 
 export function isForbiddenCommand(command: string): boolean {
@@ -712,13 +718,14 @@ const DANGEROUS_COMMANDS: RegExp[] = [
   /\btaskkill\b/,
   /\bstop-process\b/,
   /(?:^|[;&|(\s])kill(?:all)?\s/,
-  /\brestart-computer\b/,
+  /\b(re)?start-computer\b|\bstop-computer\b/,
   /\bchmod\s+(?:-r\b|.*777)/,
   /\bchown\s+-r\b/,
   /\bicacls\b/,
   /\bdiskpart\b/,
   /\bdrop\s+(?:database|table)\b/,
-  /\bformat\b/
+  /\bformat\b/,
+  /\bformat-volume\b|\bclear-disk\b|\bvssadmin\b|\bcipher\s+\/w\b/
 ]
 
 /** Classify a shell command. 'forbidden' is never executed; 'dangerous'

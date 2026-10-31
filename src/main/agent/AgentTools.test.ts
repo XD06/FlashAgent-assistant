@@ -95,11 +95,17 @@ describe('isForbiddenCommand', () => {
     'rm -rf /',
     'rm -rf ~',
     'rm -rf C:\\',
+    'rm --recursive --force /',
+    'rm -rf / # done',
+    'del /s /q "C:\\"',
+    'rd /s /q "C:\Users"',
+    'rmdir /s C:\\temp',
+    'reg add HKLM\\Software\\Foo /v Bar',
+    'reg import evil.reg',
+    'reg.exe delete HKCU\\Software\\Foo',
     'mkfs.ext4 /dev/sda1',
     'format c:',
     'shutdown /s /t 0',
-    'reg add HKLM\\Software\\Foo /v Bar',
-    'reg delete HKCU\\Software\\Foo',
     'dd if=/dev/zero of=/dev/sda',
     ':(){ :|:& };:'
   ])('blocks catastrophic command: %s', (command) => {
@@ -110,10 +116,13 @@ describe('isForbiddenCommand', () => {
     'git status',
     'npm run build',
     'rm -rf node_modules',
+    'rm --recursive node_modules',
+    'rm -rf ~/projects/src',
     'rm dist/bundle.js',
     'ls -la',
     'echo hello > out.txt',
-    'python format_check.py'
+    'python format_check.py',
+    'reg query HKLM\\Software'
   ])('allows normal command: %s', (command) => {
     expect(isForbiddenCommand(command)).toBe(false)
   })
@@ -135,6 +144,10 @@ describe('assessCommandRisk', () => {
     'git push --force origin main',
     'taskkill /f /im node.exe',
     'Stop-Process -Name electron',
+    'Stop-Computer -Force',
+    'Format-Volume -DriveLetter D',
+    'Clear-Disk -Number 1',
+    'vssadmin delete shadows /all',
     'DROP TABLE users'
   ])('classifies destructive command as dangerous: %s', (command) => {
     expect(assessCommandRisk(command)).toBe('dangerous')
@@ -160,9 +173,16 @@ describe('isSensitivePath', () => {
     'C:\\Users\\me\\.ssh\\config',
     '/home/me/.ssh/id_rsa',
     'id_ed25519',
+    'id_rsa_old',
     'server.pem',
     'aws/credentials',
-    '.npmrc'
+    '.npmrc',
+    '.bash_history',
+    '/home/me/.kube/config',
+    '/home/me/.gnupg/secring.gpg',
+    'C:\\Users\\me\\.docker\\config.json',
+    '~/.config/gcloud/application_default_credentials.json',
+    '.pypirc'
   ])('flags secret-bearing path: %s', (path) => {
     expect(isSensitivePath(path)).toBe(true)
   })
