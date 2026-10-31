@@ -160,11 +160,29 @@ function readImageDimensions(binary: string): { width: number; height: number } 
   return null
 }
 
+// measureContext runs once per tool round over the whole message history, so
+// the same image payloads get re-parsed every round. Cache dimensions by the
+// base64 payload itself (keys are references, values are two numbers) — FIFO
+// and bounded so dropped history images are not retained forever.
+const IMAGE_DIMENSION_CACHE_LIMIT = 16
+const imageDimensionsCache = new Map<string, { width: number; height: number } | null>()
+
+function cachedImageDimensions(base64: string): { width: number; height: number } | null {
+  const cached = imageDimensionsCache.get(base64)
+  if (cached !== undefined) return cached
+  const binary = decodeBase64(base64)
+  const dimensions = binary ? readImageDimensions(binary) : null
+  if (imageDimensionsCache.size >= IMAGE_DIMENSION_CACHE_LIMIT) {
+    const oldest = imageDimensionsCache.keys().next().value
+    if (oldest !== undefined) imageDimensionsCache.delete(oldest)
+  }
+  imageDimensionsCache.set(base64, dimensions)
+  return dimensions
+}
+
 function addBase64ImageMetadata(acc: MutableMeasurement, base64: string): void {
   acc.imageBytes += base64ByteLength(base64)
-  const binary = decodeBase64(base64)
-  if (!binary) return
-  const dimensions = readImageDimensions(binary)
+  const dimensions = cachedImageDimensions(base64)
   if (!dimensions) return
   acc.imagesWithKnownDimensions += 1
   acc.imagePixels += dimensions.width * dimensions.height

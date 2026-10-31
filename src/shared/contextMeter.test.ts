@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   IMAGE_INPUT_TOKEN_ESTIMATE,
   estimateTokensFromText,
@@ -105,5 +105,30 @@ describe('measureContext', () => {
     expect(measurement.imageBytes).toBeGreaterThan(0)
     expect(Object.values(measurement).join(' ')).not.toContain(gifBase64)
     expect(Object.values(measurement).join(' ')).not.toContain(jpegBase64)
+  })
+
+  it('caches image dimensions across rounds and evicts beyond the bounded size', () => {
+    const atobSpy = vi.spyOn(globalThis, 'atob')
+    // An 11th byte makes each payload unique without changing the parsed size.
+    const freshGif = (id: number): string =>
+      `data:image/gif;base64,${btoa(String.fromCharCode(0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x02, 0x00, id))}`
+    const measure = (url: string): number =>
+      measureContext({
+        systemPrompt: '',
+        messages: [{ role: 'user', content: [{ type: 'image_url', image_url: { url } }] }]
+      }).imagePixels
+
+    const url = freshGif(9)
+    const callsAfterFirst = atobSpy.mock.calls.length
+    expect(measure(url)).toBe(2)
+    const decodeCount = atobSpy.mock.calls.length - callsAfterFirst
+    measure(url) // same history re-measured on the next tool round
+    expect(atobSpy.mock.calls.length - callsAfterFirst).toBe(decodeCount)
+
+    for (let id = 20; id < 37; id++) measure(freshGif(id)) // push past the 16-entry limit
+    const before = atobSpy.mock.calls.length
+    expect(measure(url)).toBe(2) // evicted — decoded again, still correct
+    expect(atobSpy.mock.calls.length).toBe(before + 1)
+    atobSpy.mockRestore()
   })
 })
