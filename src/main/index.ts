@@ -30,7 +30,7 @@ import { cleanupCaptureTemp } from './capture'
 import { SelectionService } from './SelectionService'
 import { registerTranslateIpc } from './translate'
 import { playTts, stopTtsPlayback, destroyTtsPlayer } from './ttsPlayer'
-import { initVocabulary, registerVocabularyIpc } from './vocabulary'
+import { flushVocabularyPersistSync, initVocabulary, registerVocabularyIpc } from './vocabulary'
 import { destroyOcr, registerOcrIpc } from './ocr'
 import { getSettings, onSettingsChanged, updateSettings } from './settingsStore'
 import { findPendingMcpSpawns, withoutDeclinedSpawns } from './settingsGate'
@@ -1528,5 +1528,6 @@ if (!app.requestSingleInstanceLock()) {
     destroyTtsPlayer()
     void destroyOcr()
     mcpManager.closeAll()
+    flushVocabularyPersistSync()
   })
 }

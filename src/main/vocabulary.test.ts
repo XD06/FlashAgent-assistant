@@ -8,6 +8,7 @@ import {
   buildVocabMarkdown,
   clearVocabulary,
   compactMeanings,
+  flushVocabularyPersist,
   hasVocabulary,
   initVocabulary,
   isEnglishWord,
@@ -55,12 +56,13 @@ describe('isEnglishWord', () => {
 })
 
 describe('vocabulary store', () => {
-  it('adds, dedups, and persists across re-init', () => {
+  it('adds, dedups, and persists across re-init', async () => {
     expect(addVocabulary(dict('flash'))).toBe(true)
     expect(addVocabulary(dict('FLASH'))).toBe(false) // duplicate, case-insensitive
     expect(hasVocabulary('flash')).toBe(true)
     expect(listVocabulary()).toHaveLength(1)
 
+    await flushVocabularyPersist()
     initVocabulary(dir) // simulate app restart
     expect(listVocabulary()).toHaveLength(1)
     expect(listVocabulary()[0].meanings[0].means[0]).toBe('闪耀')
@@ -94,8 +96,9 @@ describe('preview and export formatting', () => {
     expect(md).toContain('**flash** — n. 闪耀；闪光；v. 使闪光')
   })
 
-  it('persists a readable json file', () => {
+  it('persists a readable json file', async () => {
     addVocabulary(dict('flash'))
+    await flushVocabularyPersist()
     const raw = JSON.parse(readFileSync(join(dir, 'vocabulary.json'), 'utf8')) as Array<{ word: string }>
     expect(raw).toHaveLength(1)
     expect(raw[0].word).toBe('flash')

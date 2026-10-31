@@ -1,4 +1,5 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { promises as fsp } from 'node:fs'
 import { join } from 'node:path'
 import { BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { IPC } from '@shared/ipc'
@@ -36,12 +37,48 @@ export function initVocabulary(userDataDir: string): void {
   }
 }
 
+// Saving happens on the lookup hot path (every recorded word), so writes
+// coalesce behind one in-flight save and each snapshot lands atomically
+// (tmp + rename) — the old sync write blocked the main process and a crash
+// mid-write could leave a torn JSON. Quit-time flush keeps it lossless.
+let pendingPersist = false
+let persistInFlight: Promise<void> | null = null
+
 function persist(): void {
   if (!filePath) return
+  pendingPersist = true
+  if (persistInFlight) return
+  persistInFlight = (async () => {
+    while (pendingPersist) {
+      pendingPersist = false
+      const tmp = `${filePath}.tmp`
+      try {
+        await fsp.writeFile(tmp, JSON.stringify(store), 'utf8')
+        await fsp.rename(tmp, filePath)
+      } catch {
+        // Best-effort: a failed write keeps the in-memory list usable.
+      }
+    }
+  })().finally(() => {
+    persistInFlight = null
+  })
+}
+
+/** Resolve once the queued persist reached the disk (tests). */
+export function flushVocabularyPersist(): Promise<void> {
+  return persistInFlight ?? Promise.resolve()
+}
+
+/** Land the newest snapshot synchronously when it may not be on disk yet
+ * (quit path). An in-flight save may still be mid-write, so an extra sync
+ * write of the same store here is always benign — same content, atomic file. */
+export function flushVocabularyPersistSync(): void {
+  if (!filePath || (!pendingPersist && !persistInFlight)) return
   try {
-    writeFileSync(filePath, JSON.stringify(store, null, 2), 'utf8')
+    writeFileSync(filePath, JSON.stringify(store), 'utf8')
+    pendingPersist = false
   } catch {
-    // Best-effort: a failed write keeps the in-memory list usable.
+    // Best-effort: the in-memory list stays usable.
   }
 }
 
