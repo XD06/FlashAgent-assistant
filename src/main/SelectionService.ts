@@ -82,6 +82,9 @@ export class SelectionService {
     if (!this.hook || !this.hookCtor || this.started) return false
     if (isMac && !systemPreferences.isTrustedAccessibilityClient(false)) return false
 
+    // start/stop cycles (and a failed native start below) must not stack
+    // duplicate handlers — stop() does not remove this subscription.
+    this.hook.off('text-selection', this.handleSelection)
     this.hook.on('text-selection', this.handleSelection)
 
     if (
