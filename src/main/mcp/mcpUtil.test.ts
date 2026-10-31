@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   assessMcpRisk,
   buildMcpToolName,
+  dedupeMcpToolName,
   extractMcpCommandStrings,
   isMcpToolName,
   mcpConfigKey,
@@ -59,6 +60,25 @@ describe('buildMcpToolName', () => {
   it('round-trips with isMcpToolName', () => {
     expect(isMcpToolName(buildMcpToolName('a', 'b'))).toBe(true)
     expect(isMcpToolName('read_file')).toBe(false)
+  })
+})
+
+describe('dedupeMcpToolName', () => {
+  it('passes free names through untouched', () => {
+    expect(dedupeMcpToolName('mcp__a__c', new Set(['mcp__x__y']))).toBe('mcp__a__c')
+  })
+
+  it('suffixes colliding names until unique', () => {
+    const taken = new Set(['mcp__a_b__c'])
+    expect(dedupeMcpToolName('mcp__a_b__c', taken)).toBe('mcp__a_b__c__2')
+    // Sequential assignment: the second collision takes the next suffix.
+    taken.add('mcp__a_b__c__2')
+    expect(dedupeMcpToolName('mcp__a_b__c', taken)).toBe('mcp__a_b__c__3')
+  })
+
+  it('suffixes stay within the 64-char limit', () => {
+    const long = buildMcpToolName('s'.repeat(60), 't'.repeat(60))
+    expect(dedupeMcpToolName(long, new Set([long])).length).toBe(64)
   })
 })
 

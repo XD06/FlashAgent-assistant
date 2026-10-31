@@ -3,6 +3,7 @@ import type { McpServerConfig, McpServerStatus } from '@shared/types'
 import type { ToolDefinition } from '../ai/OpenAICompatibleClient'
 import {
   buildMcpToolName,
+  dedupeMcpToolName,
   mcpConfigKey,
   parseEnvBlock,
   sanitizeMcpCommandTokens,
@@ -139,15 +140,20 @@ export class McpManager {
         this.drop(id)
       } else if (entry.config.name !== next.name) {
         entry.config = next
-        entry.tools = entry.tools.map((tool) => ({
-          ...tool,
-          exposedName: buildMcpToolName(next.name, tool.toolName),
-          definition: {
-            ...tool.definition,
-            name: buildMcpToolName(next.name, tool.toolName),
-            description: `[MCP:${next.name}] ${tool.definition.description.replace(/^\[MCP:[^\]]+\]\s*/, '')}`
+        const taken = this.takenExposedNames(next.id)
+        entry.tools = entry.tools.map((tool) => {
+          const exposedName = dedupeMcpToolName(buildMcpToolName(next.name, tool.toolName), taken)
+          taken.add(exposedName)
+          return {
+            ...tool,
+            exposedName,
+            definition: {
+              ...tool.definition,
+              name: exposedName,
+              description: `[MCP:${next.name}] ${tool.definition.description.replace(/^\[MCP:[^\]]+\]\s*/, '')}`
+            }
           }
-        }))
+        })
       }
     }
     for (const config of wanted.values()) {
@@ -169,6 +175,17 @@ export class McpManager {
   reconnectAll(configs: McpServerConfig[]): void {
     for (const id of [...this.servers.keys()]) this.drop(id)
     this.sync(configs)
+  }
+
+  /** Exposed names already claimed by other servers — the namespace the next
+   * tool registration must stay unique within. */
+  private takenExposedNames(excludeServerId: string): Set<string> {
+    const taken = new Set<string>()
+    for (const [id, entry] of this.servers) {
+      if (id === excludeServerId) continue
+      for (const tool of entry.tools) taken.add(tool.exposedName)
+    }
+    return taken
   }
 
   private drop(id: string): void {
@@ -198,15 +215,20 @@ export class McpManager {
       }
       const listed = await client.listTools(undefined, { timeout: CALL_TIMEOUT_MS })
       entry.client = client
-      entry.tools = listed.tools.map((tool) => ({
-        exposedName: buildMcpToolName(config.name, tool.name),
-        toolName: tool.name,
-        definition: {
-          name: buildMcpToolName(config.name, tool.name),
-          description: `[MCP:${config.name}] ${tool.description ?? ''}`.slice(0, 800),
-          parameters: (tool.inputSchema as Record<string, unknown>) ?? { type: 'object', properties: {} }
+      const taken = this.takenExposedNames(config.id)
+      entry.tools = listed.tools.map((tool) => {
+        const exposedName = dedupeMcpToolName(buildMcpToolName(config.name, tool.name), taken)
+        taken.add(exposedName)
+        return {
+          exposedName,
+          toolName: tool.name,
+          definition: {
+            name: exposedName,
+            description: `[MCP:${config.name}] ${tool.description ?? ''}`.slice(0, 800),
+            parameters: (tool.inputSchema as Record<string, unknown>) ?? { type: 'object', properties: {} }
+          }
         }
-      }))
+      })
       entry.state = 'connected'
     } catch (error) {
       if (this.servers.get(config.id) !== entry) return

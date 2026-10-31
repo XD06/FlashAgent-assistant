@@ -161,6 +161,19 @@ export function buildMcpToolName(serverName: string, toolName: string): string {
   return `mcp__${sanitizeSegment(serverName)}__${sanitizeSegment(toolName)}`.slice(0, 64)
 }
 
+/** Two server names can sanitize identically ("a b" vs "a_b"), producing the
+ * same prefixed tool name — calls would then silently route to whichever
+ * server registered first. Suffix until unique against the names already in
+ * use, keeping the result within the 64-char limit. */
+export function dedupeMcpToolName(base: string, taken: ReadonlySet<string>): string {
+  if (!taken.has(base)) return base
+  for (let n = 2; ; n++) {
+    const suffix = `__${n}`
+    const candidate = base.slice(0, 64 - suffix.length) + suffix
+    if (!taken.has(candidate)) return candidate
+  }
+}
+
 export function isMcpToolName(name: string): boolean {
   return name.startsWith('mcp__')
 }
