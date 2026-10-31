@@ -985,7 +985,13 @@ export async function streamChatMessages(
       if (!options.onToolStreaming || !tc.name) return
       const now = Date.now()
       const last = lastStreamingEmitMap.get(tc.index) ?? 0
-      if (force || now - last >= 50) {
+      // The emit handler re-parses the whole accumulated arguments every time,
+      // so a fixed 50ms cadence makes large write_file streams quadratic. Widen
+      // the interval as the payload grows; if this ever matters again, the
+      // upgrade is an incremental parser, not tighter throttling.
+      const argsLength = tc.rawArguments.length
+      const interval = argsLength > 524_288 ? 400 : argsLength > 65_536 ? 150 : 50
+      if (force || now - last >= interval) {
         lastStreamingEmitMap.set(tc.index, now)
         try {
           options.onToolStreaming({ ...tc, round })
