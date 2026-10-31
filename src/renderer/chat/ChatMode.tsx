@@ -326,10 +326,12 @@ function loadInitialTopics(): ChatTopic[] {
   return typeof bridge?.chat?.loadTopics === 'function' ? [] : loadLocalTopics()
 }
 
-function saveTopics(topics: ChatTopic[]): boolean {
+function saveTopics(topics: ChatTopic[], changedTopicIds?: string[]): boolean {
   try {
     if (window.assistantLite?.chat?.saveTopics) {
-      void window.assistantLite.chat.saveTopics(topics)
+      // The main process rewrites only the changed topic shards; omit the ids
+      // for full reconciliation (migration paths, unknown-scope callers).
+      void window.assistantLite.chat.saveTopics(topics, changedTopicIds)
     }
     // The main process owns the full history file. Serializing the first 50
     // complete topics into localStorage on every update duplicates potentially
@@ -1274,7 +1276,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
             searchEnabled
           }
         }
-        saveTopics(next)
+        saveTopics(next, activeTopicId ? [activeTopicId] : undefined)
         return next
       })
     }
@@ -1322,7 +1324,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
       next = [topic, ...prev]
     }
     next = next.slice(0, MAX_TOPICS)
-    if (!saveTopics(next)) {
+    if (!saveTopics(next, [id])) {
       setToast(isZh ? '对话历史保存失败（存储空间不足）' : 'Failed to save history (storage quota exceeded)')
     }
     if (!activeTopicId) setActiveTopicId(id)
@@ -1405,7 +1407,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
         const next = topicsRef.current.map((tp) =>
           tp.id === id ? { ...tp, title, aiTitle: true } : tp
         )
-        saveTopics(next)
+        saveTopics(next, [id])
         setTopics(next)
       })
       .catch(() => {})
@@ -1972,7 +1974,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
               }
               const nextTopics = [...prev]
               nextTopics[idx] = updatedTopic
-              saveTopics(nextTopics)
+              saveTopics(nextTopics, [targetTopicId])
               return nextTopics
             })
             // Auto name topic after the first completed round
@@ -1992,7 +1994,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
                         if (idx < 0) return prev
                         const nextTopics = [...prev]
                         nextTopics[idx] = { ...nextTopics[idx], title, aiTitle: true }
-                        saveTopics(nextTopics)
+                        saveTopics(nextTopics, [targetTopicId])
                         return nextTopics
                       })
                     }
@@ -2546,7 +2548,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
 
   const togglePinTopic = (id: string) => {
     const next = topicsRef.current.map((tp) => (tp.id === id ? { ...tp, isPinned: !tp.isPinned } : tp))
-    saveTopics(next)
+    saveTopics(next, [id])
     setTopics(next)
   }
 
@@ -2564,7 +2566,9 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
     }
     runningTurnsRef.current.delete(id)
     const next = topicsRef.current.filter((tp) => tp.id !== id)
-    saveTopics(next)
+    // Empty change set: nothing to rewrite, the main process still reconciles
+    // the shard deletion and the index order.
+    saveTopics(next, [])
     setTopics(next)
     if (activeTopicId === id) {
       newChat(undefined, { preserveHistoryOpen: true })
@@ -2585,7 +2589,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
     const title = renameDraft.trim().slice(0, 60)
     if (!title) return
     const next = topicsRef.current.map((tp) => (tp.id === id ? { ...tp, title, customTitle: true } : tp))
-    if (!saveTopics(next)) {
+    if (!saveTopics(next, [id])) {
       setToast(isZh ? '重命名失败（存储空间不足）' : 'Failed to save (storage quota exceeded)')
       return
     }

@@ -1268,9 +1268,12 @@ function registerIpc(): void {
   ipcMain.handle(IPC.ChatLoadTopics, async () => {
     return loadTopicsFromDisk()
   })
-  ipcMain.handle(IPC.ChatSaveTopics, async (_event, topics: unknown[]) => {
-    if (!Array.isArray(topics)) return false
-    return saveTopicsToDisk(topics)
+  ipcMain.handle(IPC.ChatSaveTopics, async (_event, payload: { topics?: unknown; changedTopicIds?: unknown }) => {
+    if (!payload || !Array.isArray(payload.topics)) return false
+    const changedTopicIds = Array.isArray(payload.changedTopicIds)
+      ? payload.changedTopicIds.filter((id): id is string => typeof id === 'string')
+      : undefined
+    return saveTopicsToDisk(payload.topics, { changedTopicIds })
   })
   ipcMain.handle(IPC.AiListModels, (_event, providerTemplateId?: string) =>
     listModels(resolveProvider(getSettings(), providerTemplateId), { fetcher: providerFetch })

@@ -98,7 +98,10 @@ const api = {
     exportMarkdown: (title: string, markdown: string): Promise<string | null> =>
       ipcRenderer.invoke(IPC.ChatExportMarkdown, { title, markdown }),
     loadTopics: (): Promise<unknown[]> => ipcRenderer.invoke(IPC.ChatLoadTopics),
-    saveTopics: (topics: unknown[]): Promise<boolean> => ipcRenderer.invoke(IPC.ChatSaveTopics, topics)
+    /** changedTopicIds narrows the write to the touched topic shards; omitted
+     * means "reconcile everything" (migration, unknown callers). */
+    saveTopics: (topics: unknown[], changedTopicIds?: string[]): Promise<boolean> =>
+      ipcRenderer.invoke(IPC.ChatSaveTopics, { topics, changedTopicIds })
   },
   translate: {
     /** Kick off all enabled services; results arrive via onChunk per service. */
