@@ -58,7 +58,14 @@ export async function applyProxy(proxyUrl: string | undefined): Promise<void> {
   const manual = proxyUrl?.trim()
   if (manual) {
     await session.defaultSession.setProxy({ proxyRules: manual })
-    setGlobalDispatcher(new ProxyAgent({ uri: manual, ...AGENT_OPTIONS }))
+    try {
+      setGlobalDispatcher(new ProxyAgent({ uri: manual, ...AGENT_OPTIONS }))
+    } catch {
+      // The proxy input saves per keystroke, so half-typed values ("h") reach
+      // here before they are valid URIs. Chromium tolerates bad rules; keep the
+      // undici side consistent (direct) instead of leaving a stale dispatcher.
+      setGlobalDispatcher(new Agent(AGENT_OPTIONS))
+    }
     return
   }
   await session.defaultSession.setProxy({ mode: 'system' })

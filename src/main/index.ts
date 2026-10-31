@@ -33,6 +33,7 @@ import { playTts, stopTtsPlayback, destroyTtsPlayer } from './ttsPlayer'
 import { initVocabulary, registerVocabularyIpc } from './vocabulary'
 import { destroyOcr, registerOcrIpc } from './ocr'
 import { getSettings, onSettingsChanged, updateSettings } from './settingsStore'
+import { findPendingMcpSpawns, withoutDeclinedSpawns } from './settingsGate'
 import { isSupportedPlatform, isWin } from './platform'
 import { isExternalUrlAllowed } from './urlSafety'
 import { beginStream, endStream, hasActiveStream } from './activeStreams'
@@ -604,9 +605,78 @@ function capResultForEvent(output: string): string {
 // natively (tool_calls in history need real arguments, not a summary). Bulk
 // string values (file contents, edit payloads) are elided in place — the
 // JSON stays valid; identity keys like path/command are short and survive.
+// Every window shares the full settings API, so two silent capability
+// escalations get a native confirmation no matter which renderer asked:
+// enabling full agent access, and introducing a new/changed MCP stdio command
+// (that command will be spawned and can execute arbitrary code). A decline
+// strips only the declined part of the patch. proxyUrl is exempt — the proxy
+// input fires one update per keystroke, so a dialog there is unusable.
+async function confirmDangerousSettings(
+  prev: ReturnType<typeof getSettings>,
+  patch: SettingsPatch,
+  sender: Electron.WebContents
+): Promise<SettingsPatch> {
+  const zh = getSettings().language === 'zh-CN'
+  const senderWindow = BrowserWindow.fromWebContents(sender)
+  const parent = senderWindow && !senderWindow.isDestroyed() && senderWindow.isVisible() ? senderWindow : null
+  const confirm = async (message: string, detail: string): Promise<boolean> => {
+    const options = {
+      type: 'warning' as const,
+      message,
+      detail,
+      buttons: [zh ? '允许' : 'Allow', zh ? '拒绝' : 'Deny'],
+      defaultId: 1,
+      cancelId: 1
+    }
+    const { response } = parent ? await dialog.showMessageBox(parent, options) : await dialog.showMessageBox(options)
+    return response === 0
+  }
+
+  let next = patch
+  if (patch.agentFullAccess === true && prev.agentFullAccess !== true) {
+    const allowed = await confirm(
+      zh ? '开启 Agent 完全访问？' : 'Enable full agent access?',
+      zh
+        ? '开启后文件写入、命令执行与 MCP 工具调用将不再逐次确认（破坏性命令仍会被拦截）。如果这不是你本人的操作，请选择拒绝。'
+        : 'File edits, command execution and MCP tool calls will no longer ask per call (destructive commands are still blocked). Deny if this was not you.'
+    )
+    if (!allowed) next = { ...next, agentFullAccess: false }
+  }
+
+  const pendingSpawns = findPendingMcpSpawns(prev.mcpServers, patch.mcpServers)
+  if (pendingSpawns.length) {
+    const list = pendingSpawns
+      .slice(0, 8)
+      .map((spawn) => `· ${spawn.name}: ${spawn.command.slice(0, 200)}`)
+      .join('\n')
+    const more =
+      pendingSpawns.length > 8
+        ? `\n${zh ? `…等共 ${pendingSpawns.length} 个` : `…and ${pendingSpawns.length - 8} more`}`
+        : ''
+    const allowed = await confirm(
+      zh ? '运行新的 MCP 服务器命令？' : 'Run new MCP server commands?',
+      `${list}${more}\n\n${
+        zh
+          ? 'MCP 服务器可以执行任意本地命令并访问网络，只允许你认识的命令。'
+          : 'MCP servers can run arbitrary local commands and reach the network — only allow commands you recognize.'
+      }`
+    )
+    if (!allowed) {
+      next = {
+        ...next,
+        mcpServers: withoutDeclinedSpawns(
+          patch.mcpServers,
+          prev.mcpServers,
+          new Set(pendingSpawns.map((spawn) => spawn.id))
+        )
+      }
+    }
+  }
+  return next
+}
+
 const ARGS_VALUE_MAX = 500
-function argsJsonForEvent(args: Record<string, unknown>): string {
-  const slim = Object.fromEntries(
+function argsJsonForEvent(args: Record<string, unknown>): string {  const slim = Object.fromEntries(
     Object.entries(args).map(([key, value]) =>
       typeof value === 'string' && value.length > ARGS_VALUE_MAX
         ? [key, `${value.slice(0, ARGS_VALUE_MAX)}…[+${value.length - ARGS_VALUE_MAX} chars elided]`]
@@ -649,9 +719,9 @@ function registerIpc(): void {
   let mcpProxyReconnectTimer: NodeJS.Timeout | null = null
 
   ipcMain.handle(IPC.SettingsGet, () => getSettings())
-  ipcMain.handle(IPC.SettingsUpdate, (_event, patch: SettingsPatch) => {
+  ipcMain.handle(IPC.SettingsUpdate, async (event, patch: SettingsPatch) => {
     const prev = getSettings()
-    const settings = updateSettings(patch)
+    const settings = updateSettings(await confirmDangerousSettings(prev, patch, event.sender))
     // Only re-register shortcuts if shortcut-related settings changed
     const shortcutsChanged = JSON.stringify(prev.shortcuts) !== JSON.stringify(settings.shortcuts) ||
       prev.actions.some((a, i) => a.shortcut !== settings.actions[i]?.shortcut) ||
