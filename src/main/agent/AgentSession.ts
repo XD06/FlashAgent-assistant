@@ -4,6 +4,8 @@
 
 interface PendingApproval {
   requestId: string
+  /** WebContents id of the window whose stream is paused on this approval. */
+  senderId: number
   resolve: (result: ApprovalResult) => void
 }
 
@@ -15,7 +17,12 @@ export interface ApprovalResult {
 
 const pendingApprovals = new Map<string, PendingApproval>()
 
-export function waitForApproval(callId: string, requestId: string, signal: AbortSignal): Promise<ApprovalResult> {
+export function waitForApproval(
+  callId: string,
+  requestId: string,
+  signal: AbortSignal,
+  senderId: number
+): Promise<ApprovalResult> {
   return new Promise<ApprovalResult>((resolve) => {
     const settle = (result: ApprovalResult): void => {
       if (!pendingApprovals.delete(callId)) return
@@ -27,14 +34,17 @@ export function waitForApproval(callId: string, requestId: string, signal: Abort
       resolve({ approved: false, alwaysAllow: false })
       return
     }
-    pendingApprovals.set(callId, { requestId, resolve: settle })
+    pendingApprovals.set(callId, { requestId, senderId, resolve: settle })
     signal.addEventListener('abort', onAbort, { once: true })
   })
 }
 
-export function resolveApproval(callId: string, approved: boolean, alwaysAllow: boolean): boolean {
+export function resolveApproval(callId: string, approved: boolean, alwaysAllow: boolean, senderId: number): boolean {
   const pending = pendingApprovals.get(callId)
-  if (!pending) return false
+  // Every window shares the same preload bridge, so knowing a callId is not
+  // authorization: only the window whose stream is paused (the one showing the
+  // approval card) may resolve it.
+  if (!pending || pending.senderId !== senderId) return false
   pending.resolve({ approved: approved === true, alwaysAllow: alwaysAllow === true })
   return true
 }

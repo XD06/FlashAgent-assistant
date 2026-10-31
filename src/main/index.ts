@@ -885,7 +885,7 @@ function registerIpc(): void {
         const approvalWaived = alwaysAllow || getSettings().agentFullAccess === true
         if (risk === 'dangerous' || (!approvalWaived && requiresApproval(name, args, workingDir))) {
           sendTool({ state: 'pending-approval' })
-          const approval = await waitForApproval(callId, request.requestId, controller.signal)
+          const approval = await waitForApproval(callId, request.requestId, controller.signal, event.sender.id)
           if (approval.alwaysAllow) alwaysAllow = true
           if (!approval.approved) {
             sendTool({ state: 'rejected' })
@@ -970,7 +970,7 @@ function registerIpc(): void {
         const approvalWaived = alwaysAllow || getSettings().agentFullAccess === true
         if (risk === 'dangerous' || !approvalWaived) {
           sendTool({ state: 'pending-approval' })
-          const approval = await waitForApproval(callId, request.requestId, controller.signal)
+          const approval = await waitForApproval(callId, request.requestId, controller.signal, event.sender.id)
           if (approval.alwaysAllow) alwaysAllow = true
           if (!approval.approved) {
             sendTool({ state: 'rejected' })
@@ -1150,9 +1150,12 @@ function registerIpc(): void {
     const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options)
     return result.canceled ? null : (result.filePaths[0] ?? null)
   })
-  ipcMain.handle(IPC.AgentApproveTool, (_event, callId: string, approved: boolean, alwaysAllow?: boolean) => {
+  ipcMain.handle(IPC.AgentApproveTool, (event, callId: string, approved: boolean, alwaysAllow?: boolean) => {
     if (typeof callId !== 'string') return false
-    return resolveApproval(callId, approved === true, alwaysAllow === true)
+    // Approvals may only come from the window that owns the paused stream —
+    // every window shares the same preload bridge, so callId alone is not
+    // authorization.
+    return resolveApproval(callId, approved === true, alwaysAllow === true, event.sender.id)
   })
   ipcMain.handle(IPC.AgentRevertTool, async (_event, callId: string) => {
     if (typeof callId !== 'string') return false
