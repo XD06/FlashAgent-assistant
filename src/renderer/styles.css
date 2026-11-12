@@ -391,7 +391,7 @@ html[data-theme='dark'] .settings-page {
 }
 
 .settings-sidebar-footer {
-  --footer-badge-height: 30px;
+  --footer-badge-height: 20px;
   margin-top: auto;
   padding-top: 12px;
   /* Leave exactly one badge row below so it does not hug the window edge. */
