@@ -390,6 +390,50 @@ html[data-theme='dark'] .settings-page {
   color: var(--settings-text);
 }
 
+.settings-sidebar-footer {
+  margin-top: auto;
+  padding-top: 12px;
+}
+
+.settings-github-link {
+  width: 100%;
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 0 9px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--settings-faint);
+  cursor: pointer;
+}
+
+.settings-github-link svg {
+  flex: 0 0 auto;
+}
+
+.settings-github-link .settings-version {
+  color: var(--settings-muted);
+  font-size: 11px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.settings-github-link:hover {
+  background: var(--settings-surface-soft);
+}
+
+.settings-github-link:hover .settings-version {
+  color: var(--settings-text);
+}
+
 .settings-content {
   min-width: 0;
   min-height: 0;
@@ -2042,6 +2086,16 @@ html[data-theme='dark'] .footer button:last-child {
 
   .settings-sidebar-tools {
     padding-top: 8px;
+  }
+
+  .settings-github-link {
+    justify-content: center;
+    padding: 0;
+    gap: 4px;
+  }
+
+  .settings-github-link .settings-version {
+    font-size: 9px;
   }
 }
 

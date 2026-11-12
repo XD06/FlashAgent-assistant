@@ -25,6 +25,9 @@ import type {
   TriggerMode,
   VocabEntry
 } from '@shared/types'
+import { version as APP_VERSION } from '../../../package.json'
+
+const GITHUB_REPO_URL = 'https://github.com/XD06/FlashAgent-assistant'
 
 type SettingsSectionId = 'api' | 'actions' | 'selection' | 'translate' | 'vocabulary' | 'window'
 
@@ -47,11 +50,13 @@ type SettingRowProps = {
 function SettingsNav({
   sections,
   activeSection,
-  onChange
+  onChange,
+  t
 }: {
   sections: SettingsSectionMeta[]
   activeSection: SettingsSectionId
   onChange: (section: SettingsSectionId) => void
+  t: (key: string) => string
 }) {
   return (
     <aside className="settings-sidebar" aria-label="Settings sections">
@@ -65,6 +70,17 @@ function SettingsNav({
           <span>{section.label}</span>
         </button>
       ))}
+      <div className="settings-sidebar-footer">
+        <button
+          className="settings-github-link"
+          type="button"
+          title={t('githubRepoTooltip')}
+          aria-label={t('githubRepoTooltip')}
+          onClick={() => void window.assistantLite.app.openExternal(GITHUB_REPO_URL)}>
+          <Icon name="github" size={14} />
+          <span className="settings-version">v{APP_VERSION}</span>
+        </button>
+      </div>
     </aside>
   )
 }
@@ -1680,7 +1696,7 @@ function SettingsApp() {
         )}
 
         <div className="settings-layout">
-          <SettingsNav sections={sections} activeSection={activeSection} onChange={setActiveSection} />
+          <SettingsNav sections={sections} activeSection={activeSection} onChange={setActiveSection} t={t} />
 
           <section className="settings-content">
             {renderSection()}
