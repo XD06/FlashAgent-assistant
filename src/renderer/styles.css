@@ -391,13 +391,16 @@ html[data-theme='dark'] .settings-page {
 }
 
 .settings-sidebar-footer {
+  --footer-badge-height: 30px;
   margin-top: auto;
   padding-top: 12px;
+  /* Leave exactly one badge row below so it does not hug the window edge. */
+  padding-bottom: var(--footer-badge-height);
 }
 
 .settings-github-link {
   width: 100%;
-  min-height: 30px;
+  min-height: var(--footer-badge-height);
   display: flex;
   align-items: center;
   justify-content: flex-start;
