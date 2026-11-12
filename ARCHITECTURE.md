@@ -57,6 +57,7 @@ graph TD
 - **`src/main/`（主进程）**：所有文件、网络、系统集成与常驻状态的归属地。按域分文件（`SelectionService`、`ScreenshotService`、`ocr/`、`translate/`、`agent/`、`mcp/`、`ai/`），IPC 注册集中在各域的 register 函数与 `index.ts`。
 - **`src/shared/`（双端共享）**：类型定义、IPC 通道名常量、纯函数（设置归一化、翻译语言映射、上下文计量等）。**禁止 import electron 或 Node API**——它被 vitest 直接测试，也被渲染端引用。
 - **依赖方向规则**：renderer → preload API → main；shared 被三者引用但不引用三者。主进程域模块之间允许调用，但设置读取统一走 `settingsStore.getSettings()`（带归一化缓存），禁止各自直读 electron-store。
+- **便携版用户数据目录**：`appIdentity.ts` 检测到 electron-builder portable 启动器注入的 `PORTABLE_EXECUTABLE_DIR` 时，在任何 `getPath('userData')` 之前把 userData 重定向到 exe 同目录的 `data/`，并跳过旧版 `%APPDATA%` 目录的迁移（否则系统里的旧配置会覆盖随包预置）；安装版与开发模式保持 Electron 默认路径。`scripts/prepare-portable-preset.mjs` 按白名单把设置、`memory.md` 与 `skills/` 复制进 `dist/data/`，聊天历史、生词本、缓存一律排除。
 
 ## 3. 关键数据流向 (Core Data Flow)
 

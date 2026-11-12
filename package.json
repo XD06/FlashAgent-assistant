@@ -45,6 +45,7 @@
     "e2e:live-workspace": "npx tsx sandbox-e2e/run-live-workspace-task.ts",
     "dist:mac": "pnpm build && pnpm prepare:selection-hook && electron-builder --mac dmg zip --publish never",
     "dist:win": "pnpm build && pnpm prepare:selection-hook && node scripts/dist-win.cjs --win portable --x64 --publish never",
+    "dist:win:share": "pnpm dist:win && node scripts/prepare-portable-preset.mjs",
     "dist:win:full": "pnpm build && pnpm prepare:selection-hook && node scripts/dist-win.cjs --win nsis portable --x64 --publish never",
     "dist:win:arm64": "pnpm build && pnpm prepare:selection-hook && node scripts/dist-win.cjs --win nsis portable --arm64 --publish never",
     "pack:portable": "pnpm build && node scripts/package-portable.cjs"

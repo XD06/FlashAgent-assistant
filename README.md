@@ -117,6 +117,22 @@ pnpm dist:win
 
 打包产物不应提交到 Git。公开分发建议通过 [GitHub Releases](https://github.com/XD06/FlashAgent-assistant/releases)。
 
+### 分享预置配置的便携版
+
+想让别人打开就能用、免去设置，用一条命令生成开箱即用的分享包：
+
+```bash
+pnpm dist:win:share
+```
+
+它会先打包便携版，再把本机的设置、全局记忆和技能复制进 `dist/data/`。把 `FlashAgent-assistant-Portable-<版本>.exe` 和 `data/` 一起压缩发给对方，对方解压后直接双击 exe 即可，无需进设置页。
+
+- 便携版把用户数据目录改为 exe 同目录的 `data/`：配置、聊天历史、生词本都留在这个文件夹里，不写系统目录，删掉文件夹即可彻底清理。
+- 随包预置的只有 `settings.json`、`memory.md` 和 `skills/`；聊天历史、生词本、缓存不会带过去。本机代理地址、链接的技能目录与开机自启会自动中和，划词总开关会自动打开，保证对方开箱即用。
+- `data/settings.json` 含 API Key 与服务商配置，请只发给信任的人，并优先使用可随时吊销的专用 Key。
+- 换一台机器的配置做模板：`node scripts/prepare-portable-preset.mjs --from <用户数据目录>`（需先完成一次 `pnpm dist:win`）。
+- exe 请放在可写目录，不要放进 `C:\Program Files` 等只读位置，`data/` 需要写权限。
+
 ## 配置与隐私
 
 - API Key、模型模板、话题记录、记忆和本地工具快照均保存在本机用户数据目录。
