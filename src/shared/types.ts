@@ -221,6 +221,13 @@ export interface ActionPayload {
   mode?: 'selection' | 'input'
   /** Optional image data URLs (e.g. screenshot vision) attached to the first user turn. */
   images?: string[]
+  /** Fresh per-open session token so warm window reuse remounts with clean state. */
+  sessionId?: string
+}
+
+export interface OpenNewWindowOptions {
+  mode?: 'action' | 'translate'
+  action?: ActionItem
 }
 
 /** One settled tool call from an earlier turn, replayed cross-turn. Kept

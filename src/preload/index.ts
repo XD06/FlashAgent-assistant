@@ -10,6 +10,7 @@ import type {
   OcrEngineProgress,
   OcrEngineStatusPayload,
   McpServerStatus,
+  OpenNewWindowOptions,
   SelectedTextPayload,
   SettingsPatch,
   SkillInfo,
@@ -59,8 +60,15 @@ const api = {
         ipcRenderer.off(IPC.SelectionProcessAction, listener)
       }
     },
-    // The payload a freshly-created action window is opened with. Read
-    // synchronously during the first render so content is on screen before the
+    onReset: (callback: () => void) => {
+      const listener = () => callback()
+      ipcRenderer.on(IPC.SelectionReset, listener)
+      return () => {
+        ipcRenderer.off(IPC.SelectionReset, listener)
+      }
+    },
+    // The payload a freshly-created action/toolbar window is opened with. Read
+    // synchronously during the first render so content is available before the
     // window is shown — no push/listener race, no empty-frame flash.
     getInitialAction: (): ActionPayload | null => ipcRenderer.sendSync(IPC.SelectionGetInitialAction) ?? null
   },
@@ -183,6 +191,7 @@ const api = {
     close: (): Promise<void> => ipcRenderer.invoke(IPC.WindowClose),
     minimize: (): Promise<void> => ipcRenderer.invoke(IPC.WindowMinimize),
     pin: (pinned: boolean): Promise<void> => ipcRenderer.invoke(IPC.WindowPin, pinned),
+    openNew: (options?: OpenNewWindowOptions): Promise<void> => ipcRenderer.invoke(IPC.WindowOpenNew, options),
     /** Grow/shrink the window to the given content height (main clamps it). */
     adjustHeight: (contentHeight: number): Promise<void> =>
       ipcRenderer.invoke(IPC.WindowAdjustHeight, contentHeight)

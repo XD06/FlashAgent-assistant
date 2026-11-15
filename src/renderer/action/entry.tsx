@@ -22,6 +22,7 @@ interface ChatTurn {
   role: 'user' | 'assistant'
   text: string
   reasoning?: string
+  reasoningPending?: boolean
   display?: string
   hidden?: boolean
   /** Optional image thumbnails shown on user turns (vision). */
@@ -51,6 +52,7 @@ function Titlebar({
   pinned,
   togglePin,
   t,
+  onNewWindow,
   extra
 }: {
   icon: string
@@ -58,6 +60,7 @@ function Titlebar({
   pinned: boolean
   togglePin: () => void
   t: Translator
+  onNewWindow?: () => void
   extra?: React.ReactNode
 }) {
   return (
@@ -65,7 +68,12 @@ function Titlebar({
       <Icon name={icon} />
       <strong>{title}</strong>
       {extra}
-      <button className="icon" title={pinned ? t('unpin') : t('pin')} onClick={togglePin}>
+      {onNewWindow && (
+        <button className="icon" title={t('openNewWindow')} onClick={onNewWindow}>
+          <Icon name="plus" size={14} />
+        </button>
+      )}
+      <button className={pinned ? 'icon icon--active' : 'icon'} title={pinned ? t('unpin') : t('pin')} onClick={togglePin}>
         <Icon name={pinned ? 'pin-off' : 'pin'} />
       </button>
       {!isMac && (
@@ -94,17 +102,24 @@ function useActionStream(action: ActionItem, t: Translator) {
     chatRef.current = chat
   }, [chat])
 
-  // Abort any in-flight stream when the window closes/reloads, otherwise the
-  // main process keeps streaming (and paying for) tokens nobody will see.
+  // Abort any in-flight stream when the window closes/reloads OR unmounts (e.g.
+  // pooled window reset on hide), otherwise main keeps streaming unseen tokens.
   React.useEffect(() => {
-    const onBeforeUnload = () => {
+    const abortActive = () => {
       if (activeRequestId.current) {
         void window.assistantLite.ai.abort(activeRequestId.current)
         activeRequestId.current = null
       }
+      if (flushTimerRef.current) {
+        clearTimeout(flushTimerRef.current)
+        flushTimerRef.current = null
+      }
     }
-    window.addEventListener('beforeunload', onBeforeUnload)
-    return () => window.removeEventListener('beforeunload', onBeforeUnload)
+    window.addEventListener('beforeunload', abortActive)
+    return () => {
+      window.removeEventListener('beforeunload', abortActive)
+      abortActive()
+    }
   }, [])
 
   // Streaming arrives token-by-token; buffer deltas and flush at ~20fps so we
@@ -119,8 +134,14 @@ function useActionStream(action: ActionItem, t: Translator) {
         if (!current.length) return current
         const next = [...current]
         const last = { ...next[next.length - 1] }
-        if (text) last.text += text
-        if (reasoning) last.reasoning = (last.reasoning ?? '') + reasoning
+        if (reasoning) {
+          last.reasoning = (last.reasoning ?? '') + reasoning
+          last.reasoningPending = true
+        }
+        if (text) {
+          last.text += text
+          last.reasoningPending = false
+        }
         last.pending = true
         next[next.length - 1] = last
         return next
@@ -155,8 +176,10 @@ function useActionStream(action: ActionItem, t: Translator) {
           last.searchQuery = chunk.text ?? ''
         } else if (chunk.type === 'done') {
           last.pending = false
+          last.reasoningPending = false
         } else if (chunk.type === 'error') {
           last.pending = false
+          last.reasoningPending = false
           last.error = chunk.error ?? t('unknownProviderError')
         }
         next[next.length - 1] = last
@@ -187,11 +210,12 @@ function useActionStream(action: ActionItem, t: Translator) {
         display?: string
         hidden?: boolean
         reset?: boolean
+        history?: ChatTurn[]
         images?: string[]
         model?: string
       }
     ) => {
-      const history = opts.reset ? [] : chatRef.current
+      const history = opts.history ?? (opts.reset ? [] : chatRef.current)
       const images = opts.images?.filter(Boolean)
       const messages = [
         ...history.map((turn) => ({
@@ -211,7 +235,7 @@ function useActionStream(action: ActionItem, t: Translator) {
         reasoning: action.reasoning,
         forceSearch: action.webSearch === true ? true : action.webSearch === false ? false : undefined
       })
-      setChat([
+      const nextChat: ChatTurn[] = [
         ...history,
         {
           role: 'user',
@@ -221,7 +245,9 @@ function useActionStream(action: ActionItem, t: Translator) {
           ...(images?.length ? { images } : {})
         },
         { role: 'assistant', text: '', pending: true }
-      ])
+      ]
+      chatRef.current = nextChat
+      setChat(nextChat)
     },
     [action]
   )
@@ -232,7 +258,7 @@ function useActionStream(action: ActionItem, t: Translator) {
     setChat((current) => {
       if (!current.length) return current
       const next = [...current]
-      next[next.length - 1] = { ...next[next.length - 1], pending: false }
+      next[next.length - 1] = { ...next[next.length - 1], pending: false, reasoningPending: false }
       return next
     })
   }, [])
@@ -281,7 +307,10 @@ function ChatTurns({
   React.useEffect(() => {
     if (!expandedImage) return
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') closeExpandedImage()
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        closeExpandedImage()
+      }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
@@ -316,11 +345,11 @@ function ChatTurns({
                 </div>
               )}
               {turn.reasoning && (
-                <ThinkingBlock text={turn.reasoning} pending={turn.pending ?? false} t={t} />
+                <ThinkingBlock text={turn.reasoning} pending={!!turn.reasoningPending} t={t} />
               )}
               {turn.text ? (
                 <MarkdownView pending={!!turn.pending}>{turn.text}</MarkdownView>
-              ) : turn.pending && showThinking ? (
+              ) : turn.pending && showThinking && !turn.reasoning ? (
                 <span className="thinking-indicator">{t('preparing')}</span>
               ) : null}
               {turn.error && <div className="error">{turn.error}</div>}
@@ -370,9 +399,159 @@ function ChatTurns({
   )
 }
 
-function copyLastResult(chat: ChatTurn[]): void {
+function getLastAssistantText(chat: ChatTurn[]): string {
   const last = [...chat].reverse().find((turn) => turn.role === 'assistant' && turn.text)
-  if (last) void navigator.clipboard.writeText(last.text)
+  return last?.text ?? ''
+}
+
+function ResultUtilityBar({
+  text,
+  loading,
+  speaking,
+  copied,
+  onCopy,
+  onToggleSpeak,
+  onRegenerate,
+  extra,
+  t
+}: {
+  text: string
+  loading: boolean
+  speaking: boolean
+  copied: boolean
+  onCopy: () => void
+  onToggleSpeak: () => void
+  onRegenerate?: () => void
+  extra?: React.ReactNode
+  t: Translator
+}) {
+  return (
+    <div className="action-utility-bar">
+      <button
+        type="button"
+        className={`action-util-btn${copied ? ' action-util-btn--ok' : ''}`}
+        disabled={loading || !text}
+        onClick={onCopy}
+        title={copied ? t('copied') : t('copy')}>
+        <Icon name={copied ? 'check' : 'copy'} size={13} />
+        <span>{copied ? t('copied') : t('copy')}</span>
+      </button>
+      <button
+        type="button"
+        className={`action-util-btn${speaking ? ' action-util-btn--active' : ''}`}
+        disabled={loading || !text}
+        onClick={onToggleSpeak}
+        title={speaking ? t('stop') : t('speak')}>
+        <Icon name={speaking ? 'square' : 'volume-2'} size={13} />
+        <span>{speaking ? t('stop') : t('speak')}</span>
+      </button>
+      {onRegenerate && (
+        <button
+          type="button"
+          className="action-util-btn"
+          disabled={loading}
+          onClick={onRegenerate}
+          title={t('regenerate')}>
+          <Icon name="refresh-cw" size={13} />
+          <span>{t('regenerate')}</span>
+        </button>
+      )}
+      {extra}
+    </div>
+  )
+}
+
+/** Unified docked composer shared between SelectionResult and InputResult. */
+function ActionFooterComposer({
+  value,
+  onChange,
+  onSubmit,
+  onStop,
+  loading,
+  placeholder,
+  isZh,
+  t,
+  inputRef,
+  chips,
+  onChipClick,
+  autoFocus
+}: {
+  value: string
+  onChange: (value: string) => void
+  onSubmit: () => void
+  onStop: () => void
+  loading: boolean
+  placeholder: string
+  isZh: boolean
+  t: Translator
+  inputRef?: React.RefObject<HTMLTextAreaElement>
+  chips?: readonly { label: string; prompt: string }[]
+  onChipClick?: (prompt: string) => void
+  autoFocus?: boolean
+}) {
+  const localRef = React.useRef<HTMLTextAreaElement>(null)
+  const taRef = inputRef ?? localRef
+
+  React.useEffect(() => {
+    if (!autoFocus) return
+    const timer = setTimeout(() => taRef.current?.focus(), 0)
+    return () => clearTimeout(timer)
+  }, [autoFocus, taRef])
+
+  React.useEffect(() => {
+    const el = taRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${Math.min(112, el.scrollHeight)}px`
+  }, [value, taRef])
+
+  return (
+    <div className="action-composer">
+      {!!chips?.length && (
+        <div className="action-chips">
+          {chips.map((chip) => (
+            <button
+              key={chip.label}
+              type="button"
+              className="action-chip"
+              onClick={() => onChipClick?.(chip.prompt)}
+            >
+              {chip.label}
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="action-composer__box">
+        <textarea
+          ref={taRef}
+          rows={1}
+          value={value}
+          placeholder={placeholder}
+          onChange={(e) => onChange(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+              e.preventDefault()
+              if (loading) onStop()
+              else onSubmit()
+            } else if (e.key === 'Escape' && value) {
+              e.preventDefault()
+              e.stopPropagation()
+              onChange('')
+            }
+          }}
+        />
+        <button
+          type="button"
+          className={`action-composer__send${loading ? ' action-composer__send--stop' : ''}`}
+          onClick={loading ? onStop : onSubmit}
+          disabled={!loading && !value.trim()}
+          title={loading ? t('stop') : isZh ? '发送' : 'Send'}
+        >
+          <Icon name={loading ? 'square' : 'arrow-up'} size={15} />
+        </button>
+      </div>
+    </div>
+  )
 }
 
 // Selection mode: run the action on the selected text immediately, then allow
@@ -381,15 +560,22 @@ function copyLastResult(chat: ChatTurn[]): void {
 function SelectionResult({ payload, settings, settingsLoaded, t, pinned, togglePin }: ResultProps) {
   const isZh = settings.language === 'zh-CN'
   const isVision = !!payload.images?.length
+  const liveAction = React.useMemo(
+    () => settings.actions.find((a) => a.id === payload.action.id) ?? payload.action,
+    [settings.actions, payload.action]
+  )
   // With reasoning off the answer streams back almost immediately, so the
   // "Thinking…" placeholder is just a flash of noise — only show it when on.
-  const showThinking = (payload.action.reasoning ?? 'on') !== 'off'
-  const { chat, send, stop, loading, hasResult } = useActionStream(payload.action, t)
-  const [askOpen, setAskOpen] = React.useState(false)
+  const showThinking = (liveAction.reasoning ?? 'on') !== 'off'
+  const { chat, send, stop, loading, hasResult } = useActionStream(liveAction, t)
   const [askText, setAskText] = React.useState('')
   const [showImage, setShowImage] = React.useState(false)
-  const askInputRef = React.useRef<HTMLInputElement>(null)
+  const [quoteExpanded, setQuoteExpanded] = React.useState(false)
+  const [copied, setCopied] = React.useState(false)
+  const [speaking, setSpeaking] = React.useState(false)
+  const askInputRef = React.useRef<HTMLTextAreaElement>(null)
   const contentRef = React.useRef<HTMLDivElement>(null)
+  const copiedTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
   const stick = useAutoScroll(contentRef, chat)
   // settings.visionModel can load after first paint; keep a ref so the initial
   // vision request always uses the configured override (same fix as old preview).
@@ -398,18 +584,24 @@ function SelectionResult({ payload, settings, settingsLoaded, t, pinned, toggleP
     visionModelRef.current = settings.visionModel ?? ''
   }, [settings.visionModel])
 
+  React.useEffect(() => {
+    return () => {
+      if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current)
+    }
+  }, [])
+
   const runInitialAction = React.useCallback(() => {
     const prompt = isVision
-      ? (payload.action.promptTemplate?.trim() ||
+      ? (liveAction.promptTemplate?.trim() ||
         (isZh
           ? '直接用简洁易懂的话解释这张图片。抓住重点，不要废话，不要逐一描述画面元素，也不要堆砌冗长段落；只有在真正有帮助时再补一句简短总结。'
           : 'Explain this image directly in plain, easy-to-understand language. Be concise, stay focused on the key point, avoid listing every visual element, and skip filler. Add a brief summary only when it is genuinely helpful.'))
-      : interpolatePrompt(payload.action.promptTemplate, payload.selectedText, {
+      : interpolatePrompt(liveAction.promptTemplate, payload.selectedText, {
           language: t('targetLanguageName')
         })
-    setAskOpen(false)
     setAskText('')
     setShowImage(false)
+    setSpeaking(false)
     stick.current = true
     setTimeout(
       () =>
@@ -422,7 +614,7 @@ function SelectionResult({ payload, settings, settingsLoaded, t, pinned, toggleP
         }),
       0
     )
-  }, [payload, t, send, stick, isVision, isZh])
+  }, [payload, liveAction, t, send, stick, isVision, isZh])
 
   React.useEffect(() => {
     // Vision must wait for stored settings so the dedicated vision model is applied.
@@ -431,11 +623,11 @@ function SelectionResult({ payload, settings, settingsLoaded, t, pinned, toggleP
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [payload, isVision, settingsLoaded])
 
-  const submitAsk = () => {
-    const text = askText.trim()
+  const sendFollowUp = (rawText: string) => {
+    const text = rawText.trim()
     if (!text || loading) return
     setAskText('')
-    setAskOpen(false)
+    setSpeaking(false)
     stick.current = true
     // Follow-ups are text-only; the first vision turn already carried the image
     // in history via turn.images on the hidden user message.
@@ -446,9 +638,30 @@ function SelectionResult({ payload, settings, settingsLoaded, t, pinned, toggleP
     })
   }
 
+  const lastReplyText = React.useMemo(() => getLastAssistantText(chat), [chat])
+
+  const handleCopy = () => {
+    if (!lastReplyText) return
+    void navigator.clipboard.writeText(lastReplyText)
+    setCopied(true)
+    if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current)
+    copiedTimerRef.current = setTimeout(() => setCopied(false), 1400)
+  }
+
+  const handleToggleSpeak = () => {
+    if (speaking) {
+      setSpeaking(false)
+      void window.assistantLite.tts.stopPlayback()
+      return
+    }
+    if (!lastReplyText) return
+    setSpeaking(true)
+    void window.assistantLite.tts.play(lastReplyText).finally(() => setSpeaking(false))
+  }
+
   const title = isVision
     ? (isZh ? 'AI 识图' : 'AI Vision')
-    : getActionLabel(payload.action, settings.language)
+    : getActionLabel(liveAction, settings.language)
 
   // For vision, only render image thumbs when the user toggles "show image".
   const turnsForView = React.useMemo(() => {
@@ -456,218 +669,305 @@ function SelectionResult({ payload, settings, settingsLoaded, t, pinned, toggleP
     return chat.map((turn) => (turn.images?.length ? { ...turn, images: undefined } : turn))
   }, [chat, isVision, showImage])
 
+  const sourcePreview = payload.selectedText.trim()
+  const quickChips = React.useMemo(
+    () => [
+      { label: t('quickChipSimpler'), prompt: t('quickChipSimplerPrompt') },
+      { label: t('quickChipExample'), prompt: t('quickChipExamplePrompt') },
+      { label: t('quickChipSummary'), prompt: t('quickChipSummaryPrompt') }
+    ],
+    [t]
+  )
+
   return (
-    <div className="action-window action-window--flex">
+    <div className="action-window action-window--flex action-window--sub">
       <Titlebar
-        icon={payload.action.icon}
+        icon={liveAction.icon}
         title={title}
         pinned={pinned}
         togglePin={togglePin}
         t={t}
+        onNewWindow={() => void window.assistantLite.windowControls.openNew({ mode: 'action', action: liveAction })}
         extra={
           isVision ? (
             <button
-              className="icon"
-              title={showImage ? (isZh ? '隐藏原图' : 'Hide image') : (isZh ? '显示原图' : 'Show image')}
+              className={`icon${showImage ? ' icon--active' : ''}`}
+              title={showImage ? t('hideScreenshot') : t('showScreenshot')}
               onClick={() => setShowImage((v) => !v)}
             >
-              <Icon name="square" />
+              <Icon name="eye" size={14} />
             </button>
           ) : null
         }
       />
 
       <div className="content" ref={contentRef}>
+        {sourcePreview && !isVision && (
+          <div className={`action-source${quoteExpanded ? ' action-source--open' : ''}`}>
+            <button
+              type="button"
+              className="action-source__toggle"
+              onClick={() => setQuoteExpanded((v) => !v)}
+              aria-expanded={quoteExpanded}>
+              <Icon name={quoteExpanded ? 'chevron-down' : 'chevron-right'} size={12} />
+              <span className="action-source__label">{t('sourceText')}</span>
+              {!quoteExpanded && <span className="action-source__preview">{sourcePreview}</span>}
+            </button>
+            {quoteExpanded && <div className="action-source__full">{sourcePreview}</div>}
+          </div>
+        )}
         {chat.length === 0 && showThinking && <div className="thinking-indicator">{t('preparing')}</div>}
         <ChatTurns chat={turnsForView} t={t} isZh={isZh} showThinking={showThinking} />
-      </div>
-
-      {askOpen && (
-        <div className="screenshot-preview__ask">
-          <input
-            ref={askInputRef}
-            type="text"
-            value={askText}
-            placeholder={isZh ? '继续追问…' : 'Ask a follow-up…'}
-            onChange={(e) => setAskText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault()
-                submitAsk()
-              } else if (e.key === 'Escape') {
-                // Esc here closes the follow-up box only — keep it from bubbling
-                // up to the window-level handler that would close the window.
-                e.stopPropagation()
-                setAskOpen(false)
-                setAskText('')
-              }
-            }}
+        {(hasResult || loading) && (
+          <ResultUtilityBar
+            text={lastReplyText}
+            loading={loading}
+            speaking={speaking}
+            copied={copied}
+            onCopy={handleCopy}
+            onToggleSpeak={handleToggleSpeak}
+            onRegenerate={runInitialAction}
+            t={t}
           />
-          <button className="ask-send" onClick={submitAsk} disabled={!askText.trim() || loading} title={isZh ? '发送' : 'Send'}>
-            <Icon name="arrow-up" size={18} />
-          </button>
-        </div>
-      )}
-
-      <div className="footer">
-        <button onClick={loading ? stop : () => window.assistantLite.windowControls.close()}>
-          {loading ? t('stop') : t('close')}
-        </button>
-        <button onClick={runInitialAction} disabled={loading}>
-          {t('regenerate')}
-        </button>
-        <button
-          onClick={() => {
-            setAskOpen((v) => !v)
-            setTimeout(() => askInputRef.current?.focus(), 0)
-          }}
-          disabled={loading}>
-          {isZh ? '追问' : 'Ask'}
-        </button>
-        <button onClick={() => copyLastResult(chat)} disabled={loading || !hasResult}>
-          {t('copy')}
-        </button>
+        )}
       </div>
+
+      <ActionFooterComposer
+        value={askText}
+        onChange={setAskText}
+        onSubmit={() => sendFollowUp(askText)}
+        onStop={stop}
+        loading={loading}
+        placeholder={t('followUpPlaceholder')}
+        isZh={isZh}
+        t={t}
+        inputRef={askInputRef}
+        chips={hasResult && !loading ? quickChips : undefined}
+        onChipClick={sendFollowUp}
+      />
     </div>
   )
 }
 
-// Input mode: open with a type-in box, run the action on the typed text, and
-// show a one-shot result. Re-running replaces the result (no follow-up chat).
+// Input mode: opens clean with a unified bottom composer, runs the action template
+// on the first turn while showing only the user's text, then supports continuous
+// multi-turn follow-up conversation in place.
 function InputResult({ payload, settings, t, pinned, togglePin }: ResultProps) {
   const isZh = settings.language === 'zh-CN'
-  const showThinking = (payload.action.reasoning ?? 'on') !== 'off'
-  const { chat, setChat, send, stop, loading, hasResult } = useActionStream(payload.action, t)
+  const liveAction = React.useMemo(
+    () => settings.actions.find((a) => a.id === payload.action.id) ?? payload.action,
+    [settings.actions, payload.action]
+  )
+  const showThinking = (liveAction.reasoning ?? 'on') !== 'off'
+  const { chat, setChat, send, stop, loading, hasResult } = useActionStream(liveAction, t)
   const [input, setInput] = React.useState('')
+  const [copied, setCopied] = React.useState(false)
+  const [speaking, setSpeaking] = React.useState(false)
   const inputRef = React.useRef<HTMLTextAreaElement>(null)
   const contentRef = React.useRef<HTMLDivElement>(null)
+  const copiedTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
   const stick = useAutoScroll(contentRef, chat)
 
   React.useEffect(() => {
-    setTimeout(() => inputRef.current?.focus(), 0)
+    return () => {
+      if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current)
+    }
   }, [])
 
-  React.useEffect(() => {
-    const el = inputRef.current
-    if (!el) return
-    el.style.height = 'auto'
-    el.style.height = `${Math.min(140, el.scrollHeight)}px`
-  }, [input])
-
-  const run = React.useCallback(
-    (text: string) => {
-      const value = text.trim()
-      if (!value || loading) return
-      const prompt = interpolatePrompt(payload.action.promptTemplate, value, { language: t('targetLanguageName') })
-      stick.current = true
-      send({ sendText: prompt, hidden: true, reset: true })
-    },
-    [payload, t, send, loading, stick]
-  )
-
-  const lastInputRef = React.useRef('')
   const submit = () => {
     const value = input.trim()
     if (!value || loading) return
-    if (payload.action.type === 'search') {
-      const url = buildSearchUrl(payload.action, value)
+    if (liveAction.type === 'search') {
+      const url = buildSearchUrl(liveAction, value)
       if (url) void window.assistantLite.app.openExternal(url)
       void window.assistantLite.windowControls.close()
       return
     }
-    if (payload.action.type === 'copy') {
+    if (liveAction.type === 'copy') {
       void navigator.clipboard.writeText(value)
       void window.assistantLite.windowControls.close()
       return
     }
-    if (payload.action.type === 'speak') {
+    if (liveAction.type === 'speak') {
       void window.assistantLite.tts.play(value)
       void window.assistantLite.windowControls.close()
       return
     }
-    lastInputRef.current = input
-    run(input)
+    const isFirstTurn = chat.length === 0
+    const sendText = isFirstTurn
+      ? interpolatePrompt(liveAction.promptTemplate, value, { language: t('targetLanguageName') })
+      : value
+    setSpeaking(false)
+    stick.current = true
+    setInput('')
+    send({ sendText, display: value, reset: false })
+  }
+
+  const lastReplyText = React.useMemo(() => getLastAssistantText(chat), [chat])
+
+  const handleRegenerate = React.useCallback(() => {
+    if (loading) return
+    let lastUserIdx = -1
+    for (let i = chat.length - 1; i >= 0; i--) {
+      if (chat[i].role === 'user') {
+        lastUserIdx = i
+        break
+      }
+    }
+    if (lastUserIdx < 0) return
+    const targetTurn = chat[lastUserIdx]
+    setSpeaking(false)
+    stick.current = true
+    send({
+      sendText: targetTurn.text,
+      display: targetTurn.display,
+      hidden: targetTurn.hidden,
+      history: chat.slice(0, lastUserIdx)
+    })
+  }, [chat, loading, send, stick])
+
+  const handleCopy = () => {
+    if (!lastReplyText) return
+    void navigator.clipboard.writeText(lastReplyText)
+    setCopied(true)
+    if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current)
+    copiedTimerRef.current = setTimeout(() => setCopied(false), 1400)
+  }
+
+  const handleToggleSpeak = () => {
+    if (speaking) {
+      setSpeaking(false)
+      void window.assistantLite.tts.stopPlayback()
+      return
+    }
+    if (!lastReplyText) return
+    setSpeaking(true)
+    void window.assistantLite.tts.play(lastReplyText).finally(() => setSpeaking(false))
+  }
+
+  const handleClear = () => {
+    if (loading) stop()
+    setSpeaking(false)
+    setChat([])
+    setInput('')
+    setTimeout(() => inputRef.current?.focus(), 0)
   }
 
   return (
-    <div className="action-window action-window--flex">
+    <div className="action-window action-window--flex action-window--sub">
       <Titlebar
-        icon={payload.action.icon}
-        title={getActionLabel(payload.action, settings.language)}
+        icon={liveAction.icon}
+        title={getActionLabel(liveAction, settings.language)}
         pinned={pinned}
         togglePin={togglePin}
         t={t}
+        onNewWindow={() => void window.assistantLite.windowControls.openNew({ mode: 'action', action: liveAction })}
       />
 
-      <div className="action-input">
-        <textarea
-          ref={inputRef}
-          rows={1}
-          value={input}
-          placeholder={isZh ? '输入文本，回车运行…' : 'Type text, Enter to run…'}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-              e.preventDefault()
-              if (loading) stop()
-              else submit()
-            }
-          }}
-        />
-        <button
-          className="action-input__btn"
-          onClick={loading ? stop : submit}
-          disabled={!loading && !input.trim()}
-          title={loading ? t('stop') : isZh ? '运行' : 'Run'}>
-          <Icon name={loading ? 'square' : 'arrow-up'} size={18} />
-        </button>
+      <div className="content" ref={contentRef}>
+        {chat.length === 0 ? (
+          <div className="action-input-empty">
+            <div className="action-input-empty__orb">
+              <Icon name={liveAction.icon} size={18} />
+            </div>
+            <div className="action-input-empty__title">
+              {getActionLabel(liveAction, settings.language)}
+            </div>
+            <div className="action-input-empty__hint">
+              {liveAction.type === 'prompt'
+                ? (isZh ? '在下方输入内容即可开始，支持连续多轮追问' : 'Type below to start — ask follow-ups continuously')
+                : (isZh ? '输入内容后按 Enter 执行操作' : 'Type text below and press Enter to run')}
+            </div>
+          </div>
+        ) : (
+          <>
+            <ChatTurns chat={chat} t={t} isZh={isZh} showThinking={showThinking} />
+            {(hasResult || loading) && (
+              <ResultUtilityBar
+                text={lastReplyText}
+                loading={loading}
+                speaking={speaking}
+                copied={copied}
+                onCopy={handleCopy}
+                onToggleSpeak={handleToggleSpeak}
+                onRegenerate={handleRegenerate}
+                extra={
+                  <button
+                    type="button"
+                    className="action-util-btn"
+                    disabled={loading}
+                    onClick={handleClear}
+                    title={isZh ? '清空' : 'Clear'}>
+                    <Icon name="trash-2" size={13} />
+                    <span>{isZh ? '清空' : 'Clear'}</span>
+                  </button>
+                }
+                t={t}
+              />
+            )}
+          </>
+        )}
       </div>
 
-      {chat.length > 0 && (
-        <div className="content" ref={contentRef}>
-          <ChatTurns chat={chat} t={t} isZh={isZh} showThinking={showThinking} />
-        </div>
-      )}
-
-      <div className="footer">
-        <button onClick={() => window.assistantLite.windowControls.close()}>{t('close')}</button>
-        <button onClick={() => run(lastInputRef.current)} disabled={loading || !lastInputRef.current.trim()}>
-          {t('regenerate')}
-        </button>
-        <button
-          onClick={() => {
-            setChat([])
-            setInput('')
-            setTimeout(() => inputRef.current?.focus(), 0)
-          }}
-          disabled={loading || (!hasResult && !input)}>
-          {isZh ? '清空' : 'Clear'}
-        </button>
-        <button onClick={() => copyLastResult(chat)} disabled={loading || !hasResult}>
-          {t('copy')}
-        </button>
-      </div>
+      <ActionFooterComposer
+        value={input}
+        onChange={setInput}
+        onSubmit={submit}
+        onStop={stop}
+        loading={loading}
+        placeholder={chat.length > 0 && liveAction.type === 'prompt' ? t('followUpPlaceholder') : t('inputPlaceholder')}
+        isZh={isZh}
+        t={t}
+        inputRef={inputRef}
+        autoFocus
+      />
     </div>
   )
 }
+
+type ActionViewState =
+  | { kind: 'chat' }
+  | { kind: 'cleared' }
+  | { kind: 'action'; payload: ActionPayload }
 
 function ActionApp() {
   const { settings, loaded: settingsLoaded } = useSettings()
   // Seed from the payload the window was opened with so the very first render
   // already has content; the main process shows the window on its first paint.
-  // Later opens that reuse this window arrive via onAction below.
-  const [payload, setPayload] = React.useState<ActionPayload | null>(
-    () => window.assistantLite.selection.getInitialAction()
-  )
+  // Later opens arrive via onAction, and hide-on-close triggers onReset so a
+  // pooled window unmounts its stale session before next open.
+  const [viewState, setViewState] = React.useState<ActionViewState>(() => {
+    const initial = window.assistantLite.selection.getInitialAction()
+    return initial ? { kind: 'action', payload: initial } : { kind: 'chat' }
+  })
   const [pinned, setPinned] = React.useState(settings.autoPin)
   const t = getTranslator(settings.language)
   useThemeMode(settings)
   useAppearance(settings)
 
-  // Esc closes the action window (both selection-result and type-in modes).
+  const payload = viewState.kind === 'action' ? viewState.payload : null
+
+  const prevAutoPinRef = React.useRef<boolean | null>(null)
+  const prevSessionIdRef = React.useRef<string | undefined>(undefined)
+  React.useEffect(() => {
+    if (!settingsLoaded) return
+    const firstLoad = prevAutoPinRef.current === null
+    const autoPinChanged = prevAutoPinRef.current !== settings.autoPin
+    const newSession = !!payload?.sessionId && prevSessionIdRef.current !== payload.sessionId
+    if (firstLoad || autoPinChanged || newSession) {
+      prevAutoPinRef.current = settings.autoPin
+      prevSessionIdRef.current = payload?.sessionId
+      setPinned(settings.autoPin)
+      if (payload) void window.assistantLite.windowControls.pin(settings.autoPin)
+    }
+  }, [settingsLoaded, settings.autoPin, payload])
+
+  // Esc closes the action window (unless already consumed by lightbox or draft clear).
   React.useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') void window.assistantLite.windowControls.close()
+      if (event.key === 'Escape' && !event.defaultPrevented) {
+        void window.assistantLite.windowControls.close()
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -682,7 +982,11 @@ function ActionApp() {
     }
   }, [])
 
-  React.useEffect(() => window.assistantLite.selection.onAction(setPayload), [])
+  React.useEffect(() => window.assistantLite.selection.onAction((next) => setViewState({ kind: 'action', payload: next })), [])
+  React.useEffect(
+    () => window.assistantLite.selection.onReset(() => setViewState((prev) => (prev.kind === 'chat' ? prev : { kind: 'cleared' }))),
+    []
+  )
 
   React.useEffect(() => {
     const onBlur = () => {
@@ -700,7 +1004,7 @@ function ActionApp() {
 
   // No initial payload ⇒ independent chat window. Suspense only wraps this
   // branch so selection/input paths never wait on (or download) ChatMode.
-  if (!payload) {
+  if (viewState.kind === 'chat') {
     return (
       <React.Suspense fallback={<ChatModeFallback t={t} />}>
         <ChatMode settings={settings} />
@@ -708,14 +1012,13 @@ function ActionApp() {
     )
   }
 
-  const shared: ResultProps = { payload, settings, settingsLoaded, t, pinned, togglePin }
-  // Keyed by action so reusing the window for a different action remounts with
-  // fresh state; re-running the same action re-uses the instance. Vision opens
-  // use a unique action.id per capture (see main onExplainImage).
-  const resultKey = payload.mode === 'input'
-    ? `input:${payload.action.id}`
-    : `selection:${payload.action.id}`
-  return payload.mode === 'input' ? (
+  if (viewState.kind === 'cleared') {
+    return <div className="action-window action-window--flex" />
+  }
+
+  const shared: ResultProps = { payload: viewState.payload, settings, settingsLoaded, t, pinned, togglePin }
+  const resultKey = `${viewState.payload.mode}:${viewState.payload.action.id}:${viewState.payload.sessionId ?? 'init'}`
+  return viewState.payload.mode === 'input' ? (
     <InputResult key={resultKey} {...shared} />
   ) : (
     <SelectionResult key={resultKey} {...shared} />

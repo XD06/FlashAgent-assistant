@@ -1,10 +1,12 @@
 import { BrowserWindow, clipboard, ipcMain, screen, systemPreferences } from 'electron'
+import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { IPC } from '@shared/ipc'
 import { shouldProcessProgram } from '@shared/selectionFilter'
 import type { ActionItem, ActionPayload, AppSettings, SelectedTextPayload } from '@shared/types'
 import { isMac, isWin } from './platform'
 import { hasActiveStream } from './activeStreams'
+import { cascadeWindowOrigin, pickReusableSubWindow, resolveLiveActionItem } from './selectionWindowPolicy'
 import type {
   KeyboardEventData,
   MouseEventData,
@@ -232,40 +234,86 @@ export class SelectionService {
 
   processAction(payload: ActionPayload): void {
     const settings = this.getSettings()
-    this.openActionWindow(payload, (win) => this.positionAndShowActionWindow(win, settings))
+    this.openActionWindow(payload, (win, siblingCount) => this.positionAndShowActionWindow(win, settings, siblingCount))
   }
 
   // Open a type-in window for an action (triggered by its global shortcut),
   // independent of the selection toolbar.
-  openActionInput(action: ActionItem): void {
+  openActionInput(action: ActionItem, forceNew = false): void {
     const settings = this.getSettings()
     const payload: ActionPayload = { action, selectedText: '', mode: 'input' }
-    this.openActionWindow(payload, (win) => {
-      this.positionActionWindowCenter(win, settings)
-      win.show()
-      win.focus()
-    })
+    this.openActionWindow(
+      payload,
+      (win, siblingCount) => {
+        this.positionActionWindowCenter(win, settings, siblingCount)
+        win.show()
+        win.focus()
+      },
+      forceNew
+    )
+  }
+
+  openNewActionWindow(action?: ActionItem): void {
+    const settings = this.getSettings()
+    const fallback =
+      settings.actions.find((item) => item.enabled && item.type === 'prompt') ??
+      settings.actions[0]
+    const target = action ? resolveLiveActionItem(settings.actions, action) : fallback
+    const resolved =
+      target && settings.actions.some((item) => item.id === target.id)
+        ? target
+        : (fallback ?? target)
+    if (!resolved) return
+    this.openActionInput(resolved, true)
+  }
+
+  syncWindowSizeFromSettings(settings: AppSettings): void {
+    this.lastActionSize = {
+      width: settings.actionWindowWidth || ACTION_WIDTH,
+      height: settings.actionWindowHeight || ACTION_HEIGHT
+    }
   }
 
   // A visible window is already mounted: hand it the new payload and re-show it.
   // A hidden window (close turned into hide, see createActionWindow) is reused
   // the same way — its renderer is warm, so reopening is instant instead of a
-  // full reload. A fresh window stashes its payload for the renderer to pull
-  // on first render, and is shown only once its first frame is painted
-  // (ready-to-show) — so it appears once, already populated, instead of
-  // flashing empty then filling in.
-  private openActionWindow(payload: ActionPayload, show: (win: BrowserWindow) => void): void {
-    const existing = Array.from(this.actionWindows).find((win) => !win.isDestroyed())
+  // full reload. Pinned windows are never overwritten so reference results stay
+  // intact, and `forceNew` spawns an independent sibling window.
+  private openActionWindow(
+    payload: ActionPayload,
+    show: (win: BrowserWindow, siblingCount: number) => void,
+    forceNew = false
+  ): void {
+    const settings = this.getSettings()
+    const nextPayload: ActionPayload = {
+      ...payload,
+      action: resolveLiveActionItem(settings.actions, payload.action),
+      sessionId: payload.sessionId ?? randomUUID()
+    }
+    const candidates = Array.from(this.actionWindows)
+      .filter((win) => !win.isDestroyed())
+      .map((win) => ({
+        win,
+        visible: win.isVisible(),
+        pinned: win.isAlwaysOnTop()
+      }))
+    const visibleSiblings = candidates.filter((c) => c.visible).length
+    const existing = pickReusableSubWindow(candidates, forceNew)
     if (existing) {
       this.cancelActionIdleDestroy(existing)
-      existing.webContents.send(IPC.SelectionProcessAction, payload)
-      show(existing)
+      if (existing.isMinimized()) existing.restore()
+      if (existing.webContents.isLoadingMainFrame()) {
+        this.pendingInitialPayload.set(existing.webContents.id, nextPayload)
+        return
+      }
+      existing.webContents.send(IPC.SelectionProcessAction, nextPayload)
+      show(existing, 0)
       return
     }
     const win = this.createActionWindow()
-    this.pendingInitialPayload.set(win.webContents.id, payload)
+    this.pendingInitialPayload.set(win.webContents.id, nextPayload)
     win.once('ready-to-show', () => {
-      if (!win.isDestroyed()) show(win)
+      if (!win.isDestroyed()) show(win, visibleSiblings)
     })
   }
 
@@ -376,21 +424,26 @@ export class SelectionService {
     win.on('close', (event) => {
       // Quitting/disabled teardown uses destroy() and never lands here; a
       // user/OS close hides for fast reuse instead of destroying the renderer
-      // (close → full reload was the reported open/close jank).
+      // (close → full reload was the reported open/close jank). Reset the
+      // renderer first so active streams abort cleanly and reopening never
+      // reveals the previous session's answer or draft text.
       if (this.quitting) return
       event.preventDefault()
-      if (!win.isDestroyed() && this.getSettings().rememberWindowSize) {
-        const bounds = win.getBounds()
-        this.lastActionSize = {
-          width: Math.max(320, bounds.width - ACTION_SHADOW_PADDING * 2),
-          height: Math.max(240, bounds.height - ACTION_SHADOW_PADDING * 2)
+      if (!win.isDestroyed()) {
+        if (this.getSettings().rememberWindowSize) {
+          const bounds = win.getBounds()
+          this.lastActionSize = {
+            width: Math.max(320, bounds.width - ACTION_SHADOW_PADDING * 2),
+            height: Math.max(240, bounds.height - ACTION_SHADOW_PADDING * 2)
+          }
+          void this.updateSettings({
+            actionWindowWidth: this.lastActionSize.width,
+            actionWindowHeight: this.lastActionSize.height
+          })
         }
-        void this.updateSettings({
-          actionWindowWidth: this.lastActionSize.width,
-          actionWindowHeight: this.lastActionSize.height
-        })
+        win.webContents.send(IPC.SelectionReset)
+        if (win.isVisible()) win.hide()
       }
-      if (!win.isDestroyed() && win.isVisible()) win.hide()
       this.scheduleActionIdleDestroy(win)
     })
     win.on('show', () => {
@@ -573,7 +626,7 @@ export class SelectionService {
     }
   }
 
-  private positionAndShowActionWindow(win: BrowserWindow, settings: AppSettings): void {
+  private positionAndShowActionWindow(win: BrowserWindow, settings: AppSettings, siblingCount = 0): void {
     this.ensureLastActionSize(settings)
     const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
     const area = display.workArea
@@ -590,32 +643,42 @@ export class SelectionService {
       y = Math.max(area.y + 8, Math.min(y, area.y + area.height - height - 8))
     }
 
+    if (siblingCount > 0) {
+      const cascaded = cascadeWindowOrigin(x, y, width, height, area, siblingCount)
+      x = cascaded.x
+      y = cascaded.y
+    }
+
     win.setBounds({
       x: x - ACTION_SHADOW_PADDING,
       y: y - ACTION_SHADOW_PADDING,
       width: this.getActionWindowWidth(width),
       height: this.getActionWindowHeight(height)
     })
-    if (settings.autoPin) win.setAlwaysOnTop(true)
+    win.setAlwaysOnTop(!!settings.autoPin)
     if (isMac && settings.autoPin) win.showInactive()
     else win.show()
   }
 
-  private positionActionWindowCenter(win: BrowserWindow, settings: AppSettings): void {
+  private positionActionWindowCenter(win: BrowserWindow, settings: AppSettings, siblingCount = 0): void {
     this.ensureLastActionSize(settings)
     const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
     const area = display.workArea
     const width = settings.rememberWindowSize ? this.lastActionSize.width : settings.actionWindowWidth
     const height = settings.rememberWindowSize ? this.lastActionSize.height : settings.actionWindowHeight
-    const x = Math.round(area.x + (area.width - width) / 2)
-    const y = Math.round(area.y + (area.height - height) / 2)
+    const baseX = Math.round(area.x + (area.width - width) / 2)
+    const baseY = Math.round(area.y + (area.height - height) / 2)
+    const { x, y } =
+      siblingCount > 0
+        ? cascadeWindowOrigin(baseX, baseY, width, height, area, siblingCount)
+        : { x: baseX, y: baseY }
     win.setBounds({
       x: x - ACTION_SHADOW_PADDING,
       y: y - ACTION_SHADOW_PADDING,
       width: this.getActionWindowWidth(width),
       height: this.getActionWindowHeight(height)
     })
-    if (settings.autoPin) win.setAlwaysOnTop(true)
+    win.setAlwaysOnTop(!!settings.autoPin)
   }
 
   private startHideListeners(): void {

@@ -13,6 +13,7 @@ export const IPC = {
   SelectionDetermineToolbarSize: 'selection:determine-toolbar-size',
   SelectionProcessAction: 'selection:process-action',
   SelectionGetInitialAction: 'selection:get-initial-action',
+  SelectionReset: 'selection:reset',
   SelectionWriteClipboard: 'selection:write-clipboard',
   SelectionGetAccessibility: 'selection:get-accessibility',
   SelectionRequestAccessibility: 'selection:request-accessibility',
@@ -72,6 +73,7 @@ export const IPC = {
   WindowClose: 'window:close',
   WindowMinimize: 'window:minimize',
   WindowPin: 'window:pin',
+  WindowOpenNew: 'window:open-new',
   /** Resize the window to fit its content (quick-translate height-to-content). */
   WindowAdjustHeight: 'window:adjust-height',
   OpenExternal: 'app:open-external',

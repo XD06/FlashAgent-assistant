@@ -6,7 +6,7 @@ import { useThemeMode } from '../useThemeMode'
 import { useAppearance } from '../useAppearance'
 import { getTranslator } from '../i18n'
 import { Icon } from '../icons'
-import { StatusChip, WavyProgress } from '../ui'
+import { MarkdownView } from '../Markdown'
 import {
   TRANSLATE_LANGUAGES,
   detectLanguageHeuristic,
@@ -14,7 +14,7 @@ import {
   isSingleWord,
   translateLanguageLabel
 } from '@shared/translate'
-import type { DictEntry, DictMeaning, DictSentence, TranslateChunkPayload, TranslateServiceId } from '@shared/types'
+import type { AiChunkPayload, DictEntry, DictMeaning, DictSentence, TranslateChunkPayload, TranslateServiceId } from '@shared/types'
 
 const PREFS_KEY = 'fa-translate-prefs'
 
@@ -224,6 +224,7 @@ function ServiceCard({
   serviceId,
   card,
   playing,
+  copied,
   onSpeak,
   onCopy,
   onToggleSave,
@@ -235,6 +236,7 @@ function ServiceCard({
   serviceId: TranslateServiceId
   card: CardState
   playing: boolean
+  copied: boolean
   onSpeak: () => void
   onCopy: () => void
   onToggleSave: () => void
@@ -248,29 +250,35 @@ function ServiceCard({
     <div className="tr-card">
       <div className="tr-card__head">
         <span className="tr-card__name">{serviceDisplayName(serviceId, t)}</span>
-        {card.elapsedMs != null && card.status === 'done' && (
-          <StatusChip
-            className="tr-card__time"
-            tone={card.elapsedMs < 600 ? 'ok' : 'warn'}
-            icon="clock">
-            {formatElapsed(card.elapsedMs)}
-          </StatusChip>
-        )}
-        {card.status === 'error' && (
-          <StatusChip className="tr-card__time" tone="err" dot>
-            {t('trFailed')}
-          </StatusChip>
-        )}
-        {card.status === 'loading' && (
-          <WavyProgress
-            className="tr-card__wave"
-            value={null}
-            width={48}
-            height={10}
-            tone="accent"
-            ariaLabel={t('loading')}
-          />
-        )}
+        <div className="tr-card__meta">
+          {card.elapsedMs != null && card.status === 'done' && (
+            <span className={`tr-card__latency${card.elapsedMs >= 1200 ? ' tr-card__latency--slow' : ''}`}>
+              {formatElapsed(card.elapsedMs)}
+            </span>
+          )}
+          {card.status === 'error' && <span className="tr-card__status tr-card__status--err">{t('trFailed')}</span>}
+          {card.status === 'loading' && <span className="tr-card__dot-pulse" aria-label={t('loading')} />}
+          {!isDict && card.text && (
+            <div className="tr-card__head-tools">
+              <button
+                type="button"
+                className={playing ? 'tr-tool-button active' : 'tr-tool-button'}
+                title={t('speak')}
+                aria-label={t('speak')}
+                onClick={onSpeak}>
+                <Icon name={playing ? 'square' : 'volume-2'} size={13} />
+              </button>
+              <button
+                type="button"
+                className={copied ? 'tr-tool-button vocab-saved' : 'tr-tool-button'}
+                title={copied ? t('copied') : t('copy')}
+                aria-label={copied ? t('copied') : t('copy')}
+                onClick={onCopy}>
+                <Icon name={copied ? 'check' : 'copy'} size={13} />
+              </button>
+            </div>
+          )}
+        </div>
       </div>
       <div className="tr-card__body">
         {isDict ? (
@@ -291,21 +299,6 @@ function ServiceCard({
           <div className="tr-card__text">{card.text}</div>
         )}
       </div>
-      {!isDict && card.text && (
-        <div className="tr-card__tools">
-          <button
-            type="button"
-            className={playing ? 'tr-tool-button active' : 'tr-tool-button'}
-            title={t('speak')}
-            aria-label={t('speak')}
-            onClick={onSpeak}>
-            <Icon name={playing ? 'square' : 'volume-2'} size={13} />
-          </button>
-          <button type="button" className="tr-tool-button" title={t('copy')} aria-label={t('copy')} onClick={onCopy}>
-            <Icon name="copy" size={13} />
-          </button>
-        </div>
-      )}
     </div>
   )
 }
@@ -324,15 +317,36 @@ function TranslateWindow() {
   const [cards, setCards] = React.useState<Partial<Record<TranslateServiceId, CardState>>>({})
   const [playingKey, setPlayingKey] = React.useState<string | null>(null)
   const [pinned, setPinned] = React.useState(settings.autoPin)
+  const [copiedKey, setCopiedKey] = React.useState<string | null>(null)
   const [notice, setNotice] = React.useState<string | null>(null)
   const [toast, setToast] = React.useState<{ text: string; saved: boolean; key: number } | null>(null)
+  const [nuanceInput, setNuanceInput] = React.useState('')
+  const [nuanceNote, setNuanceNote] = React.useState<{
+    text: string
+    pending: boolean
+    error?: string
+  } | null>(null)
 
   const requestIdRef = React.useRef<string | null>(null)
+  const nuanceRequestIdRef = React.useRef<string | null>(null)
+  const nuanceDeltaRef = React.useRef('')
+  const nuanceFlushTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
+  const copiedTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
   const playingKeyRef = React.useRef<string | null>(null)
   const audioRef = React.useRef<HTMLAudioElement | null>(null)
   const noticeTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
   const inputRef = React.useRef<HTMLTextAreaElement>(null)
   const isComposingRef = React.useRef(false)
+  const prevAutoPinRef = React.useRef<boolean | null>(null)
+
+  React.useEffect(() => {
+    if (!loaded) return
+    if (prevAutoPinRef.current === null || prevAutoPinRef.current !== settings.autoPin) {
+      prevAutoPinRef.current = settings.autoPin
+      setPinned(settings.autoPin)
+      void window.assistantLite.windowControls.pin(settings.autoPin)
+    }
+  }, [loaded, settings.autoPin])
 
   React.useEffect(() => {
     playingKeyRef.current = playingKey
@@ -394,17 +408,74 @@ function TranslateWindow() {
     toastTimerRef.current = setTimeout(() => setToast(null), 2000)
   }, [])
 
-  // Abort the in-flight run when the window closes/reloads.
+  // Abort any in-flight translate or nuance AI runs when the window closes/reloads.
   React.useEffect(() => {
-    const onBeforeUnload = () => {
-      if (requestIdRef.current) void window.assistantLite.translate.abort(requestIdRef.current)
+    const abortAll = () => {
+      if (requestIdRef.current) {
+        void window.assistantLite.translate.abort(requestIdRef.current)
+        requestIdRef.current = null
+      }
+      if (nuanceRequestIdRef.current) {
+        void window.assistantLite.ai.abort(nuanceRequestIdRef.current)
+        nuanceRequestIdRef.current = null
+      }
+      if (nuanceFlushTimerRef.current) {
+        clearTimeout(nuanceFlushTimerRef.current)
+        nuanceFlushTimerRef.current = null
+      }
+      if (copiedTimerRef.current) {
+        clearTimeout(copiedTimerRef.current)
+        copiedTimerRef.current = null
+      }
     }
-    window.addEventListener('beforeunload', onBeforeUnload)
+    window.addEventListener('beforeunload', abortAll)
     return () => {
-      window.removeEventListener('beforeunload', onBeforeUnload)
-      onBeforeUnload()
+      window.removeEventListener('beforeunload', abortAll)
+      abortAll()
     }
   }, [])
+
+  // Streaming listener for the optional AI nuance/rewrite card (separate requestId).
+  React.useEffect(() => {
+    const flushNuance = () => {
+      if (nuanceFlushTimerRef.current) {
+        clearTimeout(nuanceFlushTimerRef.current)
+        nuanceFlushTimerRef.current = null
+      }
+      const delta = nuanceDeltaRef.current
+      nuanceDeltaRef.current = ''
+      if (!delta) return
+      setNuanceNote((prev) => (prev ? { ...prev, text: prev.text + delta, pending: true } : prev))
+    }
+    const unsub = window.assistantLite.ai.onChunk((chunk: AiChunkPayload) => {
+      if (chunk.requestId !== nuanceRequestIdRef.current) return
+      if (chunk.type === 'delta') {
+        nuanceDeltaRef.current += chunk.text ?? ''
+        if (!nuanceFlushTimerRef.current) nuanceFlushTimerRef.current = setTimeout(flushNuance, 50)
+        return
+      }
+      if (chunk.type === 'done' || chunk.type === 'error') {
+        flushNuance()
+        nuanceRequestIdRef.current = null
+        setNuanceNote((prev) =>
+          prev
+            ? {
+                ...prev,
+                pending: false,
+                error: chunk.type === 'error' ? (chunk.error ?? t('unknownProviderError')) : undefined
+              }
+            : prev
+        )
+      }
+    })
+    return () => {
+      unsub()
+      if (nuanceFlushTimerRef.current) {
+        clearTimeout(nuanceFlushTimerRef.current)
+        nuanceFlushTimerRef.current = null
+      }
+    }
+  }, [t])
 
   // Chunk subscription lives for the whole window; runs are matched by requestId.
   // Re-subscribes on language change so auto-save toasts use current wording.
@@ -439,6 +510,12 @@ function TranslateWindow() {
     (text: string, runFrom: string, runTo: string) => {
       const trimmed = text.trim()
       if (requestIdRef.current) void window.assistantLite.translate.abort(requestIdRef.current)
+      if (nuanceRequestIdRef.current) {
+        void window.assistantLite.ai.abort(nuanceRequestIdRef.current)
+        nuanceRequestIdRef.current = null
+      }
+      nuanceDeltaRef.current = ''
+      setNuanceNote(null)
       if (!trimmed) {
         requestIdRef.current = null
         setCards({})
@@ -553,9 +630,60 @@ function TranslateWindow() {
     [stopAudio]
   )
 
-  const copy = (text?: string) => {
-    if (text) void navigator.clipboard.writeText(text)
+  const copy = (text?: string, key?: string) => {
+    if (!text) return
+    void navigator.clipboard.writeText(text)
+    if (!key) return
+    setCopiedKey(key)
+    if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current)
+    copiedTimerRef.current = setTimeout(() => setCopiedKey(null), 1400)
   }
+
+  const stopNuance = React.useCallback(() => {
+    if (nuanceRequestIdRef.current) {
+      void window.assistantLite.ai.abort(nuanceRequestIdRef.current)
+      nuanceRequestIdRef.current = null
+    }
+    nuanceDeltaRef.current = ''
+    setNuanceNote((prev) => (prev ? { ...prev, pending: false } : prev))
+  }, [])
+
+  const runNuance = React.useCallback(
+    (kind: 'polish' | 'ask') => {
+      const source = input.trim()
+      if (!source) return
+      const customQuestion = nuanceInput.trim()
+      if (kind === 'ask' && !customQuestion) return
+      if (nuanceRequestIdRef.current) void window.assistantLite.ai.abort(nuanceRequestIdRef.current)
+      nuanceDeltaRef.current = ''
+
+      const firstTranslation = enabledServices
+        .map((id) => cards[id]?.text?.trim())
+        .find((text): text is string => !!text)
+      const targetLang = translateLanguageLabel(getAutoTargetLanguage(source, from, to))
+      const isZh = settings.language === 'zh-CN'
+
+      const prompt =
+        kind === 'polish'
+          ? isZh
+            ? `请基于以下原文与译文，给出 2 个更自然地道的「${targetLang}」表达（口语自然版 / 书面精炼版），并一句话说明语气或用词差异，简洁不要废话。\n\n原文：${source}${firstTranslation ? `\n参考译文：${firstTranslation}` : ''}`
+            : `Based on this text, provide 2 more natural/idiomatic expressions in ${targetLang} (casual vs. refined) and briefly note the nuance in one line.\n\nSource: ${source}${firstTranslation ? `\nDraft translation: ${firstTranslation}` : ''}`
+          : isZh
+            ? `原文：${source}${firstTranslation ? `\n参考译文（${targetLang}）：${firstTranslation}` : ''}\n\n问题：${customQuestion}\n请直接、简洁回答。`
+            : `Source: ${source}${firstTranslation ? `\nTranslation (${targetLang}): ${firstTranslation}` : ''}\n\nQuestion: ${customQuestion}\nAnswer concisely.`
+
+      if (kind === 'ask') setNuanceInput('')
+      const requestId = crypto.randomUUID()
+      nuanceRequestIdRef.current = requestId
+      setNuanceNote({ text: '', pending: true })
+      void window.assistantLite.ai.stream({
+        requestId,
+        messages: [{ role: 'user', text: prompt }],
+        reasoning: 'off'
+      })
+    },
+    [input, nuanceInput, enabledServices, cards, from, to, settings.language]
+  )
 
   // Save/remove the dict word in the vocabulary book; optimistic UI, the
   // main-process call is fire-and-forget. A short toast confirms the action
@@ -574,10 +702,12 @@ function TranslateWindow() {
     void (nextSaved ? window.assistantLite.vocabulary.add(dict) : window.assistantLite.vocabulary.remove(dict.word))
   }
 
-  // Esc closes the window.
+  // Esc closes the window (unless consumed by a field draft clear).
   React.useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') void window.assistantLite.windowControls.close()
+      if (event.key === 'Escape' && !event.defaultPrevented) {
+        void window.assistantLite.windowControls.close()
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -607,12 +737,18 @@ function TranslateWindow() {
 
   return (
     <div className="action-window action-window--flex translate-window">
-      <div className="titlebar titlebar--left">
+      <div className="titlebar titlebar--left fa-tr-titlebar">
         <Icon name="languages" />
         <strong>{t('trTitle')}</strong>
         {notice && <span className="tr-notice">{notice}</span>}
         <div className="titlebar__spacer" />
-        <button className="icon" title={pinned ? t('unpin') : t('pin')} onClick={togglePin}>
+        <button
+          className="icon"
+          title={t('openNewWindow')}
+          onClick={() => void window.assistantLite.windowControls.openNew({ mode: 'translate' })}>
+          <Icon name="plus" size={14} />
+        </button>
+        <button className={pinned ? 'icon icon--active' : 'icon'} title={pinned ? t('unpin') : t('pin')} onClick={togglePin}>
           <Icon name={pinned ? 'pin-off' : 'pin'} />
         </button>
         {!isMac && (
@@ -699,6 +835,48 @@ function TranslateWindow() {
         </div>
 
         <div className="tr-results">
+          {nuanceNote && (
+            <div className="tr-card tr-card--nuance">
+              <div className="tr-card__head">
+                <span className="tr-card__name tr-card__name--nuance">{t('trAiNoteTitle')}</span>
+                <div className="tr-card__meta">
+                  {nuanceNote.pending && <span className="tr-card__dot-pulse" aria-label={t('loading')} />}
+                  {nuanceNote.text && (
+                    <button
+                      type="button"
+                      className={copiedKey === 'nuance' ? 'tr-tool-button vocab-saved' : 'tr-tool-button'}
+                      title={copiedKey === 'nuance' ? t('copied') : t('copy')}
+                      aria-label={copiedKey === 'nuance' ? t('copied') : t('copy')}
+                      onClick={() => copy(nuanceNote.text, 'nuance')}>
+                      <Icon name={copiedKey === 'nuance' ? 'check' : 'copy'} size={13} />
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="tr-tool-button"
+                    title={t('close')}
+                    aria-label={t('close')}
+                    onClick={() => {
+                      stopNuance()
+                      setNuanceNote(null)
+                    }}>
+                    <Icon name="x" size={13} />
+                  </button>
+                </div>
+              </div>
+              <div className="tr-card__body">
+                {nuanceNote.error ? (
+                  <div className="tr-card__error">{nuanceNote.error}</div>
+                ) : nuanceNote.text ? (
+                  <div className="tr-card__nuance-md markdown-body">
+                    <MarkdownView pending={nuanceNote.pending}>{nuanceNote.text}</MarkdownView>
+                  </div>
+                ) : (
+                  <div className="thinking-indicator">{t('preparing')}</div>
+                )}
+              </div>
+            </div>
+          )}
           {enabledServices.map((serviceId) => {
             const card = cards[serviceId]
             // The dictionary card only materializes for single-word input;
@@ -720,8 +898,9 @@ function TranslateWindow() {
                 serviceId={serviceId}
                 card={card}
                 playing={playingKey === `card:${serviceId}`}
+                copied={copiedKey === serviceId}
                 onSpeak={() => void speak(card.text ?? '', `card:${serviceId}`)}
-                onCopy={() => copy(card.text)}
+                onCopy={() => copy(card.text, serviceId)}
                 onToggleSave={() => toggleVocab(serviceId)}
                 onSpeakUrl={speakUrl}
                 onSpeakSentence={(sentence) => {
@@ -737,6 +916,43 @@ function TranslateWindow() {
             )
           })}
         </div>
+      </div>
+
+      <div className="tr-nuance-bar">
+        <input
+          type="text"
+          className="tr-nuance-bar__input"
+          value={nuanceInput}
+          placeholder={t('trNuancePlaceholder')}
+          onChange={(e) => setNuanceInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+              e.preventDefault()
+              if (nuanceNote?.pending) stopNuance()
+              else runNuance('ask')
+            } else if (e.key === 'Escape' && nuanceInput) {
+              e.preventDefault()
+              e.stopPropagation()
+              setNuanceInput('')
+            }
+          }}
+        />
+        <button
+          type="button"
+          className="tr-nuance-bar__polish"
+          disabled={!input.trim() || !!nuanceNote?.pending}
+          onClick={() => runNuance('polish')}
+          title={t('trIdiomaticBtn')}>
+          {t('trIdiomaticBtn')}
+        </button>
+        <button
+          type="button"
+          className={`tr-nuance-bar__send${nuanceNote?.pending ? ' tr-nuance-bar__send--stop' : ''}`}
+          disabled={!nuanceNote?.pending && (!input.trim() || !nuanceInput.trim())}
+          onClick={() => (nuanceNote?.pending ? stopNuance() : runNuance('ask'))}
+          title={nuanceNote?.pending ? t('stop') : t('trAiNoteTitle')}>
+          <Icon name={nuanceNote?.pending ? 'square' : 'arrow-up'} size={13} />
+        </button>
       </div>
 
       {toast && (

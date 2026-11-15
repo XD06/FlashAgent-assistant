@@ -9,7 +9,7 @@ import { defaultPrimaryColor } from '@shared/defaults'
 import { deriveThemeCssVars, normalizeSystemAccentColor, type ResolvedThemeMode } from '@shared/theme'
 import { IPC } from '@shared/ipc'
 import { APP_ICON_DATA_URL, APP_TRAY_DATA_URL } from '@shared/brand'
-import type { AgentToolEvent, AiStreamRequest, SettingsPatch } from '@shared/types'
+import type { AgentToolEvent, AiStreamRequest, OpenNewWindowOptions, SettingsPatch } from '@shared/types'
 import { listModels, streamChatMessages, testModel, type ProviderFetch } from './ai/OpenAICompatibleClient'
 import { extractPartialProperty, parseStreamingToolArgs } from './ai/streamingArgsParser'
 import { formatSearchContext, searchWithFallback, webSearchTool } from './ai/WebSearch'
@@ -31,6 +31,7 @@ import { autoRepairRecapDoc, stripDocJunk, validateRecapDoc } from '@shared/reca
 import { ScreenshotService } from './ScreenshotService'
 import { cleanupCaptureTemp } from './capture'
 import { SelectionService } from './SelectionService'
+import { cascadeWindowOrigin, pickReusableSubWindow } from './selectionWindowPolicy'
 import { registerTranslateIpc } from './translate'
 import { playTts, stopTtsPlayback, destroyTtsPlayer } from './ttsPlayer'
 import { flushVocabularyPersistSync, initVocabulary, registerVocabularyIpc } from './vocabulary'
@@ -63,7 +64,7 @@ app.commandLine.appendSwitch('js-flags', '--max-old-space-size=512')
 
 let settingsWindow: BrowserWindow | null = null
 let chatWindow: BrowserWindow | null = null
-let translateWindow: BrowserWindow | null = null
+const translateWindows = new Set<BrowserWindow>()
 let tray: Tray | null = null
 let isQuitting = false
 
@@ -500,11 +501,19 @@ function openChatWindow(): void {
 const TRANSLATE_DEFAULT_WIDTH = 420
 const TRANSLATE_DEFAULT_HEIGHT = 480
 
-function openTranslateWindow(): void {
-  if (translateWindow && !translateWindow.isDestroyed()) {
-    if (translateWindow.isMinimized()) translateWindow.restore()
-    translateWindow.show()
-    translateWindow.focus()
+function openTranslateWindow(forceNew = false): void {
+  const candidates = Array.from(translateWindows)
+    .filter((win) => !win.isDestroyed())
+    .map((win) => ({
+      win,
+      visible: win.isVisible(),
+      pinned: win.isAlwaysOnTop()
+    }))
+  const existing = pickReusableSubWindow(candidates, forceNew)
+  if (existing) {
+    if (existing.isMinimized()) existing.restore()
+    existing.show()
+    existing.focus()
     return
   }
   const settings = getSettings()
@@ -514,7 +523,18 @@ function openTranslateWindow(): void {
   const storedHeight = settings.translateWindowHeight
   const width = storedWidth && storedWidth !== 560 ? storedWidth : TRANSLATE_DEFAULT_WIDTH
   const height = storedHeight && storedHeight !== 560 ? storedHeight : TRANSLATE_DEFAULT_HEIGHT
-  translateWindow = new BrowserWindow({
+  const siblingCount = candidates.filter((c) => c.visible).length
+  const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
+  const area = display.workArea
+  const centeredX = Math.round(area.x + (area.width - width) / 2)
+  const centeredY = Math.round(area.y + (area.height - height) / 2)
+  const { x, y } =
+    siblingCount > 0
+      ? cascadeWindowOrigin(centeredX, centeredY, width, height, area, siblingCount)
+      : { x: centeredX, y: centeredY }
+  const win = new BrowserWindow({
+    x: x - CHAT_SHADOW_PADDING,
+    y: y - CHAT_SHADOW_PADDING,
     width: width + CHAT_SHADOW_PADDING * 2,
     height: height + CHAT_SHADOW_PADDING * 2,
     minWidth: 360 + CHAT_SHADOW_PADDING * 2,
@@ -537,7 +557,7 @@ function openTranslateWindow(): void {
       backgroundThrottling: true
     }
   })
-  const win = translateWindow
+  translateWindows.add(win)
   // Height is content-driven (the renderer reports it via WindowAdjustHeight);
   // only the width is a user preference worth remembering.
   const saveBounds = (): void => {
@@ -549,7 +569,7 @@ function openTranslateWindow(): void {
   }
   win.on('close', saveBounds)
   win.on('closed', () => {
-    if (translateWindow === win) translateWindow = null
+    translateWindows.delete(win)
   })
   let resizeTimer: ReturnType<typeof setTimeout> | null = null
   win.on('resized', () => {
@@ -557,6 +577,7 @@ function openTranslateWindow(): void {
     resizeTimer = setTimeout(saveBounds, 200)
   })
   win.once('ready-to-show', () => {
+    if (settings.autoPin) win.setAlwaysOnTop(true)
     win.show()
     win.focus()
   })
@@ -633,10 +654,20 @@ function registerShortcuts(): void {
     }
   ]
 
-  // Per-action type-in shortcuts: open a typed-input window for that action.
+  // Per-action type-in shortcuts: look up the live action by id when pressed
+  // so edits to prompt/model/reasoning apply immediately without re-registering.
   for (const action of settings.actions) {
     const accelerator = action.shortcut?.trim()
-    if (accelerator) shortcuts.push({ accelerator, action: () => selectionService.openActionInput(action) })
+    const actionId = action.id
+    if (accelerator) {
+      shortcuts.push({
+        accelerator,
+        action: () => {
+          const latest = getSettings().actions.find((a) => a.id === actionId)
+          if (latest) selectionService.openActionInput(latest)
+        }
+      })
+    }
   }
 
   for (const shortcut of shortcuts) {
@@ -813,6 +844,14 @@ function registerIpc(): void {
     win.setBounds({ x: bounds.x, y: bounds.y, width: bounds.width, height: outer })
   })
 
+  ipcMain.handle(IPC.WindowOpenNew, (_event, options?: OpenNewWindowOptions) => {
+    if (options?.mode === 'translate') {
+      openTranslateWindow(true)
+      return
+    }
+    selectionService.openNewActionWindow(options?.action)
+  })
+
   // Typing in the proxy input fires one settings update per keystroke —
   // debounce the MCP reconnect so connections rebuild once the URL settles.
   let mcpProxyReconnectTimer: NodeJS.Timeout | null = null
@@ -826,6 +865,12 @@ function registerIpc(): void {
       prev.actions.some((a, i) => a.shortcut !== settings.actions[i]?.shortcut) ||
       prev.actions.length !== settings.actions.length
     if (shortcutsChanged) registerShortcuts()
+    if (
+      prev.actionWindowWidth !== settings.actionWindowWidth ||
+      prev.actionWindowHeight !== settings.actionWindowHeight
+    ) {
+      selectionService.syncWindowSizeFromSettings(settings)
+    }
     applySelectionState(settings)
     applyAutoLaunch(settings.autoLaunch)
     // Re-apply the proxy chain (manual > system > direct) when it changes, then
