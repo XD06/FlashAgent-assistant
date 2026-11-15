@@ -31,6 +31,15 @@ import type {
 import { version as APP_VERSION } from '../../../package.json'
 
 const GITHUB_REPO_URL = 'https://github.com/XD06/FlashAgent-assistant'
+const SIDEBAR_COLLAPSED_STORAGE_KEY = 'fa-settings-sidebar-collapsed'
+
+function readInitialSidebarCollapsed(): boolean {
+  try {
+    return localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === 'true'
+  } catch {
+    return false
+  }
+}
 
 type SettingsSectionId = 'api' | 'actions' | 'selection' | 'shortcuts' | 'translate' | 'vocabulary' | 'window'
 
@@ -98,37 +107,58 @@ type SettingRowProps = {
 function SettingsNav({
   sections,
   activeSection,
+  collapsed,
+  onToggleCollapse,
   onChange,
   t
 }: {
   sections: SettingsSectionMeta[]
   activeSection: SettingsSectionId
+  collapsed: boolean
+  onToggleCollapse: () => void
   onChange: (section: SettingsSectionId) => void
   t: (key: string) => string
 }) {
+  const toggleLabel = collapsed ? t('expandSidebar') : t('collapseSidebar')
   return (
-    <aside className="settings-sidebar" aria-label="Settings sections">
-      {sections.map((section) => {
-        const isActive = section.id === activeSection
-        return (
-          <button
-            key={section.id}
-            className={isActive ? 'settings-nav-button active' : 'settings-nav-button'}
-            onClick={() => onChange(section.id)}
-            type="button">
-            <Icon name={section.icon} size={15} filled={isActive} />
-            <span>{section.label}</span>
-          </button>
-        )
-      })}
+    <aside className={collapsed ? 'settings-sidebar is-collapsed' : 'settings-sidebar'} aria-label={t('settingsSections')}>
+      <div className="settings-sidebar-top">
+        <button
+          className="settings-sidebar-toggle"
+          type="button"
+          aria-expanded={!collapsed}
+          aria-label={toggleLabel}
+          title={toggleLabel}
+          onClick={onToggleCollapse}>
+          <Icon name={collapsed ? 'panel-left-open' : 'panel-left-close'} size={16} />
+        </button>
+      </div>
+      <nav className="settings-nav-list" aria-label={t('settingsSections')}>
+        {sections.map((section) => {
+          const isActive = section.id === activeSection
+          return (
+            <button
+              key={section.id}
+              className={isActive ? 'settings-nav-button active' : 'settings-nav-button'}
+              aria-current={isActive ? 'page' : undefined}
+              aria-label={section.label}
+              title={collapsed ? section.label : undefined}
+              onClick={() => onChange(section.id)}
+              type="button">
+              <Icon name={section.icon} size={16} filled={isActive} />
+              <span className="settings-nav-label">{section.label}</span>
+            </button>
+          )
+        })}
+      </nav>
       <div className="settings-sidebar-footer">
         <button
           className="settings-github-link"
           type="button"
-          title={t('githubRepoTooltip')}
+          title={collapsed ? `FlashAgent-assistant v${APP_VERSION} · ${t('githubRepoTooltip')}` : t('githubRepoTooltip')}
           aria-label={t('githubRepoTooltip')}
           onClick={() => void window.assistantLite.app.openExternal(GITHUB_REPO_URL)}>
-          <Icon name="github" size={14} />
+          <Icon name="github" size={15} />
           <span className="settings-version">v{APP_VERSION}</span>
         </button>
       </div>
@@ -943,6 +973,7 @@ function SettingsApp() {
   const { settings, loaded, update } = useSettings()
   const [accessibilityTrusted, setAccessibilityTrusted] = React.useState(true)
   const [activeSection, setActiveSection] = React.useState<SettingsSectionId>('api')
+  const [sidebarCollapsed, setSidebarCollapsed] = React.useState(readInitialSidebarCollapsed)
   const [modelsByTemplate, setModelsByTemplate] = React.useState<Record<string, string[]>>({})
   const [statusByTemplate, setStatusByTemplate] = React.useState<Record<string, string>>({})
   const [visibleApiKeys, setVisibleApiKeys] = React.useState<Record<string, boolean>>({})
@@ -1958,6 +1989,18 @@ function SettingsApp() {
     )
   }
 
+  const toggleSidebarCollapsed = React.useCallback(() => {
+    setSidebarCollapsed((prev) => {
+      const next = !prev
+      try {
+        localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, String(next))
+      } catch {
+        // Ignore storage errors (private mode / quota).
+      }
+      return next
+    })
+  }, [])
+
   return (
     <main className="page settings-page">
       <header className={isMac ? 'settings-titlebar settings-titlebar--mac' : 'settings-titlebar'}>
@@ -1966,24 +2009,33 @@ function SettingsApp() {
           <span className="settings-titlebar-title">FlashAgent-assistant</span>
         </div>
       </header>
-      <div className="settings-shell">
-        {!accessibilityTrusted && (
-          <section className="accessibility-panel">
-            <div>
-              <h2>{t('accessibilityTitle')}</h2>
-              <p>{t('accessibilityBody')}</p>
-            </div>
-            <button className="primary" onClick={() => window.assistantLite.selection.requestAccessibility()}>
-              {t('accessibilityButton')}
-            </button>
-          </section>
-        )}
+      <div className="settings-layout">
+        <SettingsNav
+          sections={sections}
+          activeSection={activeSection}
+          collapsed={sidebarCollapsed}
+          onToggleCollapse={toggleSidebarCollapsed}
+          onChange={setActiveSection}
+          t={t}
+        />
 
-        <div className="settings-layout">
-          <SettingsNav sections={sections} activeSection={activeSection} onChange={setActiveSection} t={t} />
-
+        <div className="settings-main">
           <section className="settings-content">
-            {renderSection()}
+            <div className="settings-content-inner">
+              {!accessibilityTrusted && (
+                <section className="accessibility-panel">
+                  <div>
+                    <h2>{t('accessibilityTitle')}</h2>
+                    <p>{t('accessibilityBody')}</p>
+                  </div>
+                  <button className="primary" onClick={() => window.assistantLite.selection.requestAccessibility()}>
+                    {t('accessibilityButton')}
+                  </button>
+                </section>
+              )}
+
+              {renderSection()}
+            </div>
           </section>
         </div>
       </div>

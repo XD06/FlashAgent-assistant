@@ -289,21 +289,22 @@ label {
   --settings-focus: var(--focus);
   --settings-success: #34c759;
   color: var(--settings-text);
-  background: var(--settings-bg);
-  /* Fixed viewport shell: only the content column scrolls. */
+  background: var(--surface-chrome);
+  /* Fixed viewport shell: flush chrome top/left framing the scrolling page viewport. */
   height: 100vh;
   min-height: 0;
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  padding: 0 12px 12px;
+  padding: 0;
 }
 
 .settings-titlebar {
   flex: 0 0 auto;
   height: 34px;
-  margin: 0 -12px;
-  padding: 0 144px 0 12px;
+  margin: 0;
+  padding: 0 144px 0 16px;
+  background: var(--surface-chrome);
   display: flex;
   align-items: center;
   -webkit-app-region: drag;
@@ -357,18 +358,6 @@ html[data-theme='dark'] .settings-page {
   --settings-success: #30d158;
 }
 
-.settings-shell {
-  /* Center the bounded navigation-and-content workspace within the window. */
-  width: 100%;
-  max-width: 840px;
-  flex: 1 1 auto;
-  margin: 0 auto;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  min-height: 0;
-}
-
 .settings-body {
   overflow-y: scroll;
 }
@@ -414,79 +403,164 @@ html[data-theme='dark'] .settings-page {
 .settings-layout {
   flex: 1 1 auto;
   min-height: 0;
-  display: grid;
-  grid-template-columns: 118px minmax(0, 1fr);
-  gap: 14px;
+  width: 100%;
+  display: flex;
   align-items: stretch;
 }
 
 .settings-sidebar {
-  /* Vertical rail — icon + label per page, pinned while content scrolls. */
-  display: flex;
-  flex-direction: column;
+  /* FlClash chromeSurface left rail — smooth 52px <-> 168px collapse around fixed x=26px icon axis. */
+  flex: 0 0 auto;
+  width: 168px;
+  min-width: 0;
   align-self: stretch;
   min-height: 0;
-  gap: 2px;
-  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
   border: 0;
   border-radius: 0;
-  background: transparent;
+  background: var(--surface-chrome);
   box-shadow: none;
+  overflow: hidden;
   -webkit-app-region: drag;
+  transition: width 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.settings-sidebar.is-collapsed {
+  width: 52px;
 }
 
 .settings-sidebar button {
   -webkit-app-region: no-drag;
 }
 
+.settings-sidebar-top {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+.settings-sidebar-toggle {
+  width: 40px;
+  min-width: 40px;
+  height: 32px;
+  min-height: 32px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--settings-muted);
+  cursor: pointer;
+}
+
+.settings-sidebar-toggle:hover {
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  color: var(--settings-text);
+}
+
+.settings-nav-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  scrollbar-width: none;
+}
+
+.settings-nav-list::-webkit-scrollbar {
+  display: none;
+}
 
 .settings-nav-button {
+  position: relative;
   width: 100%;
   min-height: 36px;
+  height: 36px;
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  gap: 8px;
+  gap: 10px;
   border: 0;
-  border-radius: var(--radius-block);
-  padding: 0 10px;
+  border-radius: var(--radius-control);
+  padding: 0 12px;
   overflow: hidden;
   text-align: left;
   background: transparent;
-  color: var(--settings-faint);
+  color: var(--settings-muted);
+  transition:
+    background-color 140ms ease,
+    color 140ms ease;
+}
+
+.settings-nav-button::before {
+  content: '';
+  position: absolute;
+  left: 1px;
+  top: 50%;
+  width: 3px;
+  height: 16px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  opacity: 0;
+  transform: translateY(-50%) scaleY(0.35);
+  transition:
+    transform 240ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    opacity 140ms ease;
 }
 
 .settings-nav-button svg {
   flex: 0 0 auto;
+  transition: color 140ms ease;
 }
 
-.settings-nav-button span {
-  color: var(--settings-muted);
-  font-size: 12px;
-  font-weight: 620;
+.settings-nav-label {
+  color: inherit;
+  font-size: 12.5px;
+  font-weight: 560;
   letter-spacing: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 100%;
+  transition: opacity 140ms ease;
 }
 
-.settings-nav-button:hover {
-  background: var(--settings-surface-soft);
+.settings-sidebar.is-collapsed .settings-nav-label,
+.settings-sidebar.is-collapsed .settings-version {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.settings-nav-button:hover:not(.active) {
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+  color: var(--settings-text);
 }
 
 .settings-nav-button.active {
-  background: var(--settings-surface);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
   color: var(--settings-text);
-  box-shadow: var(--shadow-card);
+  box-shadow: none;
+}
+
+.settings-nav-button.active::before {
+  opacity: 1;
+  transform: translateY(-50%) scaleY(1);
 }
 
 .settings-nav-button.active svg {
   color: var(--accent);
 }
 
-.settings-nav-button.active span {
+.settings-nav-button.active .settings-nav-label {
   color: var(--settings-text);
+  font-weight: 650;
 }
 
 /* FlClash-inspired Theme Appearance controls */
@@ -792,7 +866,11 @@ html[data-theme='dark'] .settings-page {
   .ui-segmented__thumb,
   .ui-shape-badge__shape,
   .toggle span,
-  .ext-switch__track::after {
+  .ext-switch__track::after,
+  .settings-sidebar,
+  .settings-nav-button::before,
+  .settings-nav-label,
+  .settings-version {
     transition-duration: 0.01ms !important;
   }
   .ui-status-chip__dot--pulse,
@@ -992,24 +1070,23 @@ html[data-theme='dark'] .settings-page {
 }
 
 .settings-sidebar-footer {
-  --footer-badge-height: 20px;
   margin-top: auto;
-  padding-top: 12px;
-  /* Leave exactly one badge row below so it does not hug the window edge. */
-  padding-bottom: var(--footer-badge-height);
+  padding-top: 8px;
+  padding-bottom: 4px;
 }
 
 .settings-github-link {
   width: 100%;
-  min-height: var(--footer-badge-height);
+  min-height: 34px;
+  height: 34px;
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  gap: 8px;
-  padding: 0 9px;
+  gap: 10px;
+  padding: 0 12.5px;
   overflow: hidden;
   border: 0;
-  border-radius: 10px;
+  border-radius: var(--radius-control);
   background: transparent;
   color: var(--settings-faint);
   cursor: pointer;
@@ -1028,25 +1105,46 @@ html[data-theme='dark'] .settings-page {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  transition: opacity 140ms ease, color 140ms ease;
 }
 
 .settings-github-link:hover {
-  background: var(--settings-surface-soft);
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+  color: var(--settings-text);
 }
 
 .settings-github-link:hover .settings-version {
   color: var(--settings-text);
 }
 
+.settings-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-page);
+  border-top: 1px solid var(--divider-hairline);
+  border-left: 1px solid var(--divider-hairline);
+  border-top-left-radius: 12px;
+  overflow: hidden;
+}
+
 .settings-content {
+  flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
   overflow-y: auto;
+  padding: 14px 16px 18px;
+}
+
+.settings-content-inner {
+  width: 100%;
+  max-width: 780px;
+  margin: 0 auto;
   display: grid;
-  gap: 0;
+  gap: 10px;
   align-content: start;
-  /* Breathing room so card shadows aren't clipped by the scroll container. */
-  padding: 2px 3px 14px 2px;
 }
 
 .settings-stack {
@@ -1233,7 +1331,7 @@ html[data-theme='dark'] .settings-page {
 }
 
 .action-shortcuts-grid .shortcut-recorder {
-  min-width: 172px;
+  min-width: 142px;
 }
 
 .setting-control textarea {
@@ -2813,36 +2911,18 @@ html[data-theme='dark'] .footer button:last-child {
   }
 
   .page.settings-page {
-    padding: 0 12px 12px;
+    padding: 0;
   }
 
-  .settings-layout {
+  .settings-sidebar {
     /* Narrow window: collapse the rail to icon-only, keep it vertical. */
-    grid-template-columns: 44px minmax(0, 1fr);
-    gap: 12px;
+    width: 52px;
   }
 
-  .settings-nav-button {
-    justify-content: center;
-    padding: 0;
-  }
-
-  .settings-nav-button span {
-    display: none;
-  }
-
-  .settings-sidebar-tools {
-    padding-top: 8px;
-  }
-
-  .settings-github-link {
-    justify-content: center;
-    padding: 0;
-    gap: 4px;
-  }
-
-  .settings-github-link .settings-version {
-    font-size: 9px;
+  .settings-nav-label,
+  .settings-version {
+    opacity: 0;
+    pointer-events: none;
   }
 }
 

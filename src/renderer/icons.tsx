@@ -578,6 +578,26 @@ function Folder({ size = 16, strokeWidth = 2 }: IconProps) {
   )
 }
 
+function PanelLeftClose({ size = 16, strokeWidth = 2 }: IconProps) {
+  return (
+    <svg {...baseProps(size)} strokeWidth={strokeWidth}>
+      <rect width="18" height="18" x="3" y="3" rx="2.5" />
+      <path d="M9 3v18" />
+      <path d="m16 15-3-3 3-3" />
+    </svg>
+  )
+}
+
+function PanelLeftOpen({ size = 16, strokeWidth = 2 }: IconProps) {
+  return (
+    <svg {...baseProps(size)} strokeWidth={strokeWidth}>
+      <rect width="18" height="18" x="3" y="3" rx="2.5" />
+      <path d="M9 3v18" />
+      <path d="m14 9 3 3-3 3" />
+    </svg>
+  )
+}
+
 function Github({ size = 16 }: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -637,7 +657,9 @@ const icons: Record<string, (props: IconProps) => React.JSX.Element> = {
   incognito: Incognito,
   'new-topic': NewTopic,
   brain: Brain,
-  folder: Folder
+  folder: Folder,
+  'panel-left-close': PanelLeftClose,
+  'panel-left-open': PanelLeftOpen
 }
 
 function Brain({ size = 16, strokeWidth = 1.75 }: IconProps) {

@@ -316,7 +316,7 @@ function cancelChatIdleDestroy(): void {
 
 const SETTINGS_TITLEBAR_HEIGHT = 34
 
-function resolveSettingsTitlebarColors(): { surfacePage: string; symbolColor: string } {
+function resolveSettingsTitlebarColors(): { surfaceChrome: string; symbolColor: string } {
   const settings = getSettings()
   const resolvedMode: ResolvedThemeMode =
     settings.theme === 'light' || settings.theme === 'dark'
@@ -334,18 +334,18 @@ function resolveSettingsTitlebarColors(): { surfacePage: string; symbolColor: st
     readSystemAccentColor()
   )
   return {
-    surfacePage: vars['--surface-page'],
+    surfaceChrome: vars['--surface-chrome'],
     symbolColor: vars['--text-soft']
   }
 }
 
 function applySettingsWindowTheme(win: BrowserWindow | null = settingsWindow): void {
   if (!win || win.isDestroyed()) return
-  const { surfacePage, symbolColor } = resolveSettingsTitlebarColors()
-  win.setBackgroundColor(surfacePage)
+  const { surfaceChrome, symbolColor } = resolveSettingsTitlebarColors()
+  win.setBackgroundColor(surfaceChrome)
   if (isWin && typeof win.setTitleBarOverlay === 'function') {
     win.setTitleBarOverlay({
-      color: surfacePage,
+      color: surfaceChrome,
       symbolColor,
       height: SETTINGS_TITLEBAR_HEIGHT
     })
@@ -363,7 +363,7 @@ function createSettingsWindow(): BrowserWindow {
   }
   cancelSettingsIdleDestroy()
 
-  const { surfacePage, symbolColor } = resolveSettingsTitlebarColors()
+  const { surfaceChrome, symbolColor } = resolveSettingsTitlebarColors()
   settingsWindow = new BrowserWindow({
     // Open at the minimum working size — the shell layout is densest there;
     // the user can enlarge up to the max but starts compact.
@@ -374,12 +374,12 @@ function createSettingsWindow(): BrowserWindow {
     icon: appIcon,
     title: 'FlashAgent-assistant',
     autoHideMenuBar: true,
-    backgroundColor: surfacePage,
+    backgroundColor: surfaceChrome,
     titleBarStyle: 'hidden',
     ...(isWin
       ? {
           titleBarOverlay: {
-            color: surfacePage,
+            color: surfaceChrome,
             symbolColor,
             height: SETTINGS_TITLEBAR_HEIGHT
           }
