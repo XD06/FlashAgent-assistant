@@ -6,6 +6,7 @@ import type {
   ActionType,
   AppLanguage,
   AppSettings,
+  ChatColorMode,
   ColorStyle,
   CommandShell,
   OcrEngineId,
@@ -126,6 +127,7 @@ export function mergeSettings(current: AppSettings, patch: SettingsPatch): AppSe
     primaryColor: normalizePrimaryColor(nextPrimaryColorInput),
     primaryColors: normalizePrimaryColors(rest.primaryColors ?? current.primaryColors),
     colorStyle: normalizeColorStyle(rest.colorStyle ?? current.colorStyle),
+    chatColorMode: normalizeChatColorMode(rest.chatColorMode ?? current.chatColorMode),
     triggerMode: normalizeTriggerMode(rest.triggerMode ?? current.triggerMode),
     filterMode: normalizeFilterMode(rest.filterMode ?? current.filterMode),
     commandShell: normalizeCommandShell(rest.commandShell ?? current.commandShell),
@@ -184,6 +186,11 @@ function normalizeThemeMode(mode: unknown): ThemeMode {
 function normalizeColorStyle(style: unknown): ColorStyle {
   if (style === 'vivid' || style === 'tinted' || style === 'soft' || style === 'monochrome') return style
   return 'vivid'
+}
+
+function normalizeChatColorMode(mode: unknown): ChatColorMode {
+  if (mode === 'semantic' || mode === 'theme' || mode === 'minimal') return mode
+  return 'semantic'
 }
 
 function normalizePrimaryColor(value: unknown): string | null {

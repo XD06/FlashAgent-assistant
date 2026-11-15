@@ -109,13 +109,24 @@ export function ThemeLivePreview({
 
         <div className="theme-preview-canvas">
           {scene === 'chat' && (
-            <div className="theme-preview-card">
+            <div
+              className="theme-preview-card theme-preview-card--chat"
+              data-preview-chat-color={settings.colorStyle === 'monochrome' ? 'minimal' : settings.chatColorMode}
+            >
               <div className="theme-preview-prompt">{t('themePreviewChatPrompt')}</div>
               <div className="theme-preview-reply">
                 <span className="theme-preview-reply__bar" />
                 <span className="theme-preview-reply__text">{t('themePreviewChatReply')}</span>
               </div>
               <div className="theme-preview-foot">
+                <span className="theme-preview-tool-mini theme-preview-tool-mini--cmd">
+                  <Icon name="terminal" size={10} />
+                  <span>CLI</span>
+                </span>
+                <span className="theme-preview-tool-mini theme-preview-tool-mini--read">
+                  <Icon name="file-text" size={10} />
+                  <span>Read</span>
+                </span>
                 <span className="theme-preview-pill theme-preview-pill--accent">{t('themePreviewReady')}</span>
                 <span className="theme-preview-switch" aria-hidden="true">
                   <span />

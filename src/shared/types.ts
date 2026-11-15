@@ -11,6 +11,7 @@ export type AppLanguage = 'zh-CN' | 'en'
 export type OcrEngineId = 'system' | 'paddle'
 export type ThemeMode = 'system' | 'light' | 'dark'
 export type ColorStyle = 'vivid' | 'tinted' | 'soft' | 'monochrome'
+export type ChatColorMode = 'semantic' | 'theme' | 'minimal'
 export type ProviderApiType = 'openai' | 'anthropic'
 /** 'on' lets the model use its default; other values request explicit reasoning control. */
 export type ReasoningMode = 'on' | 'off' | 'low' | 'medium' | 'high'
@@ -147,6 +148,8 @@ export interface AppSettings {
   /** User swatch list ('#rrggbb' hex strings) shown in theme appearance settings. */
   primaryColors: string[]
   colorStyle: ColorStyle
+  /** How chat links, user bubbles, and Agent tool icons/labels use color. */
+  chatColorMode: ChatColorMode
   enabled: boolean
   triggerMode: TriggerMode
   compactToolbar: boolean

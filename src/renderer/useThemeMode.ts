@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { defaultPrimaryColor } from '@shared/defaults'
 import { deriveThemeCssVars, type ResolvedThemeMode } from '@shared/theme'
-import type { ColorStyle, ThemeMode } from '@shared/types'
+import type { ChatColorMode, ColorStyle, ThemeMode } from '@shared/types'
 
 export type ThemeModeInput =
   | ThemeMode
@@ -10,6 +10,7 @@ export type ThemeModeInput =
       pureBlack?: boolean
       primaryColor?: string | null
       colorStyle?: ColorStyle
+      chatColorMode?: ChatColorMode
     }
 
 function resolveTheme(theme: ThemeMode): ResolvedThemeMode {
@@ -47,6 +48,7 @@ export function useThemeMode(input: ThemeModeInput) {
   const pureBlack = typeof input === 'string' ? false : Boolean(input.pureBlack)
   const primaryColor = typeof input === 'string' ? defaultPrimaryColor : (input.primaryColor === undefined ? defaultPrimaryColor : input.primaryColor)
   const colorStyle: ColorStyle = typeof input === 'string' ? 'vivid' : (input.colorStyle ?? 'vivid')
+  const chatColorMode: ChatColorMode = typeof input === 'string' ? 'semantic' : (input.chatColorMode ?? 'semantic')
 
   const systemAccent = useSystemAccentColor()
 
@@ -57,6 +59,7 @@ export function useThemeMode(input: ThemeModeInput) {
     const syncTheme = () => {
       const resolved = resolveTheme(themeMode)
       root.dataset.theme = resolved
+      root.dataset.chatColor = colorStyle === 'monochrome' ? 'minimal' : chatColorMode
       root.style.colorScheme = resolved
       const vars = deriveThemeCssVars({ pureBlack, primaryColor, colorStyle }, resolved, systemAccent)
       for (const [key, value] of Object.entries(vars)) {
@@ -69,5 +72,5 @@ export function useThemeMode(input: ThemeModeInput) {
 
     media.addEventListener('change', syncTheme)
     return () => media.removeEventListener('change', syncTheme)
-  }, [themeMode, pureBlack, primaryColor, colorStyle, systemAccent])
+  }, [themeMode, pureBlack, primaryColor, colorStyle, chatColorMode, systemAccent])
 }

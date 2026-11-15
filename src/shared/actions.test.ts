@@ -439,11 +439,16 @@ describe('multi-theme settings normalization', () => {
       primaryColor: 'javascript:alert(1)' as never,
       primaryColors: 'bad' as never,
       colorStyle: 'neon' as never,
+      chatColorMode: 'rainbow' as never,
       pureBlack: 'yes' as never
     })
     expect(corrupted.primaryColor).toBe(defaultSettings.primaryColor)
     expect(corrupted.primaryColors).toEqual(defaultSettings.primaryColors)
     expect(corrupted.colorStyle).toBe('vivid')
+    expect(corrupted.chatColorMode).toBe('semantic')
     expect(corrupted.pureBlack).toBe(false)
+
+    expect(normalizeSettings({ chatColorMode: 'theme' }).chatColorMode).toBe('theme')
+    expect(normalizeSettings({ chatColorMode: 'minimal' }).chatColorMode).toBe('minimal')
   })
 })

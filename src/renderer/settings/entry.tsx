@@ -17,6 +17,7 @@ import type {
   ActionItem,
   AppLanguage,
   AppSettings,
+  ChatColorMode,
   ColorStyle,
   FilterMode,
   OcrEngineId,
@@ -811,10 +812,16 @@ function ThemeAppearanceSection({
     { value: 'soft', label: t('colorStyle_soft') },
     { value: 'monochrome', label: t('colorStyle_monochrome') }
   ]
+  const chatColorModes: Array<{ value: ChatColorMode; label: string }> = [
+    { value: 'semantic', label: t('chatColorMode_semantic') },
+    { value: 'theme', label: t('chatColorMode_theme') },
+    { value: 'minimal', label: t('chatColorMode_minimal') }
+  ]
 
   const isDefaultColors =
     settings.primaryColor === defaultPrimaryColor &&
     settings.colorStyle === 'vivid' &&
+    settings.chatColorMode === 'semantic' &&
     settings.primaryColors.length === defaultPrimaryColors.length &&
     settings.primaryColors.every((color, idx) => color === defaultPrimaryColors[idx])
 
@@ -825,7 +832,8 @@ function ThemeAppearanceSection({
     onUpdate({
       primaryColor: defaultPrimaryColor,
       primaryColors: [...defaultPrimaryColors],
-      colorStyle: 'vivid'
+      colorStyle: 'vivid',
+      chatColorMode: 'semantic'
     })
   }
 
@@ -974,6 +982,16 @@ function ThemeAppearanceSection({
             tone="accent"
             options={colorStyles}
             onChange={(colorStyle) => onUpdate({ colorStyle })}
+          />
+        </SettingRow>
+
+        <SettingRow title={t('chatColorMode')} description={t('chatColorModeDesc')}>
+          <SegmentedControl<ChatColorMode>
+            value={settings.chatColorMode}
+            ariaLabel={t('chatColorMode')}
+            tone="accent"
+            options={chatColorModes}
+            onChange={(chatColorMode) => onUpdate({ chatColorMode })}
           />
         </SettingRow>
       </div>

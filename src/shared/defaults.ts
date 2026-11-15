@@ -103,6 +103,7 @@ export const defaultSettings: AppSettings = {
   primaryColor: defaultPrimaryColor,
   primaryColors: [...defaultPrimaryColors],
   colorStyle: 'vivid',
+  chatColorMode: 'semantic',
   enabled: false,
   triggerMode: 'selected',
   compactToolbar: false,
