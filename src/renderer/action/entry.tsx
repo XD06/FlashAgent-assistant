@@ -225,6 +225,9 @@ function useActionStream(action: ActionItem, t: Translator) {
         })),
         { role: 'user' as const, text: opts.sendText, ...(images?.length ? { images } : {}) }
       ]
+      if (activeRequestId.current) {
+        void window.assistantLite.ai.abort(activeRequestId.current)
+      }
       const requestId = crypto.randomUUID()
       activeRequestId.current = requestId
       void window.assistantLite.ai.stream({
@@ -616,9 +619,11 @@ function SelectionResult({ payload, settings, settingsLoaded, t, pinned, toggleP
     )
   }, [payload, liveAction, t, send, stick, isVision, isZh])
 
+  const startedPayloadRef = React.useRef<ActionPayload | null>(null)
   React.useEffect(() => {
-    // Vision must wait for stored settings so the dedicated vision model is applied.
-    if (isVision && !settingsLoaded) return
+    if (!settingsLoaded) return
+    if (startedPayloadRef.current === payload) return
+    startedPayloadRef.current = payload
     runInitialAction()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [payload, isVision, settingsLoaded])
@@ -988,9 +993,17 @@ function ActionApp() {
     []
   )
 
+  const sessionOpenedAtRef = React.useRef(0)
+  React.useEffect(() => {
+    sessionOpenedAtRef.current = payload ? Date.now() : 0
+  }, [payload])
+
   React.useEffect(() => {
     const onBlur = () => {
-      if (payload && settings.autoClose && !pinned) void window.assistantLite.windowControls.close()
+      if (!payload || !settings.autoClose || pinned) return
+      // Ignore transient focus/Z-order handoff blur immediately after showing a warm reused window.
+      if (Date.now() - sessionOpenedAtRef.current < 300) return
+      void window.assistantLite.windowControls.close()
     }
     window.addEventListener('blur', onBlur)
     return () => window.removeEventListener('blur', onBlur)

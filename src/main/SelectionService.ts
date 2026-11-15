@@ -6,7 +6,14 @@ import { shouldProcessProgram } from '@shared/selectionFilter'
 import type { ActionItem, ActionPayload, AppSettings, SelectedTextPayload } from '@shared/types'
 import { isMac, isWin } from './platform'
 import { hasActiveStream } from './activeStreams'
-import { cascadeWindowOrigin, pickReusableSubWindow, resolveLiveActionItem } from './selectionWindowPolicy'
+import {
+  cascadeWindowOrigin,
+  hasUsableSelectionRect,
+  isPointInsideToolbarHitbox,
+  isValidSelectionPoint,
+  pickReusableSubWindow,
+  resolveLiveActionItem
+} from './selectionWindowPolicy'
 import type {
   KeyboardEventData,
   MouseEventData,
@@ -45,6 +52,14 @@ export class SelectionService {
   // Payload a fresh action window opens with, keyed by webContents id. The
   // renderer pulls it synchronously on its first render (SelectionGetInitialAction).
   private pendingInitialPayload = new Map<number, ActionPayload>()
+  // Latest selection handed to the toolbar so cold loads pull it synchronously
+  // without losing an IPC push before selectionToolbar.html attaches listeners.
+  private pendingInitialSelection: SelectedTextPayload | null = null
+  private pendingToolbarShow: { anchor: Point; orientation: Orientation; payload: SelectedTextPayload } | null = null
+  private toolbarReady = false
+  private toolbarShowFallbackTimer: NodeJS.Timeout | null = null
+  private toolbarPointerDownActive = false
+  private toolbarPointerDownTimer: NodeJS.Timeout | null = null
   private started = false
   private toolbarIdleTimer: NodeJS.Timeout | null = null
   private toolbarWidth = DEFAULT_TOOLBAR_WIDTH
@@ -107,6 +122,11 @@ export class SelectionService {
     if (!this.hook || !this.started) return
     this.stopHideListeners()
     this.clearToolbarIdleTimer()
+    this.clearToolbarShowFallbackTimer()
+    this.clearToolbarPointerDownState()
+    this.pendingToolbarShow = null
+    this.pendingInitialSelection = null
+    this.toolbarReady = false
     this.hook.stop()
     this.hook.cleanup()
     this.toolbarWindow?.close()
@@ -144,15 +164,45 @@ export class SelectionService {
   processShortcutSelection(): void {
     if (!this.hook || !this.started || this.getSettings().triggerMode !== 'shortcut') return
     const selection = this.hook.getCurrentSelection()
-    if (selection) this.handleSelection(selection)
+    if (selection) this.handleSelection(selection, true)
   }
 
   hideToolbar(): void {
     this.stopHideListeners()
+    this.clearToolbarShowFallbackTimer()
+    this.clearToolbarPointerDownState()
+    this.pendingToolbarShow = null
+    this.pendingInitialSelection = null
     if (!this.toolbarWindow || this.toolbarWindow.isDestroyed()) return
-    this.toolbarWindow.hide()
-    this.toolbarWindow.webContents.send(IPC.SelectionVisibility, false)
+    if (this.toolbarWindow.isVisible()) {
+      this.toolbarWindow.hide()
+      this.toolbarWindow.webContents.send(IPC.SelectionVisibility, false)
+    }
     this.scheduleToolbarIdleDestroy()
+  }
+
+  private clearToolbarShowFallbackTimer(): void {
+    if (this.toolbarShowFallbackTimer) {
+      clearTimeout(this.toolbarShowFallbackTimer)
+      this.toolbarShowFallbackTimer = null
+    }
+  }
+
+  private clearToolbarPointerDownState(): void {
+    this.toolbarPointerDownActive = false
+    if (this.toolbarPointerDownTimer) {
+      clearTimeout(this.toolbarPointerDownTimer)
+      this.toolbarPointerDownTimer = null
+    }
+  }
+
+  private markToolbarPointerDown(): void {
+    this.clearToolbarPointerDownState()
+    this.toolbarPointerDownActive = true
+    this.toolbarPointerDownTimer = setTimeout(() => {
+      this.toolbarPointerDownTimer = null
+      this.toolbarPointerDownActive = false
+    }, 1500)
   }
 
   // A hidden toolbar still holds a renderer process (~30-60MB). Destroy it
@@ -215,8 +265,22 @@ export class SelectionService {
   }
 
   setToolbarSize(width: number): void {
-    if (!Number.isFinite(width) || width <= 0) return
-    this.toolbarWidth = this.clampToolbarWidth(Math.ceil(width))
+    this.toolbarReady = true
+    this.clearToolbarShowFallbackTimer()
+    if (Number.isFinite(width) && width > 0) {
+      const display = this.pendingToolbarShow
+        ? screen.getDisplayNearestPoint(this.pendingToolbarShow.anchor)
+        : this.toolbarWindow && !this.toolbarWindow.isDestroyed()
+          ? screen.getDisplayMatching(this.toolbarWindow.getBounds())
+          : screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
+      this.toolbarWidth = this.clampToolbarWidthForArea(Math.ceil(width), display.workArea.width)
+    }
+    if (this.pendingToolbarShow) {
+      const pending = this.pendingToolbarShow
+      this.pendingToolbarShow = null
+      this.showToolbar(pending.anchor, pending.orientation, pending.payload)
+      return
+    }
     if (!this.toolbarWindow || this.toolbarWindow.isDestroyed() || !this.toolbarWindow.isVisible()) return
 
     const bounds = this.toolbarWindow.getBounds()
@@ -224,11 +288,15 @@ export class SelectionService {
     const area = display.workArea
     const visibleX = bounds.x + TOOLBAR_SHADOW_PADDING
     const x = Math.round(Math.max(area.x, Math.min(visibleX, area.x + area.width - this.toolbarWidth)))
+    const nextX = x - TOOLBAR_SHADOW_PADDING
+    const nextWidth = this.getToolbarWindowWidth()
+    const nextHeight = this.getToolbarWindowHeight()
+    if (bounds.x === nextX && bounds.width === nextWidth && bounds.height === nextHeight) return
     this.toolbarWindow.setBounds({
-      x: x - TOOLBAR_SHADOW_PADDING,
+      x: nextX,
       y: bounds.y,
-      width: this.getToolbarWindowWidth(),
-      height: this.getToolbarWindowHeight()
+      width: nextWidth,
+      height: nextHeight
     })
   }
 
@@ -245,9 +313,9 @@ export class SelectionService {
     this.openActionWindow(
       payload,
       (win, siblingCount) => {
+        if (win.isMinimized()) win.restore()
         this.positionActionWindowCenter(win, settings, siblingCount)
-        win.show()
-        win.focus()
+        this.presentActionWindow(win, !!settings.autoPin)
       },
       forceNew
     )
@@ -344,6 +412,9 @@ export class SelectionService {
       this.pendingInitialPayload.delete(event.sender.id)
       event.returnValue = payload
     })
+    ipcMain.on(IPC.SelectionGetInitialSelection, (event) => {
+      event.returnValue = this.pendingInitialSelection
+    })
     ipcMain.handle(IPC.WindowClose, (event) => this.closeActionWindow(event.sender))
     ipcMain.handle(IPC.WindowMinimize, (event) => this.minimizeActionWindow(event.sender))
     ipcMain.handle(IPC.WindowPin, (event, pinned: boolean) => this.pinActionWindow(event.sender, pinned))
@@ -357,8 +428,9 @@ export class SelectionService {
 
   private createToolbarWindow(): void {
     if (this.toolbarWindow && !this.toolbarWindow.isDestroyed()) return
+    this.toolbarReady = false
 
-    this.toolbarWindow = new BrowserWindow({
+    const win = new BrowserWindow({
       width: this.getToolbarWindowWidth(),
       height: this.getToolbarWindowHeight(),
       show: false,
@@ -380,17 +452,55 @@ export class SelectionService {
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
-        backgroundThrottling: true
+        // Keep hidden toolbar responsive to SettingsChanged width updates so
+        // reopening never waits for a deferred rAF resize.
+        backgroundThrottling: false
       }
     })
+    this.toolbarWindow = win
 
     if (isMac) {
-      this.toolbarWindow.on('blur', () => this.hideToolbar())
+      win.on('blur', () => this.hideToolbar())
     }
-    this.toolbarWindow.on('closed', () => {
-      this.toolbarWindow = null
+    win.webContents.once('did-finish-load', () => {
+      if (win.isDestroyed() || this.toolbarWindow !== win) return
+      if (!this.toolbarReady && this.pendingToolbarShow) {
+        this.clearToolbarShowFallbackTimer()
+        this.toolbarShowFallbackTimer = setTimeout(() => {
+          this.toolbarShowFallbackTimer = null
+          if (win.isDestroyed() || this.toolbarWindow !== win) return
+          this.toolbarReady = true
+          if (this.pendingToolbarShow) {
+            const pending = this.pendingToolbarShow
+            this.pendingToolbarShow = null
+            this.showToolbar(pending.anchor, pending.orientation, pending.payload)
+          }
+        }, 200)
+      }
     })
-    this.loadRenderer(this.toolbarWindow, 'selectionToolbar.html')
+    win.on('closed', () => {
+      if (this.toolbarWindow === win) {
+        this.toolbarWindow = null
+        this.toolbarReady = false
+        this.pendingToolbarShow = null
+        this.pendingInitialSelection = null
+        this.clearToolbarShowFallbackTimer()
+        this.clearToolbarPointerDownState()
+      }
+    })
+    win.webContents.on('render-process-gone', () => {
+      if (this.toolbarWindow === win) {
+        this.toolbarWindow = null
+        this.toolbarReady = false
+        this.pendingToolbarShow = null
+        this.pendingInitialSelection = null
+        this.clearToolbarIdleTimer()
+        this.clearToolbarShowFallbackTimer()
+        this.clearToolbarPointerDownState()
+      }
+      if (!win.isDestroyed()) win.destroy()
+    })
+    this.loadRenderer(win, 'selectionToolbar.html')
   }
 
   private createActionWindow(): BrowserWindow {
@@ -416,7 +526,7 @@ export class SelectionService {
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
-        backgroundThrottling: true
+        backgroundThrottling: false
       }
     })
 
@@ -454,6 +564,12 @@ export class SelectionService {
       this.pendingInitialPayload.delete(wcId)
       this.cancelActionIdleDestroy(win)
     })
+    win.webContents.on('render-process-gone', () => {
+      this.actionWindows.delete(win)
+      this.pendingInitialPayload.delete(wcId)
+      this.cancelActionIdleDestroy(win)
+      if (!win.isDestroyed()) win.destroy()
+    })
     win.on('resized', () => {
       if (this.getSettings().rememberWindowSize && !win.isDestroyed()) {
         const bounds = win.getBounds()
@@ -481,22 +597,31 @@ export class SelectionService {
     }
   }
 
-  private handleSelection = (selection: TextSelectionData): void => {
+  private handleSelection = (selection: TextSelectionData, fromShortcut = false): void => {
+    if (!fromShortcut && this.toolbarPointerDownActive) return
     const text = selection.text?.trim()
     if (!text) return
     const settings = this.getSettings()
     if (!settings.enabled || !shouldProcessProgram(selection.programName, settings.filterMode, settings.filterList)) {
       return
     }
-    if (this.toolbarWindow?.isVisible()) return
+    if (!settings.actions.some((action) => action.enabled)) return
 
     this.createToolbarWindow()
     const { point, orientation } = this.resolveSelectionAnchor(selection)
-    this.showToolbar(point, orientation, {
+    const payload: SelectedTextPayload = {
       text,
       programName: selection.programName,
       isFullscreen: selection.isFullscreen
-    })
+    }
+    this.pendingInitialSelection = payload
+    if (!this.toolbarReady) {
+      this.clearToolbarIdleTimer()
+      this.pendingToolbarShow = { anchor: point, orientation, payload }
+      this.startHideListeners()
+      return
+    }
+    this.showToolbar(point, orientation, payload)
   }
 
   private resolveSelectionAnchor(selection: TextSelectionData): { point: Point; orientation: Orientation } {
@@ -506,36 +631,56 @@ export class SelectionService {
     let isLogical = true
 
     if (positionLevel && selection.posLevel === positionLevel.MOUSE_SINGLE) {
-      point = { x: selection.mousePosEnd.x, y: selection.mousePosEnd.y + 16 }
-      isLogical = false
-    } else if (positionLevel && selection.posLevel === positionLevel.MOUSE_DUAL) {
-      const yDistance = selection.mousePosEnd.y - selection.mousePosStart.y
-      const xDistance = selection.mousePosEnd.x - selection.mousePosStart.x
-      if (Math.abs(yDistance) > 14) {
-        orientation = yDistance > 0 ? 'bottomLeft' : 'topRight'
-        point = { x: selection.mousePosEnd.x, y: selection.mousePosEnd.y + (yDistance > 0 ? 16 : -16) }
-      } else {
-        orientation = xDistance > 0 ? 'bottomLeft' : 'bottomRight'
-        point = { x: selection.mousePosEnd.x, y: Math.max(selection.mousePosEnd.y, selection.mousePosStart.y) + 16 }
+      if (isValidSelectionPoint(selection.mousePosEnd)) {
+        point = { x: selection.mousePosEnd.x, y: selection.mousePosEnd.y + 16 }
+        isLogical = false
       }
-      isLogical = false
+    } else if (positionLevel && selection.posLevel === positionLevel.MOUSE_DUAL) {
+      if (isValidSelectionPoint(selection.mousePosEnd)) {
+        const yDistance = isValidSelectionPoint(selection.mousePosStart)
+          ? selection.mousePosEnd.y - selection.mousePosStart.y
+          : 0
+        const xDistance = isValidSelectionPoint(selection.mousePosStart)
+          ? selection.mousePosEnd.x - selection.mousePosStart.x
+          : 0
+        if (Math.abs(yDistance) > 14) {
+          orientation = yDistance > 0 ? 'bottomLeft' : 'topRight'
+          point = { x: selection.mousePosEnd.x, y: selection.mousePosEnd.y + (yDistance > 0 ? 16 : -16) }
+        } else {
+          orientation = xDistance >= 0 ? 'bottomLeft' : 'bottomRight'
+          const baseY = isValidSelectionPoint(selection.mousePosStart)
+            ? Math.max(selection.mousePosEnd.y, selection.mousePosStart.y)
+            : selection.mousePosEnd.y
+          point = { x: selection.mousePosEnd.x, y: baseY + 16 }
+        }
+        isLogical = false
+      }
     } else if (
       positionLevel &&
       (selection.posLevel === positionLevel.SEL_FULL || selection.posLevel === positionLevel.SEL_DETAILED)
     ) {
-      const sameLine =
-        selection.startTop.y === selection.endTop.y && selection.startBottom.y === selection.endBottom.y
-      const mouseDirectionY = selection.mousePosEnd.y - selection.mousePosStart.y
-      if (sameLine) {
-        const direction = selection.mousePosEnd.x - selection.mousePosStart.x
-        orientation = direction >= 0 ? 'bottomLeft' : 'bottomRight'
-        point = direction >= 0 ? selection.endBottom : selection.startBottom
-      } else {
-        orientation = mouseDirectionY >= 0 ? 'bottomLeft' : 'topRight'
-        point = mouseDirectionY >= 0 ? selection.endBottom : selection.startTop
+      if (hasUsableSelectionRect(selection)) {
+        const sameLine =
+          selection.startTop.y === selection.endTop.y && selection.startBottom.y === selection.endBottom.y
+        const mouseDirectionY = selection.mousePosEnd.y - selection.mousePosStart.y
+        if (sameLine) {
+          const direction = selection.mousePosEnd.x - selection.mousePosStart.x
+          orientation = direction >= 0 ? 'bottomLeft' : 'bottomRight'
+          point = direction >= 0 ? selection.endBottom : selection.startBottom
+        } else {
+          orientation = mouseDirectionY >= 0 ? 'bottomLeft' : 'topRight'
+          point = mouseDirectionY >= 0 ? selection.endBottom : selection.startTop
+        }
+        point = { x: point.x, y: point.y + (orientation === 'topRight' ? -4 : 4) }
+        isLogical = false
+      } else if (
+        isValidSelectionPoint(selection.mousePosEnd) &&
+        !(selection.mousePosEnd.x === 0 && selection.mousePosEnd.y === 0)
+      ) {
+        orientation = 'bottomLeft'
+        point = { x: selection.mousePosEnd.x, y: selection.mousePosEnd.y + 16 }
+        isLogical = false
       }
-      point = { x: point.x, y: point.y + (orientation === 'topRight' ? -4 : 4) }
-      isLogical = false
     }
 
     if (!isLogical && isWin) point = screen.screenToDipPoint(point)
@@ -545,20 +690,36 @@ export class SelectionService {
   private showToolbar(anchor: Point, orientation: Orientation, payload: SelectedTextPayload): void {
     if (!this.toolbarWindow || this.toolbarWindow.isDestroyed()) return
     this.clearToolbarIdleTimer()
+    this.clearToolbarShowFallbackTimer()
+    this.pendingToolbarShow = null
+    this.pendingInitialSelection = payload
     const position = this.calculateToolbarPosition(anchor, orientation)
-    this.toolbarWindow.setBounds({
+    const toolbarBounds = {
       x: position.x - TOOLBAR_SHADOW_PADDING,
       y: position.y - TOOLBAR_SHADOW_PADDING,
       width: this.getToolbarWindowWidth(),
       height: this.getToolbarWindowHeight()
-    })
+    }
+    const wasVisible = this.toolbarWindow.isVisible()
+    this.toolbarWindow.setBounds(toolbarBounds)
     this.toolbarWindow.setAlwaysOnTop(true, 'screen-saver')
     this.toolbarWindow.webContents.send(IPC.SelectionSelected, payload)
     this.toolbarWindow.webContents.send(IPC.SelectionVisibility, true)
-    if (isMac || isWin) {
-      this.toolbarWindow.showInactive()
-    } else {
-      this.toolbarWindow.show()
+    if (!wasVisible) {
+      if (isMac || isWin) {
+        this.toolbarWindow.showInactive()
+      } else {
+        this.toolbarWindow.show()
+      }
+    }
+    if (isWin) {
+      // Re-assert Z-order, bounds, and mouse hit-testing after showInactive() on warm reused HWNDs.
+      this.toolbarWindow.setIgnoreMouseEvents(false)
+      this.toolbarWindow.setBounds(toolbarBounds)
+      this.toolbarWindow.setAlwaysOnTop(true, 'screen-saver')
+      this.toolbarWindow.moveTop()
+    } else if (!wasVisible) {
+      this.toolbarWindow.moveTop()
     }
     this.startHideListeners()
   }
@@ -588,11 +749,6 @@ export class SelectionService {
       x: Math.round(Math.max(area.x, Math.min(x, area.x + area.width - this.toolbarWidth))),
       y: Math.round(Math.max(area.y, Math.min(y, area.y + area.height - TOOLBAR_HEIGHT)))
     }
-  }
-
-  private clampToolbarWidth(width: number): number {
-    const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
-    return this.clampToolbarWidthForArea(width, display.workArea.width)
   }
 
   private clampToolbarWidthForArea(width: number, areaWidth: number): number {
@@ -649,15 +805,40 @@ export class SelectionService {
       y = cascaded.y
     }
 
+    if (win.isMinimized()) win.restore()
     win.setBounds({
       x: x - ACTION_SHADOW_PADDING,
       y: y - ACTION_SHADOW_PADDING,
       width: this.getActionWindowWidth(width),
       height: this.getActionWindowHeight(height)
     })
-    win.setAlwaysOnTop(!!settings.autoPin)
-    if (isMac && settings.autoPin) win.showInactive()
-    else win.show()
+    this.presentActionWindow(win, !!settings.autoPin)
+  }
+
+  private presentActionWindow(win: BrowserWindow, alwaysOnTop: boolean, focusWindow = true): void {
+    if (win.isDestroyed()) return
+    if (win.isMinimized()) win.restore()
+    if (isWin) {
+      if (focusWindow) {
+        // Promote transiently to screen-saver topmost so a warm hidden HWND rises above
+        // the active foreground app even when FlashAgent lacks Windows foreground lock.
+        win.setAlwaysOnTop(true, 'screen-saver')
+        win.show()
+        win.moveTop()
+        win.focus()
+        win.setAlwaysOnTop(alwaysOnTop)
+      } else {
+        win.setAlwaysOnTop(alwaysOnTop)
+        win.showInactive()
+      }
+      return
+    }
+    win.setAlwaysOnTop(alwaysOnTop)
+    if (isMac && alwaysOnTop) win.showInactive()
+    else {
+      win.show()
+      if (focusWindow) win.focus()
+    }
   }
 
   private positionActionWindowCenter(win: BrowserWindow, settings: AppSettings, siblingCount = 0): void {
@@ -684,6 +865,7 @@ export class SelectionService {
   private startHideListeners(): void {
     if (!this.hook || this.hideListenerActive) return
     this.hook.on('mouse-down', this.handleMouseDownHide)
+    this.hook.on('mouse-up', this.handleMouseUpClearPointer)
     this.hook.on('mouse-wheel', this.handleHide)
     this.hook.on('key-down', this.handleKeyDownHide)
     this.hideListenerActive = true
@@ -692,6 +874,7 @@ export class SelectionService {
   private stopHideListeners(): void {
     if (!this.hook || !this.hideListenerActive) return
     this.hook.off('mouse-down', this.handleMouseDownHide)
+    this.hook.off('mouse-up', this.handleMouseUpClearPointer)
     this.hook.off('mouse-wheel', this.handleHide)
     this.hook.off('key-down', this.handleKeyDownHide)
     this.hideListenerActive = false
@@ -699,16 +882,37 @@ export class SelectionService {
 
   private handleHide = (): void => this.hideToolbar()
 
+  private handleMouseUpClearPointer = (): void => {
+    if (!this.toolbarPointerDownActive) return
+    if (this.toolbarPointerDownTimer) clearTimeout(this.toolbarPointerDownTimer)
+    // Delay slightly so a text-selection NonBlockingCall queued on the same
+    // WM_LBUTTONUP tick (from an unfocused toolbar drag) is still suppressed.
+    this.toolbarPointerDownTimer = setTimeout(() => {
+      this.toolbarPointerDownTimer = null
+      this.toolbarPointerDownActive = false
+    }, 80)
+  }
+
   private handleMouseDownHide = (event: MouseEventData): void => {
     if (!this.toolbarWindow || this.toolbarWindow.isDestroyed()) return
+    if (!this.toolbarWindow.isVisible()) {
+      if (this.pendingToolbarShow) this.hideToolbar()
+      return
+    }
     const point = isWin ? screen.screenToDipPoint({ x: event.x, y: event.y }) : { x: event.x, y: event.y }
     const bounds = this.toolbarWindow.getBounds()
-    const inside =
-      point.x >= bounds.x + TOOLBAR_SHADOW_PADDING &&
-      point.x <= bounds.x + TOOLBAR_SHADOW_PADDING + this.toolbarWidth &&
-      point.y >= bounds.y + TOOLBAR_SHADOW_PADDING &&
-      point.y <= bounds.y + TOOLBAR_SHADOW_PADDING + TOOLBAR_HEIGHT
-    if (!inside) this.hideToolbar()
+    const inside = isPointInsideToolbarHitbox(
+      point,
+      bounds,
+      this.toolbarWidth,
+      TOOLBAR_SHADOW_PADDING,
+      TOOLBAR_HEIGHT
+    )
+    if (inside) {
+      this.markToolbarPointerDown()
+      return
+    }
+    this.hideToolbar()
   }
 
   private handleKeyDownHide = (event: KeyboardEventData): void => {

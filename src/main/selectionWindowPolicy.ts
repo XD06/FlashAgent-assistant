@@ -50,3 +50,56 @@ export function cascadeWindowOrigin(
   }
 }
 
+export interface ScreenPoint {
+  x: number
+  y: number
+}
+
+// selection-hook emits -99999 (INVALID_COORDINATE) when native UIA bounds are unavailable.
+const INVALID_COORDINATE_THRESHOLD = -9000
+
+export function isValidSelectionPoint(point: ScreenPoint): boolean {
+  return (
+    Number.isFinite(point.x) &&
+    Number.isFinite(point.y) &&
+    point.x > INVALID_COORDINATE_THRESHOLD &&
+    point.y > INVALID_COORDINATE_THRESHOLD
+  )
+}
+
+/** Reject sentinel (-99999) or degenerate all-zero UIA selection bounds when the cursor
+ * itself is nowhere near (0, 0), so the toolbar doesn't jump to the primary corner. */
+export function hasUsableSelectionRect(selection: {
+  startTop: ScreenPoint
+  startBottom: ScreenPoint
+  endTop: ScreenPoint
+  endBottom: ScreenPoint
+  mousePosEnd: ScreenPoint
+}): boolean {
+  const corners = [selection.startTop, selection.startBottom, selection.endTop, selection.endBottom]
+  if (!corners.every(isValidSelectionPoint)) return false
+  const allZero = corners.every((pt) => pt.x === 0 && pt.y === 0)
+  if (!allZero) return true
+  const cursorValid = isValidSelectionPoint(selection.mousePosEnd)
+  const cursorNearOrigin = cursorValid && Math.abs(selection.mousePosEnd.x) <= 64 && Math.abs(selection.mousePosEnd.y) <= 64
+  return cursorNearOrigin
+}
+
+/** Check whether a mouse-down DIP coordinate lands inside the visible toolbar pill
+ * with small DPI-rounding slop, staying well inside the surrounding shadow padding. */
+export function isPointInsideToolbarHitbox(
+  point: ScreenPoint,
+  bounds: { x: number; y: number; width: number },
+  toolbarWidth: number,
+  shadowPadding: number,
+  toolbarHeight: number,
+  hitSlop = 4
+): boolean {
+  const pillWidth = Math.max(toolbarWidth, bounds.width - shadowPadding * 2)
+  return (
+    point.x >= bounds.x + shadowPadding - hitSlop &&
+    point.x <= bounds.x + shadowPadding + pillWidth + hitSlop &&
+    point.y >= bounds.y + shadowPadding - hitSlop &&
+    point.y <= bounds.y + shadowPadding + toolbarHeight + hitSlop
+  )
+}

@@ -150,42 +150,91 @@
           }
           root.innerHTML = html;
 
-          // Measure width and notify main process
-          requestAnimationFrame(function () {
-            var width = Math.max(root.scrollWidth, root.getBoundingClientRect().width);
-            if (width > 0) window.assistantLite.selection.determineToolbarSize(width);
-          });
+          // Flush layout immediately (rAF is throttled/paused while the window is hidden)
+          // so main gets exact width before showing or after hidden settings updates.
+          var width = Math.max(root.scrollWidth, root.getBoundingClientRect().width);
+          window.assistantLite.selection.determineToolbarSize(width);
         }
 
         // ---- Action click handling ----
+        var pressedButtonState = null;
+
+        function resetPressedState() {
+          pressedButtonState = null;
+        }
+
+        function findButtonByActionId(actionId) {
+          var buttons = root.querySelectorAll('.toolbar-button');
+          for (var i = 0; i < buttons.length; i++) {
+            if (buttons[i].dataset.actionId === actionId) return buttons[i];
+          }
+          return null;
+        }
+
+        function executeToolbarAction(settings, actionId) {
+          if (!settings || !currentSelection) return;
+          var action = settings.actions.find(function (a) { return a.id === actionId; });
+          if (!action) return;
+          var text = currentSelection.text;
+          if (!text) return;
+
+          if (action.type === 'copy') {
+            Promise.resolve(window.assistantLite.selection.writeClipboard(text)).finally(function () {
+              window.assistantLite.selection.hideToolbar();
+            });
+          } else if (action.type === 'search') {
+            var url = buildSearchUrl(action, text);
+            if (url) window.assistantLite.app.openExternal(url);
+            window.assistantLite.selection.hideToolbar();
+          } else if (action.type === 'speak') {
+            window.assistantLite.tts.play(text);
+            window.assistantLite.selection.hideToolbar();
+          } else {
+            window.assistantLite.selection.processAction({
+              action: action,
+              selectedText: text,
+              isFullscreen: currentSelection.isFullscreen
+            });
+            window.assistantLite.selection.hideToolbar();
+          }
+        }
+
+        root.addEventListener('mousedown', function (e) {
+          if (e.button !== 0) return;
+          var btn = e.target.closest('.toolbar-button');
+          if (!btn) {
+            resetPressedState();
+            return;
+          }
+          pressedButtonState = {
+            actionId: btn.dataset.actionId,
+            x: e.clientX,
+            y: e.clientY
+          };
+        });
+
+        root.addEventListener('mouseleave', resetPressedState);
+
         root.addEventListener('click', function (e) {
           var btn = e.target.closest('.toolbar-button');
+          if (!btn && pressedButtonState) {
+            var dx = e.clientX - pressedButtonState.x;
+            var dy = e.clientY - pressedButtonState.y;
+            if (Math.hypot(dx, dy) <= 8) {
+              btn = findButtonByActionId(pressedButtonState.actionId);
+            }
+          }
+          resetPressedState();
           if (!btn || !currentSelection) return;
           var actionId = btn.dataset.actionId;
-          window.assistantLite.settings.get().then(function (settings) {
-            var action = settings.actions.find(function (a) { return a.id === actionId; });
-            if (!action) return;
-            var text = currentSelection.text;
-            if (!text) return;
-
-            if (action.type === 'copy') {
-              window.assistantLite.selection.writeClipboard(text);
-            } else if (action.type === 'search') {
-              var url = buildSearchUrl(action, text);
-              if (url) window.assistantLite.app.openExternal(url);
-              window.assistantLite.selection.hideToolbar();
-            } else if (action.type === 'speak') {
-              window.assistantLite.tts.play(text);
-              window.assistantLite.selection.hideToolbar();
-            } else {
-              window.assistantLite.selection.processAction({
-                action: action,
-                selectedText: text,
-                isFullscreen: currentSelection.isFullscreen
-              });
-              window.assistantLite.selection.hideToolbar();
-            }
-          });
+          if (currentSettings) {
+            executeToolbarAction(currentSettings, actionId);
+          } else {
+            window.assistantLite.settings.get().then(function (settings) {
+              currentSettings = settings;
+              executeToolbarAction(settings, actionId);
+            });
+          }
         });
 
         // ---- Init ----
@@ -208,11 +257,20 @@
         colorSchemeMedia.addEventListener('change', function () {
           if (currentSettings && currentSettings.theme === 'system') applyTheme(currentSettings);
         });
-        window.assistantLite.settings.get().then(render);
-        window.assistantLite.settings.onChanged(render);
         window.assistantLite.selection.onSelected(function (payload) {
           currentSelection = payload;
         });
+        if (window.assistantLite.selection.onVisibility) {
+          window.assistantLite.selection.onVisibility(function (visible) {
+            if (!visible) resetPressedState();
+          });
+        }
+        if (window.assistantLite.selection.getInitialSelection) {
+          var initial = window.assistantLite.selection.getInitialSelection();
+          if (initial) currentSelection = initial;
+        }
+        window.assistantLite.settings.get().then(render);
+        window.assistantLite.settings.onChanged(render);
       })();
     </script>
   </body>

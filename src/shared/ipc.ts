@@ -13,6 +13,7 @@ export const IPC = {
   SelectionDetermineToolbarSize: 'selection:determine-toolbar-size',
   SelectionProcessAction: 'selection:process-action',
   SelectionGetInitialAction: 'selection:get-initial-action',
+  SelectionGetInitialSelection: 'selection:get-initial-selection',
   SelectionReset: 'selection:reset',
   SelectionWriteClipboard: 'selection:write-clipboard',
   SelectionGetAccessibility: 'selection:get-accessibility',

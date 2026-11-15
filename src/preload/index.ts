@@ -70,7 +70,8 @@ const api = {
     // The payload a freshly-created action/toolbar window is opened with. Read
     // synchronously during the first render so content is available before the
     // window is shown — no push/listener race, no empty-frame flash.
-    getInitialAction: (): ActionPayload | null => ipcRenderer.sendSync(IPC.SelectionGetInitialAction) ?? null
+    getInitialAction: (): ActionPayload | null => ipcRenderer.sendSync(IPC.SelectionGetInitialAction) ?? null,
+    getInitialSelection: (): SelectedTextPayload | null => ipcRenderer.sendSync(IPC.SelectionGetInitialSelection) ?? null
   },
   ai: {
     stream: (request: AiStreamRequest): Promise<void> => ipcRenderer.invoke(IPC.AiStream, request),
