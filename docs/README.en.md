@@ -34,7 +34,7 @@ This project is a derivative of [zcx960/AIA-selection-assistan](https://github.c
 - **Screenshots, OCR, and vision**: region capture with pen and arrow annotations; save, copy, pin, copy recognized text (zero-download Windows system OCR by default, optional high-accuracy PP-OCR engine), or send to AI vision.
 - **Chat and context**: local multi-topic history, automatic titles, Markdown export, and token-driven compaction that preserves task state and next steps.
 - **Lightweight Agent and extensions**: move quickly from a chat to file operations, directory browsing, command execution, or web search; each tool call is confirmed, dangerous commands are tiered and blocked, and file changes can be reverted; includes memory, Skills, and MCP servers.
-- **Desktop experience**: light, dark, and system themes; English and Chinese UI; configurable result window size and font; macOS and Windows support.
+- **Desktop experience & theme studio**: System, light, dark, and OLED pure-black modes with an interactive Live Preview, OS-accent or customizable color swatches, four palette styles (Vivid / Tinted / Soft / Monochrome), and live font-size scaling; four-level borderless surface hierarchy across windows with a collapsible settings sidebar; English and Chinese UI; configurable result window sizing on macOS and Windows.
 
 ## Screenshots
 

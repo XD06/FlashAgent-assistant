@@ -52,10 +52,10 @@ graph TD
 
 ## 2. 模块划分与依赖边界
 
-- **`src/renderer/`（渲染进程）**：6 个 HTML 入口对应 6 个窗口。只通过 `window.assistantLite`（preload 暴露）与主进程通信，**没有任何直连 Node 或网络的能力**（sandbox 开启）。工具栏与钉图窗口刻意保持零 React 纯内联 JS，以求毫秒级打开；其余窗口共享 React（Rollup 自动抽共享 chunk）。新功能不加 HTML 入口，用 `React.lazy` 组件挂进现有窗口。
+- **`src/renderer/`（渲染进程）**：6 个 HTML 入口对应 6 个窗口。只通过 `window.assistantLite`（preload 暴露）与主进程通信，**没有任何直连 Node 或网络的能力**（sandbox 开启）。共享微交互原语集中在 `src/renderer/ui/`（`SegmentedControl`、`StatusChip`、`WavyProgress`、`ShapeBadge`），设置外观工坊组件位于 `src/renderer/settings/AppearanceStudio.tsx`。工具栏与钉图窗口刻意保持零 React 纯内联 JS，以求毫秒级打开（其中 `selectionToolbar.html` 通过 `app.resolveThemeVars` 同步注入完整主题 CSS 变量）；其余窗口共享 React（Rollup 自动抽共享 chunk）。新功能不加 HTML 入口，用 `React.lazy` 组件挂进现有窗口。
 - **`src/preload/`（唯一桥梁）**：`contextBridge.exposeInMainWorld('assistantLite', api)`，全部 IPC 调用的类型出口（`AssistantLiteApi`）。事件监听一律返回退订函数。渲染器代码出现 `ipcRenderer` 即为越界。
-- **`src/main/`（主进程）**：所有文件、网络、系统集成与常驻状态的归属地。按域分文件（`SelectionService`、`ScreenshotService`、`ocr/`、`translate/`、`agent/`、`mcp/`、`ai/`），IPC 注册集中在各域的 register 函数与 `index.ts`。
-- **`src/shared/`（双端共享）**：类型定义、IPC 通道名常量、纯函数（设置归一化、翻译语言映射、上下文计量等）。**禁止 import electron 或 Node API**——它被 vitest 直接测试，也被渲染端引用。
+- **`src/main/`（主进程）**：所有文件、网络、系统集成与常驻状态的归属地。按域分文件（`SelectionService`、`ScreenshotService`、`ocr/`、`translate/`、`agent/`、`mcp/`、`ai/`），IPC 注册集中在各域的 register 函数与 `index.ts`；`iconTiers.ts` 提供多 DPI 物理像素匹配的托盘与窗口位图档位。
+- **`src/shared/`（双端共享）**：类型定义、IPC 通道名常量、纯函数（设置归一化、多主题色彩派生 `theme.ts`、翻译语言映射、上下文计量等）。**禁止 import electron 或 Node API**——它被 vitest 直接测试，也被渲染端引用。
 - **依赖方向规则**：renderer → preload API → main；shared 被三者引用但不引用三者。主进程域模块之间允许调用，但设置读取统一走 `settingsStore.getSettings()`（带归一化缓存），禁止各自直读 electron-store。
 - **便携版用户数据目录**：`appIdentity.ts` 检测到 electron-builder portable 启动器注入的 `PORTABLE_EXECUTABLE_DIR` 时，在任何 `getPath('userData')` 之前把 userData 重定向到 exe 同目录的 `data/`，并跳过旧版 `%APPDATA%` 目录的迁移（否则系统里的旧配置会覆盖随包预置）；安装版与开发模式保持 Electron 默认路径。`scripts/prepare-portable-preset.mjs` 按白名单把设置、`memory.md` 与 `skills/` 复制进 `dist/data/`，聊天历史、生词本、缓存一律排除。
 
@@ -69,8 +69,9 @@ graph TD
 
 ## 4. 核心抽象与设计模式
 
-- **IPC 契约三件套**：`shared/ipc.ts` 通道名常量 + `shared/types.ts` 载荷类型 + preload 的类型化封装。新增通道必须三处同步。
+- **IPC 契约三件套**：`shared/ipc.ts` 通道名常量 + `shared/types.ts` 载荷类型 + preload 的类型化封装。新增通道必须三处同步（如系统主题强调色通道 `IPC.AppSystemAccentGet` / `IPC.AppSystemAccentChanged`）。
 - **设置归一化**：`shared/actions.ts` 的 `normalizeSettings` 是所有设置读取的唯一入口（mergeSettings + 字段级白名单），损坏的 settings.json 不应导致崩溃；`settingsStore` 缓存归一化结果，仅在写回时失效。
+- **Seeded 多主题派生与分级图标**：`shared/theme.ts` 的 `deriveThemeCssVars` 按 `theme` / `pureBlack` / `primaryColor`（含系统强调色回退）/ `colorStyle`（`vivid` / `tinted` / `soft` / `monochrome`）实时计算四级明度表面与独立语义状态 CSS 变量，由 React 窗口经 `useThemeMode` 注入并同步至零 React 的 `selectionToolbar.html`（`app.resolveThemeVars`）；`main/iconTiers.ts` 为不同 Windows DPI 托盘与窗口尺寸提供精确匹配的矢量栅格化 PNG 档位。
 - **词典数据快照**：`DictEntry` 是生词本保存的最小完整快照（音标/释义/词形，有道额外含短语与例句）；显示层裁剪（如释义取前 3 条）只发生在渲染层，快照保存完整数据。
 - **可选重能力 = 按需下载**：高精度 OCR 引擎包不随安装包分发，运行时从 npm registry 拉取（sha512 校验 + 系统 tar 解包 + `engine.json` 原子标记）到 userData；加载用「变量说明符 + `@vite-ignore`」的运行时动态 import 绕过 CJS/ESM 边界。
 - **Windows 原生能力 = 零依赖 helper**：截屏与系统 OCR 都用「C# 源码常量 + 本机 .NET Framework csc.exe 现场编译 + 缓存到 userData/bin」模式；WinRT 互操作不用 `System.Runtime.WindowsRuntime` 的 await 扩展（类型身份是 Win8 单体 winmd，Win10/11 编译不过），用 `Completed` + `GetResults()` 阻塞等待。
