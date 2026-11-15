@@ -1,11 +1,27 @@
 import React from 'react'
-import { Icon } from '../icons'
 import { MarkdownView } from '../Markdown'
+import { Icon } from '../icons'
 
 type Translator = (key: string) => string
 
-/** ThinkingBlock — collapsible reasoning content. Auto-collapses when done;
- * blocks restored from history (never pending) start collapsed. */
+function extractThinkingPreview(raw: string): string {
+  const firstLine = raw
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => line.length > 0)
+  if (!firstLine) return ''
+  return firstLine
+    .replace(/^#{1,6}\s+/, '')
+    .replace(/^[-*+]\s+/, '')
+    .replace(/^\d+\.\s+/, '')
+    .replace(/[*`~]/g, '')
+    .replace(/(^|\s)_+|_+(\s|$)/g, '$1$2')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/** ThinkingBlock — flat dsh-style reasoning toggle with inline summary preview
+ * and a subtle vertical guide line when expanded. Auto-collapses when settled. */
 export function ThinkingBlock({
   text,
   pending,
@@ -50,9 +66,12 @@ export function ThinkingBlock({
     return () => cancelAnimationFrame(raf)
   }, [text, pending, collapsed])
 
+  const preview = React.useMemo(() => (collapsed ? extractThinkingPreview(text) : ''), [collapsed, text])
+
   return (
-    <div className={`thinking-block${collapsed ? ' thinking-block--collapsed' : ''}`}>
+    <div className={`thinking-block${collapsed ? ' thinking-block--collapsed' : ''}${pending ? ' thinking-block--pending' : ''}`}>
       <button
+        type="button"
         className="thinking-block__header"
         onClick={() => {
           setCollapsed((v) => {
@@ -62,21 +81,26 @@ export function ThinkingBlock({
         }}
         title={collapsed ? t('expandThinking') : t('collapseThinking')}
       >
-        <Icon name="sparkles" size={13} />
-        {/* Same label collapsed or expanded — the chevron already signals the
-            state, a "(collapsed)" suffix is just noise. */}
-        <span>{t('thinking')}</span>
-        {pending && <span className="thinking-block__dot" />}
+        {pending ? (
+          <span className="thinking-block__dot" />
+        ) : (
+          <span className="thinking-block__icon" aria-hidden="true">
+            <Icon name="brain" size={12} />
+          </span>
+        )}
+        <span className="thinking-block__label">{t('thinking')}</span>
+        {preview && <span className="thinking-block__preview">· {preview}</span>}
         <svg
-          width="12"
-          height="12"
+          className="thinking-block__chevron"
+          width="11"
+          height="11"
           viewBox="0 0 24 24"
           fill="none"
           stroke="currentColor"
           strokeWidth="2"
           strokeLinecap="round"
           strokeLinejoin="round"
-          style={{ marginLeft: 'auto', transition: 'transform 0.15s', transform: collapsed ? 'rotate(-90deg)' : 'rotate(0)' }}
+          style={{ transform: collapsed ? 'rotate(-90deg)' : 'rotate(0)' }}
         >
           <path d="m6 9 6 6 6-6" />
         </svg>

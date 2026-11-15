@@ -4,7 +4,14 @@ import type { ContextMeasurement } from '@shared/contextMeter'
 import { MarkdownView } from '../Markdown'
 import { Icon } from '../icons'
 import { getTranslator } from '../i18n'
-import { ShapeBadge, StatusChip, WavyProgress } from '../ui'
+import { StatusChip } from '../ui'
+import { computeDiffStats } from './diffStats'
+import {
+  aggregateEventDiffStats,
+  getTurnProcessFold,
+  summarizeProcessFold,
+  type TurnBlock
+} from './turnCollapse'
 import { ThinkingBlock } from './ThinkingBlock'
 import { ExtensionsPanel } from './ExtensionsPanel'
 import { TodoListPill } from './TodoListPill'
@@ -28,16 +35,6 @@ import {
   getProjectName,
   type ProjectGroup
 } from './topicsGrouping'
-
-/** Ordered content of an assistant turn: text, thinking and tool runs
- * interleaved in the order they actually happened. */
-type TurnBlock =
-  | { kind: 'text'; text: string }
-  | { kind: 'thinking'; text: string; pending?: boolean }
-  | { kind: 'tools'; events: AgentToolEvent[] }
-  /** User note delivered mid-request — rendered at the exact point in the
-   * stream where the tool loop picked it up, not above the whole reply. */
-  | { kind: 'injected'; text: string }
 
 interface ChatTurn {
   /** Stable render key; absent on turns persisted before ids existed. */
@@ -436,27 +433,34 @@ const TOOL_LABELS: Record<string, { zh: string; en: string }> = {
   edit_file: { zh: '编辑', en: 'Edit' },
   list_dir: { zh: '目录', en: 'List' },
   search_files: { zh: '搜索', en: 'Search' },
-  run_command: { zh: '命令', en: 'Run' }
+  run_command: { zh: '命令', en: 'Run' },
+  todo_list: { zh: '待办', en: 'Todo' }
 }
 
 const TOOL_ICONS: Record<string, string> = {
   read_file: 'book-open',
   write_file: 'pencil',
   edit_file: 'pencil',
-  list_dir: 'scan-text',
+  list_dir: 'folder',
   search_files: 'search',
-  run_command: 'terminal'
+  run_command: 'terminal',
+  todo_list: 'check'
 }
 
-/** Visual category — read-only lookups, file mutations, shell commands and
- * external MCP calls get distinct accent colors (Codex-style). */
+/** Visual category — read-only lookups, file mutations, shell commands, todos
+ * and external MCP calls get distinct accent colors (restrained semantic hues). */
 const TOOL_CATEGORIES: Record<string, string> = {
   read_file: 'read',
   list_dir: 'read',
   search_files: 'read',
   write_file: 'write',
   edit_file: 'write',
-  run_command: 'command'
+  run_command: 'command',
+  todo_list: 'todo'
+}
+
+function getToolCategory(toolName: string): string {
+  return TOOL_CATEGORIES[toolName] ?? (toolName.startsWith('mcp__') ? 'mcp' : 'other')
 }
 
 function stateLabel(state: AgentToolEvent['state'], isZh: boolean): string {
@@ -587,7 +591,7 @@ const AgentToolRow = React.memo(function AgentToolRow({
   // MCP tools carry a mcp__server__tool name; the summary already shows
   // "server · tool", so a generic MCP badge is enough here.
   const isMcp = event.toolName.startsWith('mcp__')
-  const category = TOOL_CATEGORIES[event.toolName] ?? (isMcp ? 'mcp' : 'other')
+  const category = getToolCategory(event.toolName)
   const title = label ? (isZh ? label.zh : label.en) : isMcp ? 'MCP' : event.toolName
   const hasDetail = !!(event.oldText || event.newText || event.result || event.liveOutput)
 
@@ -596,6 +600,13 @@ const AgentToolRow = React.memo(function AgentToolRow({
   const isError = event.state === 'error' || event.state === 'rejected'
   const showDetail = userToggledOpen !== null ? userToggledOpen : (isLive || isError)
   const canRevert = (event.toolName === 'write_file' || event.toolName === 'edit_file') && event.state === 'done'
+  const diffStats =
+    category === 'write' || event.oldText !== undefined || event.newText !== undefined
+      ? computeDiffStats(event.oldText, event.newText)
+      : null
+  const needsApproval = event.state === 'pending-approval' && live
+  // Silence = success: only render inline state text when active, reverted, or failed/rejected.
+  const showStateText = event.state !== 'done'
   const approve = (approved: boolean, alwaysAllow = false) => {
     void window.assistantLite.agent.approveTool(event.callId, approved, alwaysAllow)
   }
@@ -607,15 +618,31 @@ const AgentToolRow = React.memo(function AgentToolRow({
       : event.summary
 
   return (
-    <div className={`agent-tool-row agent-tool-row--${event.state} agent-tool-row--cat-${category}`}>
+    <div
+      className={`agent-tool-row agent-tool-row--${event.state} agent-tool-row--cat-${category}${needsApproval ? ' agent-tool-row--needs-approval' : ''}`}>
       <div
         className="agent-tool-row__head"
         onClick={() => hasDetail && setUserToggledOpen(!showDetail)}
         style={hasDetail ? { cursor: 'pointer' } : undefined}
       >
-        <Icon name={TOOL_ICONS[event.toolName] ?? (isMcp ? 'blocks' : 'pencil')} size={13} />
+        <span className="agent-tool-row__icon" aria-hidden="true">
+          <Icon name={TOOL_ICONS[event.toolName] ?? (isMcp ? 'blocks' : 'pencil')} size={12.5} />
+        </span>
         <span className="agent-tool-row__name">{title}</span>
         <code className="agent-tool-row__summary" title={displaySummary}>{displaySummary}</code>
+        {diffStats && (diffStats.added > 0 || diffStats.removed > 0) && (
+          <span className="agent-tool-row__diffstats">
+            {diffStats.added > 0 && <span className="agent-tool-row__stat-add">+{diffStats.added}</span>}
+            {diffStats.removed > 0 && <span className="agent-tool-row__stat-del">-{diffStats.removed}</span>}
+          </span>
+        )}
+        {showStateText && (
+          <span className={`agent-tool-row__state${isError ? ' agent-tool-row__state--err' : ''}`}>
+            {event.state === 'streaming' && typeof event.streamingCharCount === 'number' && event.streamingCharCount > 0
+              ? `${isZh ? '正在生成' : 'Streaming'} (${event.streamingCharCount.toLocaleString()} ${isZh ? '字' : 'chars'})`
+              : stateLabel(event.state, isZh)}
+          </span>
+        )}
         {canRevert && (
           <button
             className="agent-tool-row__revert"
@@ -628,11 +655,6 @@ const AgentToolRow = React.memo(function AgentToolRow({
             {isZh ? '回退' : 'Revert'}
           </button>
         )}
-        <span className="agent-tool-row__state">
-          {event.state === 'streaming' && typeof event.streamingCharCount === 'number' && event.streamingCharCount > 0
-            ? `${isZh ? '正在生成' : 'Streaming'} (${event.streamingCharCount.toLocaleString()} ${isZh ? '字' : 'chars'})`
-            : stateLabel(event.state, isZh)}
-        </span>
         {hasDetail && (
           <span className={`agent-tool-row__chevron${showDetail ? ' agent-tool-row__chevron--open' : ''}`}>
             <Icon name="chevron-right" size={11} />
@@ -698,10 +720,51 @@ const AgentToolRow = React.memo(function AgentToolRow({
   )
 })
 
-/** A run of consecutive tool calls. Stays expanded — which commands ran,
- * what was edited/read is part of the transcript and must remain visible
- * (each row's *output* is what collapses, inside AgentToolRow). The header
- * still toggles manually for users who want the one-line summary. */
+function summarizeToolGroup(events: AgentToolEvent[], active: boolean, isZh: boolean): string {
+  let reads = 0
+  let edits = 0
+  let commands = 0
+  let todos = 0
+  let mcps = 0
+  let other = 0
+  let failed = 0
+  for (const ev of events) {
+    if (ev.state === 'error' || ev.state === 'rejected') failed++
+    const cat = getToolCategory(ev.toolName)
+    if (cat === 'read') reads++
+    else if (cat === 'write') edits++
+    else if (cat === 'command') commands++
+    else if (cat === 'todo') todos++
+    else if (cat === 'mcp') mcps++
+    else other++
+  }
+
+  const parts: string[] = []
+  if (isZh) {
+    if (reads) parts.push(`读取 ${reads} 项`)
+    if (edits) parts.push(`修改 ${edits} 处`)
+    if (commands) parts.push(`${commands} 命令`)
+    if (todos) parts.push(`待办 ${todos}`)
+    if (mcps) parts.push(`${mcps} 扩展`)
+    if (other) parts.push(`${other} 操作`)
+    const lead = active ? '正在执行' : '已完成'
+    const base = parts.length ? `${lead} · ${parts.join(' · ')}` : `${lead} · ${events.length} 项`
+    return failed > 0 ? `${base} · ${failed} 失败` : base
+  }
+  if (reads) parts.push(`${reads} read${reads > 1 ? 's' : ''}`)
+  if (edits) parts.push(`${edits} edit${edits > 1 ? 's' : ''}`)
+  if (commands) parts.push(`${commands} cmd${commands > 1 ? 's' : ''}`)
+  if (todos) parts.push(`${todos} todo${todos > 1 ? 's' : ''}`)
+  if (mcps) parts.push(`${mcps} MCP`)
+  if (other) parts.push(`${other} action${other > 1 ? 's' : ''}`)
+  const lead = active ? 'Running' : 'Completed'
+  const base = parts.length ? `${lead} · ${parts.join(' · ')}` : `${lead} · ${events.length}`
+  return failed > 0 ? `${base} · ${failed} failed` : base
+}
+
+/** A run of consecutive tool calls rendered on the flat canvas with a crisp
+ * roll-up summary header. Stays open only while currently active or carrying
+ * errors; settled runs auto-collapse to one line unless manually opened. */
 function AgentToolGroup({
   events,
   live,
@@ -717,28 +780,88 @@ function AgentToolGroup({
   onRevert: (callId: string) => void
 }) {
   const active = events.some((ev) => ev.state === 'pending-approval' || ev.state === 'running' || ev.state === 'streaming')
+  const hasError = events.some((ev) => ev.state === 'error' || ev.state === 'rejected')
+  const autoOpen = active || (current && live) || hasError
   const [manual, setManual] = React.useState<boolean | null>(null)
-  // Open by default and after settling — no auto-collapse. Only an explicit
-  // header click folds the group to its one-line summary.
-  const open = manual ?? true
-  const failed = events.filter((ev) => ev.state === 'error' || ev.state === 'rejected').length
+  const open = manual ?? autoOpen
+  const summaryLabel = React.useMemo(
+    () => summarizeToolGroup(events, active || (current && live), isZh),
+    [events, active, current, live, isZh]
+  )
+  const diffStats = React.useMemo(() => aggregateEventDiffStats(events), [events])
+  const isLiveGroup = active || (current && live)
+  const groupDotClass = isLiveGroup
+    ? 'agent-tool-group__dot--live'
+    : hasError
+      ? 'agent-tool-group__dot--err'
+      : 'agent-tool-group__dot--done'
   return (
-    <div className={`agent-tool-group${open ? ' agent-tool-group--open' : ''}`}>
+    <div className={`agent-tool-group${open ? ' agent-tool-group--open' : ''}${isLiveGroup ? ' agent-tool-group--live' : ''}`}>
       <div className="agent-tool-group__header" onClick={() => setManual(!open)}>
         <span className="agent-tool-group__chevron">
-          <Icon name="chevron-right" size={12} />
+          <Icon name="chevron-down" size={12} />
         </span>
-        <span className="agent-tool-group__title">
-          {isZh ? `${events.length} 个操作` : `${events.length} action${events.length > 1 ? 's' : ''}`}
-          {active || (current && live) ? (isZh ? ' · 进行中' : ' · in progress') : ''}
-          {failed > 0 ? (isZh ? ` · ${failed} 个失败` : ` · ${failed} failed`) : ''}
-        </span>
+        <span className={`agent-tool-group__dot ${groupDotClass}`} aria-hidden="true" />
+        <span className="agent-tool-group__title">{summaryLabel}</span>
+        {!open && diffStats && (
+          <span className="agent-tool-row__diffstats">
+            {diffStats.added > 0 && <span className="agent-tool-row__stat-add">+{diffStats.added}</span>}
+            {diffStats.removed > 0 && <span className="agent-tool-row__stat-del">-{diffStats.removed}</span>}
+          </span>
+        )}
         {!open && <code className="agent-tool-group__peek">{events[events.length - 1]?.summary}</code>}
       </div>
-      {open &&
-        events.map((event) => (
-          <AgentToolRow key={event.callId} event={event} live={live} isZh={isZh} onRevert={onRevert} />
-        ))}
+      {open && (
+        <div className="agent-tool-group__list">
+          {events.map((event) => (
+            <AgentToolRow key={event.callId} event={event} live={live} isZh={isZh} onRevert={onRevert} />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** Single-line summary bar for a settled multi-step process prefix, keeping
+ * only the final reply visible once the round finishes unless expanded. */
+function TurnProcessTrace({
+  prefix,
+  isZh,
+  renderBlock
+}: {
+  prefix: TurnBlock[]
+  isZh: boolean
+  renderBlock: (block: TurnBlock, blockIndex: number, blockList: readonly TurnBlock[]) => React.ReactNode
+}) {
+  const [open, setOpen] = React.useState(false)
+  const summary = React.useMemo(() => summarizeProcessFold(prefix, isZh), [prefix, isZh])
+  return (
+    <div className={`agent-process-trace${open ? ' agent-process-trace--open' : ''}`}>
+      <button
+        type="button"
+        className="agent-process-trace__header"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span className="agent-process-trace__chevron">
+          <Icon name="chevron-down" size={12} />
+        </span>
+        <span className="agent-process-trace__badge" aria-hidden="true">
+          <Icon name="bolt" size={11} />
+        </span>
+        <span className="agent-process-trace__title">{summary.label}</span>
+        {summary.diff && (
+          <span className="agent-tool-row__diffstats">
+            {summary.diff.added > 0 && <span className="agent-tool-row__stat-add">+{summary.diff.added}</span>}
+            {summary.diff.removed > 0 && <span className="agent-tool-row__stat-del">-{summary.diff.removed}</span>}
+          </span>
+        )}
+      </button>
+      {open && (
+        <div className="agent-process-trace__body">
+          {prefix.map((block, index) => renderBlock(block, index, prefix))}
+        </div>
+      )}
     </div>
   )
 }
@@ -779,6 +902,52 @@ const AssistantTurnBody = React.memo(function AssistantTurnBody({
   t: (key: string) => string
   onRevert: (callId: string) => void
 }) {
+  const blocks: TurnBlock[] = turn.blocks?.length
+    ? turn.blocks
+    : turn.text
+      ? [{ kind: 'text' as const, text: turn.text }]
+      : []
+  const fold = getTurnProcessFold(blocks, !!turn.pending, !!turn.error)
+
+  const renderBlock = (block: TurnBlock, blockIndex: number, blockList: readonly TurnBlock[]) => {
+    if (block.kind === 'text') {
+      return <AssistantTextBlock key={blockIndex} text={block.text} pending={!!turn.pending} />
+    }
+    if (block.kind === 'thinking') {
+      return (
+        <ThinkingBlock
+          key={blockIndex}
+          text={block.text}
+          pending={!!block.pending && !!turn.pending}
+          t={t}
+        />
+      )
+    }
+    if (block.kind === 'injected') {
+      // Mid-task user note, shown right where the tool loop
+      // picked it up — same bubble style as a user message.
+      return (
+        <div key={blockIndex} className="chat-injected-note">
+          <span className="user-msg-injected-tag">
+            <Icon name="corner-down-right" size={11} />
+            {isZh ? '任务中追加' : 'Added mid-task'}
+          </span>
+          <div className="chat-injected-note__text">{block.text}</div>
+        </div>
+      )
+    }
+    return (
+      <AgentToolGroup
+        key={blockIndex}
+        events={block.events}
+        live={!!turn.pending}
+        current={!!turn.pending && blockIndex === blockList.length - 1}
+        isZh={isZh}
+        onRevert={onRevert}
+      />
+    )
+  }
+
   return (
     <>
       {turn.searchQuery && (
@@ -792,49 +961,14 @@ const AssistantTurnBody = React.memo(function AssistantTurnBody({
       {turn.reasoning && !turn.blocks?.some((block) => block.kind === 'thinking') && (
         <ThinkingBlock text={turn.reasoning} pending={turn.reasoningPending ?? false} t={t} />
       )}
-      {(turn.blocks?.length
-        ? turn.blocks
-        : turn.text
-          ? [{ kind: 'text' as const, text: turn.text }]
-          : []
-      ).map((block, blockIndex, blockList) => {
-        if (block.kind === 'text') {
-          return <AssistantTextBlock key={blockIndex} text={block.text} pending={!!turn.pending} />
-        }
-        if (block.kind === 'thinking') {
-          return (
-            <ThinkingBlock
-              key={blockIndex}
-              text={block.text}
-              pending={!!block.pending && !!turn.pending}
-              t={t}
-            />
-          )
-        }
-        if (block.kind === 'injected') {
-          // Mid-task user note, shown right where the tool loop
-          // picked it up — same bubble style as a user message.
-          return (
-            <div key={blockIndex} className="chat-injected-note">
-              <span className="user-msg-injected-tag">
-                <Icon name="corner-down-right" size={11} />
-                {isZh ? '任务中追加' : 'Added mid-task'}
-              </span>
-              <div className="chat-injected-note__text">{block.text}</div>
-            </div>
-          )
-        }
-        return (
-          <AgentToolGroup
-            key={blockIndex}
-            events={block.events}
-            live={!!turn.pending}
-            current={!!turn.pending && blockIndex === blockList.length - 1}
-            isZh={isZh}
-            onRevert={onRevert}
-          />
-        )
-      })}
+      {fold ? (
+        <>
+          <TurnProcessTrace prefix={fold.prefix} isZh={isZh} renderBlock={renderBlock} />
+          {fold.tail.map((block, index) => renderBlock(block, index, fold.tail))}
+        </>
+      ) : (
+        blocks.map((block, blockIndex) => renderBlock(block, blockIndex, blocks))
+      )}
       {!turn.text && !turn.blocks?.length && turn.pending ? (
         <span className="thinking-indicator">{t('preparing')}</span>
       ) : null}
@@ -2743,13 +2877,20 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
     <div className="action-window action-window--flex">
       <div className="titlebar titlebar--left titlebar--chat">
         <button
-          className={`icon${temporaryChat ? ' icon--active icon--temporary' : ''}`}
-          title={isZh
-            ? (temporaryChat ? '隐私模式已开启（不保存记录，点击退出）' : '开启隐私模式（不保存记录）')
-            : (temporaryChat ? 'Privacy mode on (click to exit)' : 'Turn on privacy mode (not saved)')}
-          onClick={toggleTemporaryChat}
+          className="icon"
+          title={isZh ? '新对话' : 'New chat'}
+          disabled={chat.length === 0 && !loading}
+          onClick={() => newChat()}
         >
-          <Icon name="incognito" size={15} />
+          <Icon name="new-topic" size={15} />
+        </button>
+        <button
+          className={`icon${showHistory ? ' icon--active' : ''}`}
+          title={isZh ? '历史对话' : 'History'}
+          data-panel-toggle
+          onClick={() => setShowHistory((v) => !v)}
+        >
+          <Icon name="history" size={15} />
         </button>
         <button
           className={`icon${showExtensions ? ' icon--active' : ''}`}
@@ -2760,12 +2901,13 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
           <Icon name="blocks" size={15} />
         </button>
         <button
-          className={`icon${showHistory ? ' icon--active' : ''}`}
-          title={isZh ? '历史对话' : 'History'}
-          data-panel-toggle
-          onClick={() => setShowHistory((v) => !v)}
+          className={`icon${temporaryChat ? ' icon--active icon--temporary' : ''}`}
+          title={isZh
+            ? (temporaryChat ? '隐私模式已开启（不保存记录，点击退出）' : '开启隐私模式（不保存记录）')
+            : (temporaryChat ? 'Privacy mode on (click to exit)' : 'Turn on privacy mode (not saved)')}
+          onClick={toggleTemporaryChat}
         >
-          <Icon name="history" size={15} />
+          <Icon name="incognito" size={15} />
         </button>
         {/* Model selector: absolutely centered in the titlebar via CSS. Its
             width tracks the *selected* name (measured via the hidden mirror
@@ -2832,7 +2974,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
           {modelLabel}
         </span>
         <div className="titlebar__spacer" />
-        <button className="icon" title={pinned ? t('unpin') : t('pin')} onClick={togglePin}>
+        <button className={pinned ? 'icon icon--active' : 'icon'} title={pinned ? t('unpin') : t('pin')} onClick={togglePin}>
           <Icon name={pinned ? 'pin-off' : 'pin'} />
         </button>
         {!isMac && (
@@ -3001,38 +3143,148 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
       <div className="content chat-content" ref={contentRef}>
         {chat.length === 0 ? (
           <div className={`chat-empty${temporaryChat ? ' chat-empty--temporary' : ''}`}>
-            <div className="chat-empty__icon">
-              <ShapeBadge size={56} tone={temporaryChat ? 'surface' : 'soft'} active={!temporaryChat}>
-                <Icon name={temporaryChat ? 'incognito' : 'sparkles'} size={temporaryChat ? 24 : 26} />
-              </ShapeBadge>
+            <div className="chat-empty__orb">
+              <Icon name={temporaryChat ? 'incognito' : agentEnabled ? 'terminal' : 'sparkles'} size={18} />
             </div>
             <div className="chat-empty__title">
-              {temporaryChat ? (isZh ? '临时隐私聊天' : 'Temporary Chat') : (isZh ? '开始一段对话' : 'Start a chat')}
+              {temporaryChat
+                ? (isZh ? '临时隐私聊天' : 'Temporary Chat')
+                : agentEnabled
+                  ? (isZh ? 'Agent 工作区已就绪' : 'Agent Workspace Ready')
+                  : (isZh ? '开始一段对话' : 'Start a chat')}
             </div>
             <div className="chat-empty__hint">
               {temporaryChat
-                ? (isZh ? '本次对话不保存在历史记录中，关闭窗口或新建即刻清空。' : 'This conversation will not be saved to history. Cleared on close or new chat.')
-                : (isZh ? '话题自动保存，关闭再开仍可恢复。' : 'Conversations are saved. Resume anytime.')}
+                ? (isZh ? '本次对话不保存在历史记录中，关闭窗口或新建即刻清空。' : 'This conversation is not saved to history.')
+                : agentEnabled && workingDir
+                  ? `${getProjectName(workingDir)} · ${isZh ? '支持读写文件、命令与工具调用' : 'Read/write files, run commands & tools'}`
+                  : (isZh ? '话题自动保存，关闭再开仍可恢复。' : 'Conversations are saved automatically.')}
             </div>
             <div className="chat-empty__features">
-              <button type="button" className="chat-empty__feature" onClick={() => setSearchEnabled(true)}>
-                <ShapeBadge size={28} tone="soft">
-                  <Icon name="globe" size={14} />
-                </ShapeBadge>
-                <span className="chat-empty__feature-text">{isZh ? '联网搜索，获取实时信息' : 'Web search for live info'}</span>
+              <button
+                type="button"
+                aria-pressed={searchEnabled}
+                className={`chat-empty__feature${searchEnabled ? ' chat-empty__feature--active' : ''}`}
+                onClick={() => setSearchEnabled((v) => !v)}
+              >
+                <Icon name="globe" size={13} />
+                <span className="chat-empty__feature-text">{isZh ? '联网搜索' : 'Web search'}</span>
               </button>
-              <button type="button" className="chat-empty__feature" onClick={() => void toggleAgent()}>
-                <ShapeBadge size={28} tone="soft">
-                  <Icon name="terminal" size={14} />
-                </ShapeBadge>
-                <span className="chat-empty__feature-text">{isZh ? 'Agent 模式，读写文件 / 执行命令' : 'Agent mode: files & commands'}</span>
+              <button
+                type="button"
+                aria-pressed={agentEnabled}
+                className={`chat-empty__feature${agentEnabled ? ' chat-empty__feature--active' : ''}`}
+                onClick={() => void toggleAgent()}
+              >
+                <Icon name="terminal" size={13} />
+                <span className="chat-empty__feature-text">
+                  {agentEnabled && workingDir
+                    ? `${isZh ? 'Agent' : 'Agent'} · ${getProjectName(workingDir)}`
+                    : (isZh ? 'Agent 工作区' : 'Agent workspace')}
+                </span>
               </button>
-              <button type="button" className="chat-empty__feature" onClick={() => setShowExtensions(true)}>
-                <ShapeBadge size={28} tone="soft">
-                  <Icon name="blocks" size={14} />
-                </ShapeBadge>
-                <span className="chat-empty__feature-text">{isZh ? '扩展：记忆 / Skills / MCP' : 'Extensions: memory / skills / MCP'}</span>
+              <button
+                type="button"
+                aria-pressed={showExtensions}
+                className={`chat-empty__feature${showExtensions ? ' chat-empty__feature--active' : ''}`}
+                data-panel-toggle
+                onClick={() => setShowExtensions((v) => !v)}
+              >
+                <Icon name="blocks" size={13} />
+                <span className="chat-empty__feature-text">{isZh ? '扩展与记忆' : 'Extensions'}</span>
               </button>
+            </div>
+            <div className="chat-empty__starters">
+              {(agentEnabled
+                ? [
+                    {
+                      icon: 'book-open',
+                      title: isZh ? '梳理项目结构' : 'Map codebase',
+                      sub: isZh ? '目录层级、入口文件与核心模块' : 'Layout, entry points & modules',
+                      prompt: isZh
+                        ? '请先梳理当前工作区的项目结构与核心入口文件，简明说明主要模块职责。'
+                        : 'Map the directory layout, entry files, and key modules in this workspace.',
+                      send: true
+                    },
+                    {
+                      icon: 'scan-text',
+                      title: isZh ? '检查未提交改动' : 'Inspect changes',
+                      sub: isZh ? '查看 git status 与当前 diff 摘要' : 'Review git status & recent diff',
+                      prompt: isZh
+                        ? '查看当前工作区的 git status 和未提交改动，简明总结变更重点。'
+                        : 'Check git status and summarize uncommitted changes in this workspace.',
+                      send: true
+                    },
+                    {
+                      icon: 'terminal',
+                      title: isZh ? '运行验证或测试' : 'Run checks & tests',
+                      sub: isZh ? '执行项目构建或测试并汇总结果' : 'Run suite and summarize findings',
+                      prompt: isZh
+                        ? '检查项目配置的测试/类型检查命令并运行一次，汇总执行结果。'
+                        : 'Check the project test/typecheck scripts and run them cleanly.',
+                      send: true
+                    },
+                    {
+                      icon: 'pencil',
+                      title: isZh ? '定位问题并修改' : 'Diagnose & edit',
+                      sub: isZh ? '排查特定报错并给出最小改动' : 'Trace an issue and propose fixes',
+                      prompt: isZh ? '请帮我排查以下问题：' : 'Help me diagnose and fix: ',
+                      send: false
+                    }
+                  ]
+                : [
+                    {
+                      icon: 'sparkles',
+                      title: isZh ? '拆解复杂问题' : 'Break down a problem',
+                      sub: isZh ? '列出关键维度、边界与取舍建议' : 'Structure options & trade-offs',
+                      prompt: isZh ? '请帮我系统拆解这个问题，给出要点和建议：\n' : 'Break down this problem systematically with key trade-offs:\n',
+                      send: false
+                    },
+                    {
+                      icon: 'pencil',
+                      title: isZh ? '润色并精简文字' : 'Refine writing',
+                      sub: isZh ? '保留原意，去冗余、更清晰克制' : 'Tighten tone and improve clarity',
+                      prompt: isZh ? '请帮我润色下面这段文字，保持准确克制：\n' : 'Please refine this text for clarity and conciseness:\n',
+                      send: false
+                    },
+                    {
+                      icon: 'search',
+                      title: isZh ? '排查报错或现象' : 'Debug code or error',
+                      sub: isZh ? '定位根因、最小复现与修复思路' : 'Find root cause and clean fix',
+                      prompt: isZh ? '帮我分析这个现象或报错的原因与解决步骤：\n' : 'Analyze this error or behavior and suggest next steps:\n',
+                      send: false
+                    },
+                    {
+                      icon: 'book-open',
+                      title: isZh ? '提炼长文与要点' : 'Summarize key takeaways',
+                      sub: isZh ? '快速归纳结论、依据与待确认项' : 'Extract conclusions & open items',
+                      prompt: isZh ? '请帮我提炼以下内容的核心结论与要点：\n' : 'Summarize the key conclusions and takeaways from:\n',
+                      send: false
+                    }
+                  ]
+              ).map((item) => (
+                <button
+                  key={item.title}
+                  type="button"
+                  className="chat-empty__starter"
+                  onClick={() => {
+                    if (item.send) {
+                      sendMessage(item.prompt)
+                      return
+                    }
+                    setInput(item.prompt)
+                    requestAnimationFrame(() => inputRef.current?.focus())
+                  }}
+                >
+                  <span className="chat-empty__starter-icon">
+                    <Icon name={item.icon} size={14} />
+                  </span>
+                  <span className="chat-empty__starter-copy">
+                    <span className="chat-empty__starter-title">{item.title}</span>
+                    <span className="chat-empty__starter-sub">{item.sub}</span>
+                  </span>
+                </button>
+              ))}
             </div>
           </div>
         ) : (
@@ -3217,8 +3469,9 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
         />
       )}
 
+      {todoList && todoList.length > 0 && <TodoListPill tasks={todoList} isZh={isZh} />}
+
       <div className={`chat-input${temporaryChat ? ' chat-input--temporary' : ''}`}>
-        {todoList && todoList.length > 0 && <TodoListPill tasks={todoList} isZh={isZh} />}
         {queued.length > 0 && (
           <div className="chat-queue">
             {queued.map((q, i) => (
@@ -3464,7 +3717,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
               : isCompacting
                 ? (isZh ? '正在压缩较早的对话…' : 'Compressing earlier messages…')
                 : baseTip
-            const C = 2 * Math.PI * 6.5
+            const C = 2 * Math.PI * 6
             return (
               <div
                 className={`chat-context-ring${canCompact ? ' chat-context-ring--clickable' : ''}${ratio >= 0.85 ? ' chat-context-ring--warn' : ''}`}
@@ -3480,27 +3733,20 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
                   }
                 } : undefined}
               >
-                <svg width="16" height="16" viewBox="0 0 16 16">
-                  <circle cx="8" cy="8" r="6.5" fill="none" stroke="var(--divider)" strokeWidth="2.5" />
+                <svg width="15" height="15" viewBox="0 0 16 16">
+                  <circle cx="8" cy="8" r="6" fill="none" stroke="var(--divider)" strokeWidth="2" />
                   <circle
                     cx="8"
                     cy="8"
-                    r="6.5"
+                    r="6"
                     fill="none"
                     stroke={ratio >= 0.85 ? 'var(--status-warn)' : 'var(--accent)'}
-                    strokeWidth="2.5"
+                    strokeWidth="2"
                     strokeLinecap="round"
-                    strokeDasharray={`${Math.max(ratio, 0.02) * C} ${C}`}
+                    strokeDasharray={`${Math.max(ratio, 0.03) * C} ${C}`}
                     transform="rotate(-90 8 8)"
                   />
                 </svg>
-                <WavyProgress
-                  className="chat-context-ring__wave"
-                  value={isCompacting ? null : ratio}
-                  width={26}
-                  height={8}
-                  tone={ratio >= 0.85 ? 'warn' : 'accent'}
-                />
               </div>
             )
           })()}

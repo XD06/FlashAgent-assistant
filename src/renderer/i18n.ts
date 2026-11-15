@@ -343,7 +343,9 @@ const dictionaries: Record<AppLanguage, Dict> = {
     ttsMimoVoiceMia: 'Mia (F · Bright & young · en)',
     ttsMimoVoiceChloe: 'Chloe (F · Warm & mature · en)',
     ttsMimoVoiceMilo: 'Milo (M · Energetic & friendly · en)',
-    ttsMimoVoiceDean: 'Dean (M · Deep & authoritative · en)'
+    ttsMimoVoiceDean: 'Dean (M · Deep & authoritative · en)',
+    todoProgressDone: 'Completed',
+    todoProgressActive: 'Tasks'
   },
   'zh-CN': {
     loading: '加载中...',
@@ -681,7 +683,9 @@ const dictionaries: Record<AppLanguage, Dict> = {
     ttsMimoVoiceMia: 'Mia（女声 · 明亮年轻 · 英文）',
     ttsMimoVoiceChloe: 'Chloe（女声 · 温暖知性 · 英文）',
     ttsMimoVoiceMilo: 'Milo（男声 · 充满活力 · 英文）',
-    ttsMimoVoiceDean: 'Dean（男声 · 深沉权威 · 英文）'
+    ttsMimoVoiceDean: 'Dean（男声 · 深沉权威 · 英文）',
+    todoProgressDone: '全部完成',
+    todoProgressActive: '任务清单'
   }
 }
 
