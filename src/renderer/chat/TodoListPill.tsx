@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import type { TodoItem } from '@shared/types'
+import { WavyProgress } from '../ui'
 
 export interface TodoListPillProps {
   tasks: TodoItem[]
@@ -50,6 +51,14 @@ export const TodoListPill: React.FC<TodoListPillProps> = ({ tasks, isZh }) => {
                 {completed}/{total}
               </span>
             </div>
+            <WavyProgress
+              className="todo-card__wave"
+              value={total > 0 ? completed / total : 0}
+              width={84}
+              height={10}
+              tone={isAllDone ? 'ok' : 'accent'}
+              ariaLabel={isZh ? '任务进度' : 'Task progress'}
+            />
             <button
               type="button"
               className="todo-card__collapse-btn"
@@ -71,13 +80,13 @@ export const TodoListPill: React.FC<TodoListPillProps> = ({ tasks, isZh }) => {
                 <div className="todo-item__icon-wrapper">
                   {task.status === 'completed' && (
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" className="todo-item__svg--completed">
-                      <circle cx="12" cy="12" r="9.5" stroke="#16a34a" strokeWidth="1.8" />
-                      <polyline points="8 12 11 15 16 9" stroke="#16a34a" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                      <circle cx="12" cy="12" r="9.5" stroke="var(--status-ok)" strokeWidth="1.8" />
+                      <polyline points="8 12 11 15 16 9" stroke="var(--status-ok)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                     </svg>
                   )}
                   {task.status === 'in_progress' && (
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" className="todo-item__svg--progress">
-                      <circle cx="12" cy="12" r="9.5" stroke="var(--border-soft)" strokeWidth="1.8" />
+                      <circle cx="12" cy="12" r="9.5" stroke="var(--divider)" strokeWidth="1.8" />
                       <circle cx="12" cy="12" r="9.5" stroke="var(--accent)" strokeWidth="2" strokeDasharray="24" strokeDashoffset="10" strokeLinecap="round" />
                     </svg>
                   )}

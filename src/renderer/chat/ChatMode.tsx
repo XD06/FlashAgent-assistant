@@ -4,6 +4,7 @@ import type { ContextMeasurement } from '@shared/contextMeter'
 import { MarkdownView } from '../Markdown'
 import { Icon } from '../icons'
 import { getTranslator } from '../i18n'
+import { ShapeBadge, StatusChip, WavyProgress } from '../ui'
 import { ThinkingBlock } from './ThinkingBlock'
 import { ExtensionsPanel } from './ExtensionsPanel'
 import { TodoListPill } from './TodoListPill'
@@ -3001,7 +3002,9 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
         {chat.length === 0 ? (
           <div className={`chat-empty${temporaryChat ? ' chat-empty--temporary' : ''}`}>
             <div className="chat-empty__icon">
-              <Icon name={temporaryChat ? 'incognito' : 'sparkles'} size={temporaryChat ? 24 : 28} />
+              <ShapeBadge size={56} tone={temporaryChat ? 'surface' : 'soft'} active={!temporaryChat}>
+                <Icon name={temporaryChat ? 'incognito' : 'sparkles'} size={temporaryChat ? 24 : 26} />
+              </ShapeBadge>
             </div>
             <div className="chat-empty__title">
               {temporaryChat ? (isZh ? '临时隐私聊天' : 'Temporary Chat') : (isZh ? '开始一段对话' : 'Start a chat')}
@@ -3012,17 +3015,23 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
                 : (isZh ? '话题自动保存，关闭再开仍可恢复。' : 'Conversations are saved. Resume anytime.')}
             </div>
             <div className="chat-empty__features">
-              <button className="chat-empty__feature" onClick={() => setSearchEnabled(true)}>
-                <Icon name="globe" size={14} />
-                <span>{isZh ? '联网搜索，获取实时信息' : 'Web search for live info'}</span>
+              <button type="button" className="chat-empty__feature" onClick={() => setSearchEnabled(true)}>
+                <ShapeBadge size={28} tone="soft">
+                  <Icon name="globe" size={14} />
+                </ShapeBadge>
+                <span className="chat-empty__feature-text">{isZh ? '联网搜索，获取实时信息' : 'Web search for live info'}</span>
               </button>
-              <button className="chat-empty__feature" onClick={() => void toggleAgent()}>
-                <Icon name="terminal" size={14} />
-                <span>{isZh ? 'Agent 模式，读写文件 / 执行命令' : 'Agent mode: files & commands'}</span>
+              <button type="button" className="chat-empty__feature" onClick={() => void toggleAgent()}>
+                <ShapeBadge size={28} tone="soft">
+                  <Icon name="terminal" size={14} />
+                </ShapeBadge>
+                <span className="chat-empty__feature-text">{isZh ? 'Agent 模式，读写文件 / 执行命令' : 'Agent mode: files & commands'}</span>
               </button>
-              <button className="chat-empty__feature" onClick={() => setShowExtensions(true)}>
-                <Icon name="blocks" size={14} />
-                <span>{isZh ? '扩展：记忆 / Skills / MCP' : 'Extensions: memory / skills / MCP'}</span>
+              <button type="button" className="chat-empty__feature" onClick={() => setShowExtensions(true)}>
+                <ShapeBadge size={28} tone="soft">
+                  <Icon name="blocks" size={14} />
+                </ShapeBadge>
+                <span className="chat-empty__feature-text">{isZh ? '扩展：记忆 / Skills / MCP' : 'Extensions: memory / skills / MCP'}</span>
               </button>
             </div>
           </div>
@@ -3350,7 +3359,10 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
         </div>
           <div className="chat-input__spacer" />
           {turnMetrics && (turnMetrics.running || turnMetrics.durationStr) && (
-            <div
+            <StatusChip
+              tone={turnMetrics.running ? 'ok' : 'neutral'}
+              dot
+              pulse={turnMetrics.running}
               className="chat-stats-pill"
               title={
                 isZh
@@ -3358,7 +3370,6 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
                   : `Turn metrics\nDuration: ${turnMetrics.durationStr ?? `${turnMetrics.liveSeconds}s`}${turnMetrics.firstTokenLatencySec ? `\nTTFT: ${turnMetrics.firstTokenLatencySec}s` : ''}${turnMetrics.speedTokPerSec ? `\nSpeed: ${turnMetrics.speedTokPerSec} tok/s` : ''}${turnMetrics.completionTokens ? `\nTokens: ${turnMetrics.completionTokens}` : ''}`
               }
             >
-              <span className={`chat-stats-pill__dot${turnMetrics.running ? ' chat-stats-pill__dot--pulse' : ''}`} />
               {turnMetrics.running ? (
                 <span>
                   {isZh ? '生成中' : 'Generating'}{' '}
@@ -3368,12 +3379,10 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
                 <>
                   <span>{turnMetrics.durationStr}</span>
                   {turnMetrics.firstTokenLatencySec !== null && (
-                    <>
-                      <span className="chat-stats-pill__sep">·</span>
-                      <span>
-                        ttf <span className="chat-stats-pill__num">{turnMetrics.firstTokenLatencySec}s</span>
-                      </span>
-                    </>
+                    <span className="chat-stats-pill__ttf">
+                      <span className="chat-stats-pill__sep">·</span>{' '}
+                      ttf <span className="chat-stats-pill__num">{turnMetrics.firstTokenLatencySec}s</span>
+                    </span>
                   )}
                   {turnMetrics.speedTokPerSec !== null && turnMetrics.speedTokPerSec > 0 && (
                     <>
@@ -3398,7 +3407,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
                   )}
                 </>
               )}
-            </div>
+            </StatusChip>
           )}
           <div className="chat-reasoning-wrap" ref={reasoningWrapRef}>
             <button
@@ -3458,7 +3467,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
             const C = 2 * Math.PI * 6.5
             return (
               <div
-                className={`chat-context-ring${canCompact ? ' chat-context-ring--clickable' : ''}`}
+                className={`chat-context-ring${canCompact ? ' chat-context-ring--clickable' : ''}${ratio >= 0.85 ? ' chat-context-ring--warn' : ''}`}
                 title={tip}
                 aria-label={tip}
                 onClick={canCompact ? () => void handleManualCompact() : undefined}
@@ -3478,13 +3487,20 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
                     cy="8"
                     r="6.5"
                     fill="none"
-                    stroke={ratio >= 0.85 ? 'var(--danger)' : 'var(--accent)'}
+                    stroke={ratio >= 0.85 ? 'var(--status-warn)' : 'var(--accent)'}
                     strokeWidth="2.5"
                     strokeLinecap="round"
                     strokeDasharray={`${Math.max(ratio, 0.02) * C} ${C}`}
                     transform="rotate(-90 8 8)"
                   />
                 </svg>
+                <WavyProgress
+                  className="chat-context-ring__wave"
+                  value={isCompacting ? null : ratio}
+                  width={26}
+                  height={8}
+                  tone={ratio >= 0.85 ? 'warn' : 'accent'}
+                />
               </div>
             )
           })()}
