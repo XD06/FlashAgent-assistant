@@ -401,7 +401,7 @@ function ActionEditor({
       {expanded && (
         <div className="prompt-template-editor">
           <div className="action-meta">
-            <label className="field">
+            <label className="field action-name-field">
               <span>{t('actionName')}</span>
               <SettingInput
                 value={action.name}
@@ -409,10 +409,10 @@ function ActionEditor({
                 onChange={(name) => onChange({ name })}
               />
             </label>
-            <label className="field">
+            <div className="field action-icon-field">
               <span>{t('actionIcon')}</span>
               <IconPicker value={action.icon} onChange={(icon) => onChange({ icon })} />
-            </label>
+            </div>
           </div>
 
           {isPrompt && (
@@ -1407,7 +1407,7 @@ function SettingsApp() {
                   placeholder="http://127.0.0.1:7890"
                   onChange={(proxyUrl) => update({ proxyUrl: proxyUrl.trim() })}
                 />
-                <button type="button" className="pill" onClick={() => void testProxyNow()} disabled={proxyTesting}>
+                <button type="button" className="proxy-field__test" onClick={() => void testProxyNow()} disabled={proxyTesting}>
                   {proxyTesting ? t('proxyTestLoading') : t('proxyTest')}
                 </button>
               </div>
@@ -1555,7 +1555,7 @@ function SettingsApp() {
 
           <SettingSection title={t('actionShortcutsGroup')} className="action-shortcuts-section">
             <div className="group-hint">{t('actionShortcutsHint')}</div>
-            <div className="action-shortcuts-grid">
+            <div className="action-shortcuts-grid compact-matrix-2col">
               {settings.actions.map((action) => {
                 const actionLabel = getActionLabel(action, settings.language)
                 return (
@@ -1674,7 +1674,7 @@ function SettingsApp() {
             return (
               <SettingSection title={t('optionalServicesGroup')}>
                 <div className="group-hint">{t('optionalServicesHint')}</div>
-                <div className="translate-service-list">
+                <div className="translate-service-list--optional compact-matrix-2col">
                   {optional.map((id) => (
                     <div className="translate-service-row translate-service-row--optional" key={id}>
                       <span className="setting-title">{translateServiceName(id)}</span>
@@ -1818,22 +1818,24 @@ function SettingsApp() {
           </SettingSection>
 
           <SettingSection title={t('actionWindowTitle')} className="window-behavior-section">
-            <SettingRow title={t('followToolbar')}>
-              <Toggle checked={settings.followToolbar} label={t('followToolbar')} onChange={(followToolbar) => update({ followToolbar })} />
-            </SettingRow>
-            <SettingRow title={t('rememberWindowSize')}>
-              <Toggle
-                checked={settings.rememberWindowSize}
-                label={t('rememberWindowSize')}
-                onChange={(rememberWindowSize) => update({ rememberWindowSize })}
-              />
-            </SettingRow>
-            <SettingRow title={t('autoClose')}>
-              <Toggle checked={settings.autoClose} label={t('autoClose')} onChange={(autoClose) => update({ autoClose })} />
-            </SettingRow>
-            <SettingRow title={t('autoPin')}>
-              <Toggle checked={settings.autoPin} label={t('autoPin')} onChange={(autoPin) => update({ autoPin })} />
-            </SettingRow>
+            <div className="compact-matrix-2col">
+              <SettingRow title={t('followToolbar')}>
+                <Toggle checked={settings.followToolbar} label={t('followToolbar')} onChange={(followToolbar) => update({ followToolbar })} />
+              </SettingRow>
+              <SettingRow title={t('rememberWindowSize')}>
+                <Toggle
+                  checked={settings.rememberWindowSize}
+                  label={t('rememberWindowSize')}
+                  onChange={(rememberWindowSize) => update({ rememberWindowSize })}
+                />
+              </SettingRow>
+              <SettingRow title={t('autoClose')}>
+                <Toggle checked={settings.autoClose} label={t('autoClose')} onChange={(autoClose) => update({ autoClose })} />
+              </SettingRow>
+              <SettingRow title={t('autoPin')}>
+                <Toggle checked={settings.autoPin} label={t('autoPin')} onChange={(autoPin) => update({ autoPin })} />
+              </SettingRow>
+            </div>
           </SettingSection>
 
           <SettingSection title={t('appearanceSizeGroup')} className="window-size-section">
@@ -1856,21 +1858,23 @@ function SettingsApp() {
           </SettingSection>
 
           <SettingSection title={t('appPreferences')}>
-            <SettingRow title={t('language')}>
-              <SegmentedControl<AppLanguage>
-                value={settings.language}
-                ariaLabel={t('language')}
-                size="sm"
-                options={[
-                  { value: 'zh-CN', label: 'CN' },
-                  { value: 'en', label: 'EN' }
-                ]}
-                onChange={(language) => update({ language })}
-              />
-            </SettingRow>
-            <SettingRow title={t('autoLaunch')}>
-              <Toggle checked={settings.autoLaunch} label={t('autoLaunch')} onChange={(autoLaunch) => update({ autoLaunch })} />
-            </SettingRow>
+            <div className="compact-matrix-2col">
+              <SettingRow title={t('language')}>
+                <SegmentedControl<AppLanguage>
+                  value={settings.language}
+                  ariaLabel={t('language')}
+                  size="sm"
+                  options={[
+                    { value: 'zh-CN', label: 'CN' },
+                    { value: 'en', label: 'EN' }
+                  ]}
+                  onChange={(language) => update({ language })}
+                />
+              </SettingRow>
+              <SettingRow title={t('autoLaunch')}>
+                <Toggle checked={settings.autoLaunch} label={t('autoLaunch')} onChange={(autoLaunch) => update({ autoLaunch })} />
+              </SettingRow>
+            </div>
           </SettingSection>
         </div>
       )

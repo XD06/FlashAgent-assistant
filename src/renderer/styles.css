@@ -1047,15 +1047,27 @@ html[data-theme='dark'] .settings-page {
   grid-column: 1 / -1;
 }
 
+.field {
+  display: grid;
+  gap: 6px;
+  align-content: start;
+  min-width: 0;
+}
+
 .field span {
   color: var(--settings-muted);
   font-size: 13px;
   font-weight: 560;
 }
 
+.form-grid .field > span:first-child,
 .field-header {
+  min-height: 24px;
   display: flex;
   align-items: center;
+}
+
+.field-header {
   justify-content: space-between;
   gap: 8px;
 }
@@ -1170,21 +1182,6 @@ html[data-theme='dark'] .settings-page {
   max-width: none;
 }
 
-.action-shortcuts-grid {
-  display: grid;
-  grid-template-columns: 1fr;
-}
-
-.action-shortcuts-grid .action-shortcut-setting-row {
-  min-height: 40px;
-  padding: 6px 14px;
-  background: var(--settings-surface);
-}
-
-.action-shortcuts-grid .action-shortcut-setting-row:hover {
-  background: color-mix(in srgb, var(--settings-text) 3%, var(--settings-surface));
-}
-
 .action-shortcuts-grid .shortcut-recorder {
   min-width: 172px;
 }
@@ -1230,20 +1227,31 @@ html[data-theme='dark'] .settings-page {
 }
 
 .provider-card__head {
-  min-height: 46px;
-  padding: 10px 14px;
+  min-height: 42px;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--settings-line);
 }
 
-@container (min-width: 620px) {
+@container (min-width: 520px) {
   .provider-card .form-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 7px 10px;
+    padding: 9px 12px;
   }
 
   .provider-card .form-grid .field--model,
   .provider-card .form-grid .field--api-key {
     grid-column: auto;
   }
+}
+
+.provider-card .form-grid .ui-segmented__option {
+  min-height: 26px;
+  height: 26px;
+}
+
+.provider-card .form-grid input {
+  height: 34px;
 }
 
 .provider-section .add-row-button {
@@ -1279,10 +1287,6 @@ html[data-theme='dark'] .settings-page {
 .window-size-section .setting-control {
   display: block;
   margin-top: 7px;
-}
-
-.window-behavior-section .setting-section-body {
-  display: grid;
 }
 
 .secret-field {
@@ -1590,8 +1594,8 @@ html[data-theme='dark'] .inline-icon-button:hover {
   grid-template-columns: minmax(0, 1fr) max-content 42px;
   align-items: center;
   gap: 10px;
-  min-height: 46px;
-  padding: 8px 14px;
+  min-height: 40px;
+  padding: 6px 14px;
 }
 
 .action-config-row:hover {
@@ -1624,8 +1628,8 @@ html[data-theme='dark'] .inline-icon-button:hover {
 
 .prompt-edit-button {
   justify-self: end;
-  min-height: 30px;
-  padding: 5px 8px;
+  min-height: 26px;
+  padding: 3px 8px;
   border-color: transparent;
   background: transparent;
   color: var(--settings-muted);
@@ -1641,11 +1645,11 @@ html[data-theme='dark'] .inline-icon-button:hover {
 .prompt-template-editor {
   display: grid;
   gap: 8px;
-  padding: 4px 14px 12px 38px;
+  padding: 4px 14px 12px 26px;
 }
 
 .prompt-template-editor textarea {
-  min-height: 132px;
+  min-height: 94px;
   font-family:
     ui-monospace,
     SFMono-Regular,
@@ -1658,15 +1662,15 @@ html[data-theme='dark'] .inline-icon-button:hover {
 
 .prompt-template-editor button {
   justify-self: end;
-  min-height: 30px;
-  padding: 5px 10px;
+  min-height: 28px;
+  padding: 4px 10px;
   color: var(--settings-muted);
 }
 
 .action-ai-options {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 10px;
+  gap: 8px 10px;
 }
 
 .action-ai-options .field--wide {
@@ -1681,38 +1685,68 @@ html[data-theme='dark'] .inline-icon-button:hover {
 
 .action-meta {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 12px;
-  align-items: start;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.action-name-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.action-name-field > span {
+  flex: 0 0 auto;
+  color: var(--settings-muted);
+  font-size: 12.5px;
+  font-weight: 560;
+}
+
+.action-name-field > input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 32px;
+}
+
+.action-icon-field {
+  gap: 5px;
 }
 
 .icon-picker {
   display: grid;
-  grid-template-columns: repeat(5, minmax(34px, 1fr));
-  gap: 5px;
+  grid-template-columns: repeat(15, minmax(0, 1fr));
+  gap: 3px;
+  padding: 3px;
+  border-radius: var(--radius-control);
+  background: var(--settings-block);
 }
 
-.icon-choice {
-  height: 32px;
+.icon-picker .icon-choice {
+  width: 100%;
+  height: 28px;
+  min-height: 28px;
+  padding: 0;
+  justify-self: stretch;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border: 1px solid transparent;
-  border-radius: var(--radius-control);
-  background: var(--settings-block);
+  border-radius: calc(var(--radius-control) - 3px);
+  background: transparent;
   color: var(--settings-muted);
   cursor: pointer;
 }
 
-.icon-choice:hover {
+.icon-picker .icon-choice:hover {
   color: var(--settings-text);
-  background: var(--settings-inset);
+  background: color-mix(in srgb, var(--settings-text) 6%, transparent);
 }
 
-.icon-choice.active {
-  border-color: var(--primary);
-  color: var(--primary);
-  background: color-mix(in srgb, var(--primary) 12%, transparent);
+.icon-picker .icon-choice.active {
+  border-color: color-mix(in srgb, var(--accent) 48%, transparent);
+  color: var(--accent);
+  background: var(--surface-card);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
 }
 
 .group-hint {
@@ -2758,48 +2792,13 @@ html[data-theme='dark'] .footer button:last-child {
   }
 }
 
-@media (min-width: 680px) {
-  .action-shortcuts-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 1px;
-    background: var(--settings-line);
-  }
-
-  .action-shortcuts-grid .action-shortcut-setting-row {
-    border-bottom: 0;
-    padding: 6px 12px 6px 14px;
-  }
-
-  .action-shortcuts-grid .action-shortcut-setting-row:last-child:nth-child(odd) {
-    grid-column: 1 / -1;
-  }
-}
-
-@media (min-width: 720px) {
-  .window-behavior-section .setting-section-body {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .window-behavior-section .setting-row {
-    min-height: 44px;
-  }
-
-  .window-behavior-section .setting-row:nth-child(even) {
-    border-left: 1px solid var(--settings-line);
-  }
-
-  .window-behavior-section .setting-row:nth-last-child(-n + 2) {
-    border-bottom: 0;
-  }
-}
-
 @media (max-width: 560px) {
   .form-grid {
     grid-template-columns: 1fr;
   }
 
-  .action-meta {
-    grid-template-columns: 1fr;
+  .icon-picker {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
   }
 
   .setting-row {
@@ -5966,14 +5965,55 @@ html[data-theme='light'] .chat-toast {
 .ext-switch input:focus-visible + .ext-switch__track { outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent); outline-offset: 2px; }
 .ext-switch--disabled { cursor: not-allowed; opacity: 0.45; }
 
-/* Proxy URL input + test button on the settings page */
+/* Proxy URL input with integrated inline test action */
 .proxy-field {
+  width: 100%;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
+  padding: 2px 4px 2px 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  background: var(--settings-block);
+  transition: background 140ms ease, border-color 140ms ease;
 }
-.proxy-field input { flex: 1; min-width: 0; }
-.proxy-field .pill { white-space: nowrap; }
+
+.proxy-field:focus-within {
+  border-color: var(--accent);
+}
+
+.proxy-field input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 28px;
+  border: 0;
+  padding: 4px 8px;
+  background: transparent;
+}
+
+.proxy-field input:focus-visible {
+  outline: none;
+}
+
+.proxy-field__test {
+  flex: 0 0 auto;
+  min-height: 24px;
+  height: 24px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: calc(var(--radius-control) - 3px);
+  background: var(--surface-card);
+  color: var(--settings-muted);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.proxy-field__test:hover:not(:disabled) {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
 
 /* ---------- Quick translate window ---------- */
 /* Height-to-content page: unlike the action page (100vh shell), the translate
@@ -6454,8 +6494,8 @@ html[data-theme='light'] .chat-toast {
   display: flex;
   align-items: center;
   gap: 10px;
-  min-height: 46px;
-  padding: 10px 14px;
+  min-height: 40px;
+  padding: 6px 14px;
   border: 0;
   border-bottom: 1px solid var(--settings-line);
   border-radius: 0;
@@ -6470,6 +6510,50 @@ html[data-theme='light'] .chat-toast {
 
 .translate-service-list:last-child .translate-service-row:last-child {
   border-bottom: 0;
+}
+
+.translate-service-list--optional > .translate-service-row {
+  background: var(--settings-surface);
+}
+
+/* Shared 2-column 1px hairline matrix across settings cards (placed after
+ * individual row definitions so its grid, gap, hover, and border rules apply
+ * uniformly regardless of whether children are .setting-row or service rows). */
+.compact-matrix-2col {
+  display: grid;
+  grid-template-columns: 1fr;
+}
+
+.compact-matrix-2col > * {
+  min-height: 40px;
+  padding: 6px 14px;
+  background: var(--settings-surface);
+}
+
+.compact-matrix-2col > *:hover {
+  background: color-mix(in srgb, var(--settings-text) 3%, var(--settings-surface));
+}
+
+.compact-matrix-2col > .setting-row .setting-control {
+  flex: 0 0 auto;
+  max-width: 64%;
+}
+
+@media (min-width: 680px) {
+  .compact-matrix-2col {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1px;
+    background: var(--settings-line);
+  }
+
+  .compact-matrix-2col > * {
+    border-bottom: 0;
+    padding: 6px 12px 6px 14px;
+  }
+
+  .compact-matrix-2col > *:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+  }
 }
 
 .translate-service-row .setting-title {
@@ -6487,20 +6571,28 @@ html[data-theme='light'] .chat-toast {
 .vocab-toolbar {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 11px 14px;
+  gap: 6px;
+  padding: 8px 14px;
   border-bottom: 1px solid var(--settings-line);
 }
 
-.vocab-search {
+.vocab-toolbar input.vocab-search {
   flex: 1;
   min-width: 0;
+  min-height: 30px;
+}
+
+.vocab-toolbar .pill {
+  min-height: 28px;
+  padding: 0 10px;
+  font-size: 11.5px;
+  font-weight: 580;
 }
 
 .vocab-count {
   flex-shrink: 0;
   color: var(--settings-muted);
-  font-size: 12px;
+  font-size: 11.5px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
