@@ -340,41 +340,6 @@ html[data-theme='dark'] .settings-page {
   border: 0;
 }
 
-.language-segment {
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  padding: 3px;
-  border: 1px solid var(--settings-line);
-  border-radius: var(--radius-pill);
-  background: var(--segment-track);
-}
-
-.language-segment-button {
-  min-width: 38px;
-  height: 24px;
-  min-height: 24px;
-  padding: 0 10px;
-  border: 0;
-  border-radius: var(--radius-pill);
-  background: transparent;
-  color: var(--settings-muted);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-}
-
-.language-segment-button:hover {
-  background: var(--settings-surface-soft);
-}
-
-.language-segment-button.active {
-  background: var(--segment-thumb);
-  color: var(--settings-text);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
-}
-
 .theme-toggle {
   width: 30px;
   min-width: 30px;
@@ -480,53 +445,310 @@ html[data-theme='dark'] .settings-page {
   flex-direction: column;
 }
 
-.theme-segmented {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
+/* ==========================================================================
+   Phase 3 Expressive Shared Controls (FlClash / prism_ui design language)
+   ========================================================================== */
+
+.ui-segmented {
+  position: relative;
+  display: inline-grid;
+  grid-template-columns: repeat(var(--seg-count, 2), minmax(max-content, 1fr));
+  align-items: stretch;
   padding: 3px;
-  border: 1px solid var(--settings-line);
+  border: 1px solid var(--divider-hairline);
   border-radius: var(--radius-pill);
   background: var(--segment-track);
+  min-width: 0;
+  flex-shrink: 0;
 }
 
-.theme-segmented-btn {
+.ui-segmented--fill {
+  display: grid;
+  width: 100%;
+  grid-template-columns: repeat(var(--seg-count, 2), minmax(0, 1fr));
+}
+
+.ui-segmented__thumb {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  left: 3px;
+  width: calc((100% - 6px) / var(--seg-count, 1));
+  border-radius: var(--radius-pill);
+  background: var(--segment-thumb);
+  box-shadow: 0 1px 2.5px rgba(0, 0, 0, 0.09);
+  transform: translateX(calc(var(--seg-index, 0) * 100%));
+  transition:
+    transform 250ms cubic-bezier(0.22, 1, 0.36, 1),
+    background-color 180ms ease,
+    box-shadow 180ms ease;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.ui-segmented--accent .ui-segmented__thumb {
+  background: var(--accent);
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--accent) 32%, transparent);
+}
+
+.ui-segmented__option {
+  position: relative;
+  z-index: 1;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 5px;
-  min-height: 26px;
-  height: 26px;
-  padding: 0 10px;
+  min-width: 0;
+  overflow: hidden;
+  min-height: 28px;
+  height: 28px;
+  padding: 0 11px;
   border: 0;
   border-radius: var(--radius-pill);
   background: transparent;
-  color: var(--settings-muted);
+  color: var(--muted);
   font-size: 12px;
   font-weight: 560;
   white-space: nowrap;
   cursor: pointer;
+  transition: color 180ms ease;
 }
 
-.theme-segmented-btn:hover {
-  background: var(--settings-surface-soft);
-  color: var(--settings-text);
+.ui-segmented--sm .ui-segmented__option {
+  min-height: 24px;
+  height: 24px;
+  padding: 0 9px;
+  font-size: 11px;
+  font-weight: 620;
 }
 
-.theme-segmented-btn.active {
-  background: var(--segment-thumb);
-  color: var(--settings-text);
-  font-weight: 640;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+.ui-segmented__option:hover:not(:disabled):not(.active) {
+  background: transparent;
+  color: var(--text);
 }
 
-.theme-segmented-btn.active svg {
+.ui-segmented__option.active {
+  background: transparent;
+  color: var(--text);
+  font-weight: 650;
+}
+
+.ui-segmented__option.active svg {
   color: var(--accent);
 }
 
-.theme-style-btn.active {
-  background: var(--accent);
+.ui-segmented--accent .ui-segmented__option.active {
   color: var(--accent-on);
+}
+
+.ui-segmented--accent .ui-segmented__option.active svg {
+  color: var(--accent-on);
+}
+
+.ui-segmented__option .ui-segmented__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+}
+
+.ui-status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 22px;
+  padding: 2px 9px;
+  border-radius: var(--radius-pill);
+  font-size: 11px;
+  font-weight: 620;
+  line-height: 1.2;
+  letter-spacing: 0.01em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  max-width: 100%;
+  flex-shrink: 0;
+}
+
+.ui-status-chip__text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ui-status-chip__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+
+.ui-status-chip__dot--pulse {
+  animation: ui-chip-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes ui-chip-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(0.8);
+  }
+}
+
+.ui-status-chip--ok {
+  color: color-mix(in srgb, var(--status-ok) 78%, var(--text));
+  background: var(--status-ok-soft);
+}
+.ui-status-chip--ok .ui-status-chip__dot {
+  background: var(--status-ok);
+}
+
+.ui-status-chip--warn {
+  color: color-mix(in srgb, var(--status-warn) 78%, var(--text));
+  background: var(--status-warn-soft);
+}
+.ui-status-chip--warn .ui-status-chip__dot {
+  background: var(--status-warn);
+}
+
+.ui-status-chip--err {
+  color: color-mix(in srgb, var(--status-err) 82%, var(--text));
+  background: var(--status-err-soft);
+}
+.ui-status-chip--err .ui-status-chip__dot {
+  background: var(--status-err);
+}
+
+.ui-status-chip--accent {
+  color: color-mix(in srgb, var(--accent) 82%, var(--text));
+  background: var(--accent-soft);
+}
+.ui-status-chip--accent .ui-status-chip__dot {
+  background: var(--accent);
+}
+
+.ui-status-chip--neutral {
+  color: var(--muted);
+  background: var(--surface-inset);
+}
+
+.ui-wavy-progress {
+  display: block;
+  flex-shrink: 0;
+  overflow: visible;
+}
+
+.ui-wavy-progress__track {
+  stroke: var(--surface-inset);
+}
+
+.ui-wavy-progress__stop {
+  fill: var(--status-ok);
+}
+
+.ui-wavy-progress__wave {
+  stroke: var(--status-ok);
+}
+
+.ui-wavy-progress--accent .ui-wavy-progress__wave {
+  stroke: var(--accent);
+}
+.ui-wavy-progress--accent .ui-wavy-progress__stop {
+  fill: var(--accent);
+}
+
+.ui-wavy-progress--warn .ui-wavy-progress__wave {
+  stroke: var(--status-warn);
+}
+.ui-wavy-progress--warn .ui-wavy-progress__stop {
+  fill: var(--status-warn);
+}
+
+.ui-wavy-progress--indeterminate .ui-wavy-progress__wave {
+  animation: ui-wavy-breathe 1.3s ease-in-out infinite;
+}
+
+@keyframes ui-wavy-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.52;
+  }
+}
+
+.ui-shape-badge {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.ui-shape-badge__shape {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  transition:
+    transform 380ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    fill 180ms ease;
+  transform: rotate(0deg) scale(1);
+}
+
+.ui-shape-badge--active .ui-shape-badge__shape {
+  transform: rotate(30deg) scale(1.06);
+}
+
+.ui-shape-badge--accent .ui-shape-badge__shape {
+  fill: var(--accent);
+}
+.ui-shape-badge--accent .ui-shape-badge__content {
+  color: var(--accent-on);
+}
+
+.ui-shape-badge--soft .ui-shape-badge__shape {
+  fill: var(--accent-soft);
+}
+.ui-shape-badge--soft .ui-shape-badge__content {
+  color: var(--accent);
+}
+
+.ui-shape-badge--surface .ui-shape-badge__shape {
+  fill: var(--surface-inset);
+}
+.ui-shape-badge--surface .ui-shape-badge__content {
+  color: var(--muted);
+}
+
+.ui-shape-badge__content {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  transition: color 180ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-segmented__thumb,
+  .ui-shape-badge__shape,
+  .toggle span,
+  .ext-switch__track::after {
+    transition-duration: 0.01ms !important;
+  }
+  .ui-status-chip__dot--pulse,
+  .ui-wavy-progress--indeterminate .ui-wavy-progress__wave {
+    animation: none !important;
+  }
 }
 
 .theme-color-block {
@@ -895,6 +1117,12 @@ html[data-theme='dark'] .settings-page {
   gap: 8px;
 }
 
+.setting-control:has(> .ui-segmented),
+.setting-control:has(> .ocr-engine-actions) {
+  flex: 0 1 auto;
+  max-width: 72%;
+}
+
 .setting-control select,
 .setting-control input {
   width: 100%;
@@ -1136,10 +1364,10 @@ html[data-theme='dark'] .inline-icon-button:hover {
 }
 
 .toggle {
-  width: 38px;
-  min-width: 38px;
-  height: 22px;
-  min-height: 22px;
+  width: 44px;
+  min-width: 44px;
+  height: 24px;
+  min-height: 24px;
   padding: 3px;
   /* Flex centering keeps the knob mathematically centered — the plain block
      child sat flush against the content edge and looked off-center on
@@ -1147,32 +1375,50 @@ html[data-theme='dark'] .inline-icon-button:hover {
   display: inline-flex;
   align-items: center;
   justify-content: flex-start;
-  border: 1px solid transparent;
+  border: 0;
   border-radius: var(--radius-pill);
-  background: var(--settings-inset);
+  background: var(--surface-inset);
+  transition: background-color 180ms ease;
+}
+
+.toggle:hover {
+  background: color-mix(in srgb, var(--surface-inset) 86%, var(--text));
 }
 
 .toggle span {
-  width: 14px;
-  height: 14px;
+  width: 18px;
+  height: 18px;
   flex-shrink: 0;
   display: block;
   border-radius: 999px;
-  background: var(--settings-muted);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  background: var(--surface-card);
+  box-shadow: 0 1px 2.5px rgba(0, 0, 0, 0.22);
   transition:
-    transform 140ms ease,
-    background 140ms ease;
+    transform 280ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    width 160ms cubic-bezier(0.22, 1, 0.36, 1),
+    background-color 180ms ease;
+}
+
+.toggle:active span {
+  width: 23px;
 }
 
 .toggle.checked {
-  border-color: transparent;
   background: var(--accent);
 }
 
+.toggle.checked:hover {
+  background: color-mix(in srgb, var(--accent) 90%, var(--accent-on));
+}
+
 .toggle.checked span {
-  transform: translateX(16px);
+  transform: translateX(20px);
   background: var(--accent-on);
+}
+
+.toggle.checked:active span {
+  width: 23px;
+  transform: translateX(15px);
 }
 
 .shortcut-recorder {
@@ -1326,8 +1572,12 @@ html[data-theme='dark'] .inline-icon-button:hover {
 
 .action-ai-options {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 10px;
+}
+
+.action-ai-options .field--wide {
+  grid-column: 1 / -1;
 }
 
 .action-row-tools {
@@ -5438,6 +5688,12 @@ html[data-theme='light'] .chat-toast {
   white-space: nowrap;
   min-width: 0;
 }
+.ext-panel__item-status {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
 .ext-panel__mcp-controls {
   display: inline-flex;
   align-items: center;
@@ -5451,12 +5707,6 @@ html[data-theme='light'] .chat-toast {
   color: color-mix(in srgb, var(--text) 55%, transparent);
   font-size: 11px;
   white-space: nowrap;
-}
-.ext-panel__dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex: 0 0 auto;
 }
 .ext-panel__form { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
 /* Inline dropdown inside an ext-panel row (e.g. the command-shell picker).
@@ -5582,27 +5832,42 @@ html[data-theme='light'] .chat-toast {
   height: 0;
 }
 .ext-switch__track {
-  width: 30px;
-  height: 17px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--text) 20%, transparent);
-  transition: background 0.15s ease;
+  width: 34px;
+  height: 19px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-inset);
+  transition: background-color 180ms ease;
   position: relative;
 }
 .ext-switch__track::after {
   content: '';
   position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 13px;
-  height: 13px;
-  border-radius: 50%;
-  background: #fff;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
-  transition: transform 0.15s ease;
+  top: 2.5px;
+  left: 2.5px;
+  width: 14px;
+  height: 14px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-card);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.24);
+  transition:
+    transform 260ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    width 160ms ease,
+    background-color 160ms ease;
 }
-.ext-switch input:checked + .ext-switch__track { background: #3fb950; }
-.ext-switch input:checked + .ext-switch__track::after { transform: translateX(13px); }
+.ext-switch:not(.ext-switch--disabled):active .ext-switch__track::after {
+  width: 18px;
+}
+.ext-switch input:checked + .ext-switch__track {
+  background: var(--accent);
+}
+.ext-switch input:checked + .ext-switch__track::after {
+  transform: translateX(15px);
+  background: var(--accent-on);
+}
+.ext-switch:not(.ext-switch--disabled):active input:checked + .ext-switch__track::after {
+  width: 18px;
+  transform: translateX(11px);
+}
 .ext-switch input:focus-visible + .ext-switch__track { outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent); outline-offset: 2px; }
 .ext-switch--disabled { cursor: not-allowed; opacity: 0.45; }
 
@@ -6315,28 +6580,8 @@ html[data-theme='light'] .chat-toast {
   min-height: 24px;
 }
 
-.ocr-engine-progress {
-  width: 120px;
-  height: 5px;
-  border-radius: 3px;
-  background: var(--settings-line-strong);
-  overflow: hidden;
-}
-
-.ocr-engine-progress > div {
-  height: 100%;
-  border-radius: 3px;
-  background: var(--settings-success);
-  transition: width 0.2s ease;
-}
-
 .ocr-engine-progress-label {
   font-size: 11px;
   color: var(--settings-muted);
   font-variant-numeric: tabular-nums;
-}
-
-.ocr-engine-state.ok {
-  font-size: 11px;
-  color: var(--settings-success);
 }

@@ -3,6 +3,7 @@ import type { AppSettings, CommandShell, McpServerConfig, McpServerStatus, McpTr
 import { parseMcpJson } from '@shared/mcpJson'
 import type { ParsedMcpServer } from '@shared/mcpJson'
 import { Icon } from '../icons'
+import { StatusChip, type StatusChipTone } from '../ui'
 
 interface ExtensionsPanelProps {
   settings: AppSettings
@@ -16,11 +17,11 @@ type PanelTab = 'memory' | 'skills' | 'mcp' | 'other'
 // Shell picker only makes sense on Windows — macOS/Linux always run bash.
 const IS_WINDOWS_UI = navigator.platform.toLowerCase().includes('win')
 
-const STATE_COLORS: Record<McpServerStatus['state'], string> = {
-  connected: '#3fb950',
-  connecting: '#d29922',
-  error: '#f85149',
-  disabled: '#8b949e'
+const MCP_STATE_TONE: Record<McpServerStatus['state'], StatusChipTone> = {
+  connected: 'ok',
+  connecting: 'warn',
+  error: 'err',
+  disabled: 'neutral'
 }
 
 /** Small pill switch used by the skills / MCP lists. */
@@ -433,16 +434,17 @@ export function ExtensionsPanel({ settings, isZh, workingDir, onClose }: Extensi
                 className={`ext-panel__item${isEditing ? ' ext-panel__item--active' : ''}`}
                 title={server.error ?? server.toolNames.join(', ')}
               >
-                <span className="ext-panel__dot" style={{ background: STATE_COLORS[server.state] }} />
                 <span className="ext-panel__item-name">{server.name}</span>
-                <span className="ext-panel__item-desc">
-                  {server.state === 'connected'
-                    ? `${server.toolNames.length} ${isZh ? '个工具' : 'tools'}`
-                    : server.state === 'error'
-                      ? (isZh ? '连接失败' : 'error')
-                      : server.state === 'connecting'
-                        ? (isZh ? '连接中…' : 'connecting…')
-                        : (isZh ? '未启用' : 'off')}
+                <span className="ext-panel__item-status">
+                  <StatusChip tone={MCP_STATE_TONE[server.state]} dot pulse={server.state === 'connecting'}>
+                    {server.state === 'connected'
+                      ? `${server.toolNames.length} ${isZh ? '个工具' : 'tools'}`
+                      : server.state === 'error'
+                        ? (isZh ? '连接失败' : 'error')
+                        : server.state === 'connecting'
+                          ? (isZh ? '连接中…' : 'connecting…')
+                          : (isZh ? '未启用' : 'off')}
+                  </StatusChip>
                 </span>
                 {enabled && (
                   <button

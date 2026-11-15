@@ -9,6 +9,7 @@ import { TRANSLATE_SERVICE_IDS } from '@shared/translate'
 import { useSystemAccentColor, useThemeMode } from '../useThemeMode'
 import { useAppearance } from '../useAppearance'
 import { getActionLabel, getTranslator } from '../i18n'
+import { SegmentedControl, ShapeBadge, StatusChip, WavyProgress } from '../ui'
 import { ProviderNameInput } from './ProviderNameInput'
 import { SettingInput, SettingTextarea } from './SettingInput'
 import type {
@@ -446,31 +447,38 @@ function ActionEditor({
                   onChange={(val) => onChange({ model: val.trim() || undefined })}
                 />
               </label>
-              <label className="field">
+              <div className="field field--wide">
                 <span>{t('actionReasoning')}</span>
-                <select
+                <SegmentedControl<ReasoningMode>
                   value={action.reasoning ?? 'on'}
-                  onChange={(event) => onChange({ reasoning: event.target.value as ReasoningMode })}>
-                  <option value="on">{t('reasoningOn')}</option>
-                  <option value="off">{t('reasoningOff')}</option>
-                  <option value="low">{t('reasoningLow')}</option>
-                  <option value="medium">{t('reasoningMedium')}</option>
-                  <option value="high">{t('reasoningHigh')}</option>
-                </select>
-              </label>
-              <label className="field">
+                  ariaLabel={t('actionReasoning')}
+                  size="sm"
+                  fill
+                  options={[
+                    { value: 'on', label: t('reasoningOn'), title: t('reasoningOn') },
+                    { value: 'off', label: t('reasoningOff'), title: t('reasoningOff') },
+                    { value: 'low', label: t('reasoningLow'), title: t('reasoningLow') },
+                    { value: 'medium', label: t('reasoningMedium'), title: t('reasoningMedium') },
+                    { value: 'high', label: t('reasoningHigh'), title: t('reasoningHigh') }
+                  ]}
+                  onChange={(reasoning) => onChange({ reasoning })}
+                />
+              </div>
+              <div className="field field--wide">
                 <span>{t('actionWebSearch')}</span>
-                <select
+                <SegmentedControl<'inherit' | 'on' | 'off'>
                   value={action.webSearch === undefined ? 'inherit' : action.webSearch ? 'on' : 'off'}
-                  onChange={(event) => {
-                    const val = event.target.value
-                    onChange({ webSearch: val === 'inherit' ? undefined : val === 'on' })
-                  }}>
-                  <option value="inherit">{t('actionWebSearchInherit')}</option>
-                  <option value="on">{t('actionWebSearchOn')}</option>
-                  <option value="off">{t('actionWebSearchOff')}</option>
-                </select>
-              </label>
+                  ariaLabel={t('actionWebSearch')}
+                  size="sm"
+                  fill
+                  options={[
+                    { value: 'inherit', label: t('actionWebSearchInherit'), title: t('actionWebSearchInherit') },
+                    { value: 'on', label: t('actionWebSearchOn'), title: t('actionWebSearchOn') },
+                    { value: 'off', label: t('actionWebSearchOff'), title: t('actionWebSearchOff') }
+                  ]}
+                  onChange={(val) => onChange({ webSearch: val === 'inherit' ? undefined : val === 'on' })}
+                />
+              </div>
             </div>
           )}
 
@@ -744,22 +752,12 @@ function ThemeAppearanceSection({
     <SettingSection title={t('appearanceThemeGroup')} className="theme-appearance-section">
       <div className="theme-appearance-stack">
         <SettingRow title={t('themeMode')}>
-          <div className="theme-segmented" role="group" aria-label={t('themeMode')}>
-            {themeModes.map((item) => {
-              const active = settings.theme === item.value
-              return (
-                <button
-                  key={item.value}
-                  type="button"
-                  className={active ? 'theme-segmented-btn active' : 'theme-segmented-btn'}
-                  aria-pressed={active}
-                  onClick={() => onUpdate({ theme: item.value })}>
-                  <Icon name={item.icon} size={13} />
-                  <span>{item.label}</span>
-                </button>
-              )
-            })}
-          </div>
+          <SegmentedControl<ThemeMode>
+            value={settings.theme}
+            ariaLabel={t('themeMode')}
+            options={themeModes}
+            onChange={(theme) => onUpdate({ theme })}
+          />
         </SettingRow>
 
         <SettingRow title={t('pureBlack')} description={t('pureBlackDesc')}>
@@ -858,25 +856,13 @@ function ThemeAppearanceSection({
         </div>
 
         <SettingRow title={t('colorStyle')}>
-          <div className="theme-segmented" role="group" aria-label={t('colorStyle')}>
-            {colorStyles.map((item) => {
-              const active = settings.colorStyle === item.value
-              return (
-                <button
-                  key={item.value}
-                  type="button"
-                  className={
-                    active
-                      ? 'theme-segmented-btn theme-style-btn active'
-                      : 'theme-segmented-btn theme-style-btn'
-                  }
-                  aria-pressed={active}
-                  onClick={() => onUpdate({ colorStyle: item.value })}>
-                  <span>{item.label}</span>
-                </button>
-              )
-            })}
-          </div>
+          <SegmentedControl<ColorStyle>
+            value={settings.colorStyle}
+            ariaLabel={t('colorStyle')}
+            tone="accent"
+            options={colorStyles}
+            onChange={(colorStyle) => onUpdate({ colorStyle })}
+          />
         </SettingRow>
       </div>
     </SettingSection>
@@ -1148,19 +1134,27 @@ function SettingsApp() {
                 return (
                   <div className="provider-card" key={template.id}>
                     <div className="provider-card__head">
+                      <ShapeBadge size={26} active={isDefault} tone={isDefault ? 'accent' : 'surface'}>
+                        <Icon name={isDefault ? 'sparkles' : 'blocks'} size={13} />
+                      </ShapeBadge>
                       <ProviderNameInput
                         value={template.name}
                         placeholder={t('providerTemplateName')}
                         onChange={(name) => updateTemplate(template.id, { name })}
                       />
-                      <button
-                        type="button"
-                        className={isDefault ? 'pill active' : 'pill'}
-                        onClick={() => update({ activeProviderTemplateId: template.id })}
-                        disabled={isDefault}
-                        title={t('setDefault')}>
-                        {isDefault ? t('providerDefault') : t('setDefault')}
-                      </button>
+                      {isDefault ? (
+                        <StatusChip tone="accent" dot>
+                          {t('providerDefault')}
+                        </StatusChip>
+                      ) : (
+                        <button
+                          type="button"
+                          className="pill"
+                          onClick={() => update({ activeProviderTemplateId: template.id })}
+                          title={t('setDefault')}>
+                          {t('setDefault')}
+                        </button>
+                      )}
                       <button
                         type="button"
                         className="inline-icon-button danger"
@@ -1172,15 +1166,19 @@ function SettingsApp() {
                       </button>
                     </div>
                     <div className="form-grid">
-                      <label className="field">
+                      <div className="field">
                         <span>{t('apiType')}</span>
-                        <select
+                        <SegmentedControl<'openai' | 'anthropic'>
                           value={template.provider.apiType}
-                          onChange={(event) => updateTemplateProvider(template.id, 'apiType', event.target.value)}>
-                          <option value="openai">{t('apiTypeOpenAI')}</option>
-                          <option value="anthropic">{t('apiTypeAnthropic')}</option>
-                        </select>
-                      </label>
+                          ariaLabel={t('apiType')}
+                          fill
+                          options={[
+                            { value: 'openai', label: t('apiTypeOpenAI') },
+                            { value: 'anthropic', label: t('apiTypeAnthropic') }
+                          ]}
+                          onChange={(apiType) => updateTemplateProvider(template.id, 'apiType', apiType)}
+                        />
+                      </div>
                       <label className="field">
                         <span>{t('baseUrl')}</span>
                         <SettingInput
@@ -1316,9 +1314,13 @@ function SettingsApp() {
               <div className="ocr-engine-actions">
                 {ocrEngine?.downloading ? (
                   <>
-                    <div className="ocr-engine-progress" aria-hidden={!ocrEnginePackPercent}>
-                      <div style={{ width: `${ocrEnginePackPercent ?? 0}%` }} />
-                    </div>
+                    <WavyProgress
+                      value={ocrEnginePackPercent != null ? ocrEnginePackPercent / 100 : null}
+                      width={128}
+                      height={14}
+                      tone="ok"
+                      ariaLabel={t('ocrEnginePack')}
+                    />
                     <span className="ocr-engine-progress-label">
                       {ocrEnginePackPercent != null ? `${ocrEnginePackPercent}%` : t('ocrEnginePreparing')}
                     </span>
@@ -1328,20 +1330,29 @@ function SettingsApp() {
                   </>
                 ) : ocrEngine?.paddle.installed ? (
                   <>
-                    <span className="ocr-engine-state ok">{t('ocrEngineInstalled')}</span>
+                    <StatusChip tone="ok" dot>
+                      {t('ocrEngineInstalled')}
+                    </StatusChip>
                     <button type="button" className="pill" onClick={() => void deleteOcrEnginePack()}>
                       {t('ocrEngineDelete')}
                     </button>
                   </>
                 ) : (
-                  <button
-                    type="button"
-                    className="pill"
-                    onClick={() => void downloadOcrEnginePack()}
-                    disabled={ocrEngine?.systemAvailable === false && !isWindows}
-                  >
-                    {t('ocrEngineDownload')}
-                  </button>
+                  <>
+                    {ocrEngineError && (
+                      <StatusChip tone="err" dot title={ocrEngineError}>
+                        {t('ocrEngineFailed')}
+                      </StatusChip>
+                    )}
+                    <button
+                      type="button"
+                      className="pill"
+                      onClick={() => void downloadOcrEnginePack()}
+                      disabled={ocrEngine?.systemAvailable === false && !isWindows}
+                    >
+                      {t('ocrEngineDownload')}
+                    </button>
+                  </>
                 )}
               </div>
             </SettingRow>
@@ -1407,10 +1418,15 @@ function SettingsApp() {
 
           <SettingSection title={t('selectionTriggerGroup')}>
             <SettingRow title={t('triggerMode')}>
-              <select value={settings.triggerMode} onChange={(event) => update({ triggerMode: event.target.value as TriggerMode })}>
-                <option value="selected">{t('triggerSelected')}</option>
-                <option value="shortcut">{t('triggerShortcut')}</option>
-              </select>
+              <SegmentedControl<TriggerMode>
+                value={settings.triggerMode}
+                ariaLabel={t('triggerMode')}
+                options={[
+                  { value: 'selected', label: t('triggerSelected') },
+                  { value: 'shortcut', label: t('triggerShortcut') }
+                ]}
+                onChange={(triggerMode) => update({ triggerMode })}
+              />
             </SettingRow>
           </SettingSection>
 
@@ -1497,11 +1513,16 @@ function SettingsApp() {
 
           <SettingSection title={t('selectionFilterGroup')}>
             <SettingRow title={t('filterMode')}>
-              <select value={settings.filterMode} onChange={(event) => update({ filterMode: event.target.value as FilterMode })}>
-                <option value="default">{t('filterDefault')}</option>
-                <option value="whitelist">{t('filterWhitelist')}</option>
-                <option value="blacklist">{t('filterBlacklist')}</option>
-              </select>
+              <SegmentedControl<FilterMode>
+                value={settings.filterMode}
+                ariaLabel={t('filterMode')}
+                options={[
+                  { value: 'default', label: t('filterDefault') },
+                  { value: 'whitelist', label: t('filterWhitelist') },
+                  { value: 'blacklist', label: t('filterBlacklist') }
+                ]}
+                onChange={(filterMode) => update({ filterMode })}
+              />
             </SettingRow>
             <SettingRow title={t('filterList')} description={t('filterListPlaceholder')} className="tall">
               <SettingTextarea
@@ -1811,22 +1832,16 @@ function SettingsApp() {
 
           <SettingSection title={t('appPreferences')}>
             <SettingRow title={t('language')}>
-              <div className="language-segment" role="group" aria-label={t('language')}>
-                <button
-                  type="button"
-                  className={settings.language === 'zh-CN' ? 'language-segment-button active' : 'language-segment-button'}
-                  aria-pressed={settings.language === 'zh-CN'}
-                  onClick={() => update({ language: 'zh-CN' as AppLanguage })}>
-                  CN
-                </button>
-                <button
-                  type="button"
-                  className={settings.language === 'en' ? 'language-segment-button active' : 'language-segment-button'}
-                  aria-pressed={settings.language === 'en'}
-                  onClick={() => update({ language: 'en' as AppLanguage })}>
-                  EN
-                </button>
-              </div>
+              <SegmentedControl<AppLanguage>
+                value={settings.language}
+                ariaLabel={t('language')}
+                size="sm"
+                options={[
+                  { value: 'zh-CN', label: 'CN' },
+                  { value: 'en', label: 'EN' }
+                ]}
+                onChange={(language) => update({ language })}
+              />
             </SettingRow>
             <SettingRow title={t('autoLaunch')}>
               <Toggle checked={settings.autoLaunch} label={t('autoLaunch')} onChange={(autoLaunch) => update({ autoLaunch })} />
