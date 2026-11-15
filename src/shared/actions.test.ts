@@ -406,3 +406,37 @@ describe('selection actions', () => {
     )
   })
 })
+
+describe('multi-theme settings normalization', () => {
+  it('preserves explicit null primaryColor (follow system accent)', () => {
+    const withNull = mergeSettings(defaultSettings, { primaryColor: null })
+    expect(withNull.primaryColor).toBeNull()
+    const afterOtherPatch = mergeSettings(withNull, { pureBlack: true })
+    expect(afterOtherPatch.primaryColor).toBeNull()
+    expect(afterOtherPatch.pureBlack).toBe(true)
+  })
+
+  it('normalizes shorthand and uppercase hex colors and falls back for invalid inputs', () => {
+    const merged = normalizeSettings({
+      primaryColor: '  #F0A ',
+      primaryColors: ['#007AFF', '#007aff', 'not-a-color', '#34c'],
+      colorStyle: 'tinted',
+      pureBlack: true
+    })
+    expect(merged.primaryColor).toBe('#ff00aa')
+    expect(merged.primaryColors).toEqual(['#007aff', '#3344cc'])
+    expect(merged.colorStyle).toBe('tinted')
+    expect(merged.pureBlack).toBe(true)
+
+    const corrupted = normalizeSettings({
+      primaryColor: 'javascript:alert(1)' as never,
+      primaryColors: 'bad' as never,
+      colorStyle: 'neon' as never,
+      pureBlack: 'yes' as never
+    })
+    expect(corrupted.primaryColor).toBe(defaultSettings.primaryColor)
+    expect(corrupted.primaryColors).toEqual(defaultSettings.primaryColors)
+    expect(corrupted.colorStyle).toBe('vivid')
+    expect(corrupted.pureBlack).toBe(false)
+  })
+})

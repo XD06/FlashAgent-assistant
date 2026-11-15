@@ -1,10 +1,12 @@
-import { app, BrowserWindow, Menu, Tray, dialog, globalShortcut, ipcMain, nativeImage, net, screen, shell } from 'electron'
+import { app, BrowserWindow, Menu, Tray, dialog, globalShortcut, ipcMain, nativeImage, net, screen, shell, systemPreferences } from 'electron'
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { buildAssistantSystemPrompt, resolveProvider } from '@shared/actions'
+import { defaultPrimaryColor } from '@shared/defaults'
+import { normalizeSystemAccentColor } from '@shared/theme'
 import { IPC } from '@shared/ipc'
 import { APP_ICON_DATA_URL, APP_TRAY_DATA_URL } from '@shared/brand'
 import type { AgentToolEvent, AiStreamRequest, SettingsPatch } from '@shared/types'
@@ -693,6 +695,15 @@ function argsJsonForEvent(args: Record<string, unknown>): string {  const slim =
   }
 }
 
+function readSystemAccentColor(): string {
+  try {
+    const raw = (systemPreferences as { getAccentColor?: () => string }).getAccentColor?.()
+    return normalizeSystemAccentColor(raw, defaultPrimaryColor)
+  } catch {
+    return defaultPrimaryColor
+  }
+}
+
 function registerIpc(): void {
   selectionService.registerIpc()
   screenshotService.registerIpc()
@@ -744,6 +755,8 @@ function registerIpc(): void {
     return settings
   })
   ipcMain.handle(IPC.ProxyTest, (_event, proxyUrl: string) => testProxy(typeof proxyUrl === 'string' ? proxyUrl : ''))
+
+  ipcMain.handle(IPC.AppSystemAccentGet, () => readSystemAccentColor())
 
   // Only allow protocols that make sense to hand to the OS shell. Selected
   // text can be an arbitrary URI, so never forward schemes like javascript: —
@@ -1488,6 +1501,15 @@ if (!app.requestSingleInstanceLock()) {
       }
       refreshTrayMenu()
     })
+
+    if (isWin) {
+      systemPreferences.on('accent-color-changed', () => {
+        const accent = readSystemAccentColor()
+        for (const win of BrowserWindow.getAllWindows()) {
+          if (!win.isDestroyed()) win.webContents.send(IPC.AppSystemAccentChanged, accent)
+        }
+      })
+    }
 
     // Prevent in-app navigation: all external links open in the default browser.
     app.on('web-contents-created', (_event, contents) => {

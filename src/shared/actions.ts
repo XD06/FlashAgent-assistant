@@ -1,10 +1,12 @@
-import { defaultProviderTemplate, defaultSettings } from './defaults'
+import { defaultPrimaryColor, defaultPrimaryColors, defaultProviderTemplate, defaultSettings } from './defaults'
+import { normalizeHexColor } from './theme'
 import { TRANSLATE_SERVICE_IDS } from './translate'
 import type {
   ActionItem,
   ActionType,
   AppLanguage,
   AppSettings,
+  ColorStyle,
   CommandShell,
   OcrEngineId,
   FilterMode,
@@ -110,10 +112,16 @@ export function mergeSettings(current: AppSettings, patch: SettingsPatch): AppSe
   const selectedProviderTemplate =
     nextProviderTemplates.find((template) => template.id === nextActiveProviderTemplateId) ?? nextProviderTemplates[0]
   const nextProvider = normalizeProviderSettings(selectedProviderTemplate?.provider ?? current.provider)
+  const nextPrimaryColorInput =
+    'primaryColor' in rest && rest.primaryColor !== undefined ? rest.primaryColor : current.primaryColor
   return {
     ...current,
     ...rest,
     theme: normalizeThemeMode(rest.theme ?? current.theme),
+    pureBlack: typeof (rest.pureBlack ?? current.pureBlack) === 'boolean' ? Boolean(rest.pureBlack ?? current.pureBlack) : false,
+    primaryColor: normalizePrimaryColor(nextPrimaryColorInput),
+    primaryColors: normalizePrimaryColors(rest.primaryColors ?? current.primaryColors),
+    colorStyle: normalizeColorStyle(rest.colorStyle ?? current.colorStyle),
     triggerMode: normalizeTriggerMode(rest.triggerMode ?? current.triggerMode),
     filterMode: normalizeFilterMode(rest.filterMode ?? current.filterMode),
     commandShell: normalizeCommandShell(rest.commandShell ?? current.commandShell),
@@ -167,6 +175,27 @@ function normalizeTriggerMode(mode: unknown): TriggerMode {
 function normalizeThemeMode(mode: unknown): ThemeMode {
   if (mode === 'light' || mode === 'dark') return mode
   return 'system'
+}
+
+function normalizeColorStyle(style: unknown): ColorStyle {
+  if (style === 'vivid' || style === 'tinted' || style === 'soft' || style === 'monochrome') return style
+  return 'vivid'
+}
+
+function normalizePrimaryColor(value: unknown): string | null {
+  if (value === null) return null
+  return normalizeHexColor(value) ?? defaultPrimaryColor
+}
+
+function normalizePrimaryColors(value: unknown): string[] {
+  if (!Array.isArray(value)) return [...defaultPrimaryColors]
+  if (value.length === 0) return []
+  const seen = new Set<string>()
+  for (const item of value) {
+    const hex = normalizeHexColor(item)
+    if (hex) seen.add(hex)
+  }
+  return seen.size > 0 ? [...seen] : [...defaultPrimaryColors]
 }
 
 function normalizeFilterMode(mode: unknown): FilterMode {

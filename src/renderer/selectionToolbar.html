@@ -90,11 +90,29 @@
         }
 
         // ---- Theme ----
-        function applyTheme(theme) {
+        var systemAccentColor = '#007aff';
+        var currentSettings = null;
+        var colorSchemeMedia = window.matchMedia('(prefers-color-scheme: dark)');
+
+        function applyTheme(settings) {
+          var theme = settings.theme;
           var resolved = theme === 'light' || theme === 'dark' ? theme
-            : (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-          document.documentElement.dataset.theme = resolved;
-          document.documentElement.style.colorScheme = resolved;
+            : (colorSchemeMedia.matches ? 'dark' : 'light');
+          var rootEl = document.documentElement;
+          rootEl.dataset.theme = resolved;
+          rootEl.style.colorScheme = resolved;
+          if (window.assistantLite && window.assistantLite.app && window.assistantLite.app.resolveThemeVars) {
+            var vars = window.assistantLite.app.resolveThemeVars({
+              pureBlack: Boolean(settings.pureBlack),
+              primaryColor: settings.primaryColor === undefined ? '#007aff' : settings.primaryColor,
+              colorStyle: settings.colorStyle || 'vivid'
+            }, resolved, systemAccentColor);
+            for (var key in vars) {
+              if (Object.prototype.hasOwnProperty.call(vars, key)) {
+                rootEl.style.setProperty(key, vars[key]);
+              }
+            }
+          }
         }
 
         function applyAppearance(settings) {
@@ -117,7 +135,8 @@
         }
 
         function render(settings) {
-          applyTheme(settings.theme);
+          currentSettings = settings;
+          applyTheme(settings);
           applyAppearance(settings);
           var actions = settings.actions.filter(function (a) { return a.enabled; });
           var html = '';
@@ -173,6 +192,25 @@
         });
 
         // ---- Init ----
+        if (window.assistantLite && window.assistantLite.app && window.assistantLite.app.getSystemAccentColor) {
+          window.assistantLite.app.getSystemAccentColor().then(function (color) {
+            if (color) {
+              systemAccentColor = color;
+              if (currentSettings) applyTheme(currentSettings);
+            }
+          });
+          if (window.assistantLite.app.onSystemAccentColorChanged) {
+            window.assistantLite.app.onSystemAccentColorChanged(function (color) {
+              if (color) {
+                systemAccentColor = color;
+                if (currentSettings) applyTheme(currentSettings);
+              }
+            });
+          }
+        }
+        colorSchemeMedia.addEventListener('change', function () {
+          if (currentSettings && currentSettings.theme === 'system') applyTheme(currentSettings);
+        });
         window.assistantLite.settings.get().then(render);
         window.assistantLite.settings.onChanged(render);
         window.assistantLite.selection.onSelected(function (payload) {

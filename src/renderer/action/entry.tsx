@@ -661,7 +661,7 @@ function ActionApp() {
   )
   const [pinned, setPinned] = React.useState(settings.autoPin)
   const t = getTranslator(settings.language)
-  useThemeMode(settings.theme)
+  useThemeMode(settings)
   useAppearance(settings)
 
   // Esc closes the action window (both selection-result and type-in modes).

@@ -296,7 +296,7 @@ function ServiceCard({
 function TranslateWindow() {
   const { settings, loaded } = useSettings()
   const t = getTranslator(settings.language)
-  useThemeMode(settings.theme)
+  useThemeMode(settings)
   useAppearance(settings)
 
   const prefs = React.useMemo(loadPrefs, [])

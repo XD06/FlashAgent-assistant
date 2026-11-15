@@ -3,9 +3,10 @@ import React from 'react'
 import { createRoot } from 'react-dom/client'
 import { useSettings } from '../useSettings'
 import { Icon } from '../icons'
-import { defaultActions } from '@shared/defaults'
+import { defaultActions, defaultPrimaryColor, defaultPrimaryColors } from '@shared/defaults'
+import { hexToRgb, normalizeHexColor, rgbToTone } from '@shared/theme'
 import { TRANSLATE_SERVICE_IDS } from '@shared/translate'
-import { useThemeMode } from '../useThemeMode'
+import { useSystemAccentColor, useThemeMode } from '../useThemeMode'
 import { useAppearance } from '../useAppearance'
 import { getActionLabel, getTranslator } from '../i18n'
 import { ProviderNameInput } from './ProviderNameInput'
@@ -14,6 +15,7 @@ import type {
   ActionItem,
   AppLanguage,
   AppSettings,
+  ColorStyle,
   FilterMode,
   OcrEngineId,
   OcrEngineStatusPayload,
@@ -676,6 +678,211 @@ function ExchangeLines({ exchange, t }: { exchange: VocabEntry['exchange']; t: (
   )
 }
 
+function ThemeAppearanceSection({
+  settings,
+  onUpdate,
+  t
+}: {
+  settings: AppSettings
+  onUpdate: (patch: Partial<AppSettings>) => void
+  t: (key: string) => string
+}) {
+  const systemAccent = useSystemAccentColor()
+  const sessionAddedRef = React.useRef<string | null>(null)
+  const themeModes: Array<{ value: ThemeMode; label: string; icon: string }> = [
+    { value: 'system', label: t('themeModeSystem'), icon: 'laptop' },
+    { value: 'light', label: t('themeModeLight'), icon: 'sun' },
+    { value: 'dark', label: t('themeModeDark'), icon: 'moon' }
+  ]
+  const colorStyles: Array<{ value: ColorStyle; label: string }> = [
+    { value: 'vivid', label: t('colorStyle_vivid') },
+    { value: 'tinted', label: t('colorStyle_tinted') },
+    { value: 'soft', label: t('colorStyle_soft') },
+    { value: 'monochrome', label: t('colorStyle_monochrome') }
+  ]
+
+  const isDefaultColors =
+    settings.primaryColor === defaultPrimaryColor &&
+    settings.colorStyle === 'vivid' &&
+    settings.primaryColors.length === defaultPrimaryColors.length &&
+    settings.primaryColors.every((color, idx) => color === defaultPrimaryColors[idx])
+
+  const swatchCheckInk = (hex: string) => (rgbToTone(hexToRgb(hex)) <= 60 ? '#ffffff' : '#141418')
+
+  const handleResetColors = () => {
+    sessionAddedRef.current = null
+    onUpdate({
+      primaryColor: defaultPrimaryColor,
+      primaryColors: [...defaultPrimaryColors],
+      colorStyle: 'vivid'
+    })
+  }
+
+  const handleRemoveColor = (color: string) => {
+    const nextColors = settings.primaryColors.filter((item) => item !== color)
+    let nextPrimary = settings.primaryColor
+    if (nextPrimary === color) {
+      nextPrimary = nextColors.includes(defaultPrimaryColor) ? defaultPrimaryColor : (nextColors[0] ?? null)
+    }
+    onUpdate({ primaryColors: nextColors, primaryColor: nextPrimary })
+  }
+
+  const handlePickCustomColor = (rawValue: string) => {
+    const hex = normalizeHexColor(rawValue)
+    if (!hex) return
+    const prevAdded = sessionAddedRef.current
+    const withoutSession = prevAdded ? settings.primaryColors.filter((c) => c !== prevAdded) : settings.primaryColors
+    const alreadyExists = withoutSession.includes(hex)
+    const nextColors = alreadyExists ? withoutSession : [...withoutSession, hex]
+    sessionAddedRef.current = alreadyExists ? null : hex
+    onUpdate({ primaryColors: nextColors, primaryColor: hex })
+  }
+
+  const pickerValue = normalizeHexColor(settings.primaryColor) ?? normalizeHexColor(systemAccent) ?? defaultPrimaryColor
+
+  return (
+    <SettingSection title={t('appearanceThemeGroup')} className="theme-appearance-section">
+      <div className="theme-appearance-stack">
+        <SettingRow title={t('themeMode')}>
+          <div className="theme-segmented" role="group" aria-label={t('themeMode')}>
+            {themeModes.map((item) => {
+              const active = settings.theme === item.value
+              return (
+                <button
+                  key={item.value}
+                  type="button"
+                  className={active ? 'theme-segmented-btn active' : 'theme-segmented-btn'}
+                  aria-pressed={active}
+                  onClick={() => onUpdate({ theme: item.value })}>
+                  <Icon name={item.icon} size={13} />
+                  <span>{item.label}</span>
+                </button>
+              )
+            })}
+          </div>
+        </SettingRow>
+
+        <SettingRow title={t('pureBlack')} description={t('pureBlackDesc')}>
+          <Toggle
+            checked={settings.pureBlack}
+            label={t('pureBlack')}
+            onChange={(pureBlack) => onUpdate({ pureBlack })}
+          />
+        </SettingRow>
+
+        <div className="theme-color-block">
+          <div className="theme-color-header">
+            <span className="setting-title">{t('primaryColor')}</span>
+            {!isDefaultColors && (
+              <button type="button" className="theme-reset-btn" onClick={handleResetColors}>
+                <Icon name="refresh-cw" size={11} />
+                <span>{t('resetThemeColors')}</span>
+              </button>
+            )}
+          </div>
+
+          <div className="theme-swatches-box" role="radiogroup" aria-label={t('primaryColor')}>
+            <div className="theme-swatch-item">
+              <button
+                type="button"
+                role="radio"
+                aria-checked={settings.primaryColor === null}
+                aria-label={`${t('followSystemColor')} (${systemAccent})`}
+                title={`${t('followSystemColor')} (${systemAccent})`}
+                className={settings.primaryColor === null ? 'theme-swatch-btn active' : 'theme-swatch-btn'}
+                onClick={() => onUpdate({ primaryColor: null })}>
+                <span className="theme-swatch-dot" style={{ background: systemAccent }}>
+                  {settings.primaryColor === null && (
+                    <span style={{ color: swatchCheckInk(systemAccent), display: 'inline-flex' }}>
+                      <Icon name="check" size={14} />
+                    </span>
+                  )}
+                </span>
+              </button>
+              <span className="theme-swatch-system-badge" aria-hidden="true">
+                <Icon name="laptop" size={9} />
+              </span>
+            </div>
+
+            <span className="theme-swatch-divider" aria-hidden="true" />
+
+            {settings.primaryColors.map((color) => {
+              const selected = settings.primaryColor === color
+              return (
+                <div className="theme-swatch-item" key={color}>
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={selected}
+                    aria-label={color}
+                    title={color}
+                    className={selected ? 'theme-swatch-btn active' : 'theme-swatch-btn'}
+                    onClick={() => onUpdate({ primaryColor: color })}>
+                    <span className="theme-swatch-dot" style={{ background: color }}>
+                      {selected && (
+                        <span style={{ color: swatchCheckInk(color), display: 'inline-flex' }}>
+                          <Icon name="check" size={14} />
+                        </span>
+                      )}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className="theme-swatch-remove"
+                    aria-label={`${t('removeColor')} ${color}`}
+                    title={t('removeColor')}
+                    onClick={() => handleRemoveColor(color)}>
+                    <Icon name="x" size={9} />
+                  </button>
+                </div>
+              )
+            })}
+
+            <label className="theme-swatch-add" title={t('addCustomColor')} aria-label={t('addCustomColor')}>
+              <Icon name="plus" size={14} />
+              <input
+                type="color"
+                className="theme-swatch-picker-input"
+                aria-label={t('addCustomColor')}
+                value={pickerValue}
+                onFocus={() => {
+                  sessionAddedRef.current = null
+                }}
+                onChange={(event) => handlePickCustomColor(event.target.value)}
+                onBlur={() => {
+                  sessionAddedRef.current = null
+                }}
+              />
+            </label>
+          </div>
+        </div>
+
+        <SettingRow title={t('colorStyle')}>
+          <div className="theme-segmented" role="group" aria-label={t('colorStyle')}>
+            {colorStyles.map((item) => {
+              const active = settings.colorStyle === item.value
+              return (
+                <button
+                  key={item.value}
+                  type="button"
+                  className={
+                    active
+                      ? 'theme-segmented-btn theme-style-btn active'
+                      : 'theme-segmented-btn theme-style-btn'
+                  }
+                  aria-pressed={active}
+                  onClick={() => onUpdate({ colorStyle: item.value })}>
+                  <span>{item.label}</span>
+                </button>
+              )
+            })}
+          </div>
+        </SettingRow>
+      </div>
+    </SettingSection>
+  )
+}
+
 function SettingsApp() {
   const { settings, loaded, update } = useSettings()
   const [accessibilityTrusted, setAccessibilityTrusted] = React.useState(true)
@@ -689,7 +896,7 @@ function SettingsApp() {
   const [ocrEngine, setOcrEngine] = React.useState<OcrEngineStatusPayload | null>(null)
   const [ocrEngineError, setOcrEngineError] = React.useState<string | null>(null)
   const t = getTranslator(settings.language)
-  useThemeMode(settings.theme)
+  useThemeMode(settings)
   useAppearance(settings)
 
   React.useEffect(() => {
@@ -926,20 +1133,6 @@ function SettingsApp() {
   ]
   const defaultActionById = new Map(defaultActions.map((action) => [action.id, action]))
   const filterText = settings.filterList.join('\n')
-  const cycleTheme = () => {
-    const nextTheme: Record<ThemeMode, ThemeMode> = {
-      system: 'light',
-      light: 'dark',
-      dark: 'system'
-    }
-    void update({ theme: nextTheme[settings.theme] })
-  }
-
-  const themeIconName: Record<ThemeMode, string> = {
-    system: 'laptop',
-    light: 'sun',
-    dark: 'moon'
-  }
 
   const renderSection = () => {
     if (activeSection === 'api') {
@@ -1563,6 +1756,8 @@ function SettingsApp() {
     if (activeSection === 'window') {
       return (
         <div className="settings-stack">
+          <ThemeAppearanceSection settings={settings} onUpdate={(patch) => void update(patch)} t={t} />
+
           <SettingSection title={t('actionWindowTitle')} className="window-behavior-section">
             <SettingRow title={t('followToolbar')}>
               <Toggle checked={settings.followToolbar} label={t('followToolbar')} onChange={(followToolbar) => update({ followToolbar })} />
@@ -1632,16 +1827,6 @@ function SettingsApp() {
                   EN
                 </button>
               </div>
-            </SettingRow>
-            <SettingRow title={t('theme')}>
-              <button
-                type="button"
-                className="theme-toggle"
-                title={t(`theme_${settings.theme}`)}
-                aria-label={t(`theme_${settings.theme}`)}
-                onClick={cycleTheme}>
-                <Icon name={themeIconName[settings.theme]} size={14} />
-              </button>
             </SettingRow>
             <SettingRow title={t('autoLaunch')}>
               <Toggle checked={settings.autoLaunch} label={t('autoLaunch')} onChange={(autoLaunch) => update({ autoLaunch })} />

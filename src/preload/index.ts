@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { IPC } from '@shared/ipc'
+import { deriveThemeCssVars, type ResolvedThemeMode, type ThemePaletteInput } from '@shared/theme'
 import type {
   ActionPayload,
   AiChunkPayload,
@@ -187,7 +188,20 @@ const api = {
       ipcRenderer.invoke(IPC.WindowAdjustHeight, contentHeight)
   },
   app: {
-    openExternal: (url: string): Promise<void> => ipcRenderer.invoke(IPC.OpenExternal, url)
+    openExternal: (url: string): Promise<void> => ipcRenderer.invoke(IPC.OpenExternal, url),
+    getSystemAccentColor: (): Promise<string> => ipcRenderer.invoke(IPC.AppSystemAccentGet),
+    onSystemAccentColorChanged: (callback: (color: string) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, color: string) => callback(color)
+      ipcRenderer.on(IPC.AppSystemAccentChanged, listener)
+      return () => {
+        ipcRenderer.off(IPC.AppSystemAccentChanged, listener)
+      }
+    },
+    resolveThemeVars: (
+      input: ThemePaletteInput,
+      resolvedMode: ResolvedThemeMode,
+      systemAccentColor?: string
+    ): Record<string, string> => deriveThemeCssVars(input, resolvedMode, systemAccentColor)
   },
   screenshot: {
     start: (): Promise<void> => ipcRenderer.invoke(IPC.ScreenshotStart),

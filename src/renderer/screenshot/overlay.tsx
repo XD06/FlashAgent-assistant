@@ -194,7 +194,7 @@ type Drag =
 
 function OverlayApp(): React.JSX.Element | null {
   const { settings } = useSettings()
-  useThemeMode(settings.theme)
+  useThemeMode(settings)
   const isZh = settings.language === 'zh-CN'
   const labels = {
     cancel: isZh ? '取消' : 'Cancel',

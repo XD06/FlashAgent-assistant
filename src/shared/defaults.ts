@@ -83,9 +83,26 @@ export const defaultProviderTemplate: ProviderTemplate = {
   }
 }
 
+export const defaultPrimaryColor = '#007aff'
+
+export const defaultPrimaryColors: string[] = [
+  defaultPrimaryColor,
+  '#cb30e0',
+  '#ff2d55',
+  '#ff383c',
+  '#ff8d28',
+  '#ffcc00',
+  '#34c759',
+  '#8e8e93'
+]
+
 export const defaultSettings: AppSettings = {
   language: 'zh-CN',
   theme: 'system',
+  pureBlack: false,
+  primaryColor: defaultPrimaryColor,
+  primaryColors: [...defaultPrimaryColors],
+  colorStyle: 'vivid',
   enabled: false,
   triggerMode: 'selected',
   compactToolbar: false,

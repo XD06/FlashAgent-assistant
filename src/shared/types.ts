@@ -10,6 +10,7 @@ export type AppLanguage = 'zh-CN' | 'en'
  * high-accuracy PP-OCR engine. */
 export type OcrEngineId = 'system' | 'paddle'
 export type ThemeMode = 'system' | 'light' | 'dark'
+export type ColorStyle = 'vivid' | 'tinted' | 'soft' | 'monochrome'
 export type ProviderApiType = 'openai' | 'anthropic'
 /** 'on' lets the model use its default; other values request explicit reasoning control. */
 export type ReasoningMode = 'on' | 'off' | 'low' | 'medium' | 'high'
@@ -140,6 +141,12 @@ export interface ActionItem {
 export interface AppSettings {
   language: AppLanguage
   theme: ThemeMode
+  pureBlack: boolean
+  /** Hex '#rrggbb' seed color for theme palette, or null to follow the OS accent color. */
+  primaryColor: string | null
+  /** User swatch list ('#rrggbb' hex strings) shown in theme appearance settings. */
+  primaryColors: string[]
+  colorStyle: ColorStyle
   enabled: boolean
   triggerMode: TriggerMode
   compactToolbar: boolean
