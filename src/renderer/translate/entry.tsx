@@ -6,6 +6,7 @@ import { useThemeMode } from '../useThemeMode'
 import { useAppearance } from '../useAppearance'
 import { getTranslator } from '../i18n'
 import { Icon } from '../icons'
+import { StatusChip, WavyProgress } from '../ui'
 import {
   TRANSLATE_LANGUAGES,
   detectLanguageHeuristic,
@@ -248,12 +249,28 @@ function ServiceCard({
       <div className="tr-card__head">
         <span className="tr-card__name">{serviceDisplayName(serviceId, t)}</span>
         {card.elapsedMs != null && card.status === 'done' && (
-          <span className="tr-card__time">
-            <Icon name="clock" size={12} />
+          <StatusChip
+            className="tr-card__time"
+            tone={card.elapsedMs < 600 ? 'ok' : 'warn'}
+            icon="clock">
             {formatElapsed(card.elapsedMs)}
-          </span>
+          </StatusChip>
         )}
-        {card.status === 'loading' && <span className="tr-card__spinner" aria-label={t('loading')} />}
+        {card.status === 'error' && (
+          <StatusChip className="tr-card__time" tone="err" dot>
+            {t('trFailed')}
+          </StatusChip>
+        )}
+        {card.status === 'loading' && (
+          <WavyProgress
+            className="tr-card__wave"
+            value={null}
+            width={48}
+            height={10}
+            tone="accent"
+            ariaLabel={t('loading')}
+          />
+        )}
       </div>
       <div className="tr-card__body">
         {isDict ? (
