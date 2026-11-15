@@ -68,10 +68,10 @@
   --toolbar-shadow-padding-total: 32px;
   --action-shadow-padding: 0px;
   --action-shadow-padding-total: 0px;
-  --toolbar-bg: #f8f9fb;
+  --toolbar-bg: var(--surface-card);
   --toolbar-text: var(--text);
-  --toolbar-border: rgba(17, 19, 24, 0.10);
-  --toolbar-hover: rgba(17, 19, 24, 0.055);
+  --toolbar-border: var(--divider-hairline);
+  --toolbar-hover: rgba(17, 19, 24, 0.048);
   font-family: var(
     --app-font,
     ui-sans-serif,
@@ -144,10 +144,10 @@ html[data-theme='dark'] {
   --toolbar-floating-shadow:
     0 2px 6px rgba(0, 0, 0, 0.28),
     0 10px 20px rgba(0, 0, 0, 0.40);
-  --toolbar-bg: #1e1e23;
+  --toolbar-bg: var(--surface-card);
   --toolbar-text: var(--text);
-  --toolbar-border: rgba(255, 255, 255, 0.11);
-  --toolbar-hover: rgba(255, 255, 255, 0.07);
+  --toolbar-border: rgba(255, 255, 255, 0.10);
+  --toolbar-hover: rgba(255, 255, 255, 0.065);
 }
 
 * {
@@ -2679,15 +2679,15 @@ html[data-theme='dark'] .inline-icon-button:hover {
   display: inline-flex;
   align-items: center;
   gap: 2px;
-  padding: 3px;
+  padding: 4px;
   margin: var(--toolbar-shadow-padding);
-  border: 1px solid var(--floating-border);
+  border: 0;
   border-radius: 14px;
   background: var(--toolbar-bg);
   box-shadow:
-    var(--toolbar-floating-shadow),
+    var(--shadow-float),
     inset 0 1px 0 var(--floating-edge),
-    inset 0 0 0 1px var(--toolbar-border);
+    inset 0 0 0 1px var(--divider-hairline);
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
@@ -2707,14 +2707,21 @@ html[data-theme='dark'] .inline-icon-button:hover {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  padding: 0 8px;
+  padding: 0 9px;
   border: 0;
   border-radius: 10px;
   background: transparent;
   color: var(--toolbar-text);
   white-space: nowrap;
   font-size: 13px;
+  font-weight: 500;
   line-height: 1;
+  transition: background 120ms ease, transform 100ms ease, box-shadow 120ms ease;
+}
+
+.toolbar-button:not(:has(span)) {
+  width: 28px;
+  padding: 0;
 }
 
 .toolbar-button svg {
@@ -2727,9 +2734,18 @@ html[data-theme='dark'] .inline-icon-button:hover {
   background: var(--toolbar-hover);
 }
 
+.toolbar-button:active {
+  transform: scale(0.95);
+}
+
+.toolbar-button:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 62%, transparent);
+}
+
 html[data-theme='dark'] .toolbar-root {
   box-shadow:
-    var(--toolbar-floating-shadow),
+    var(--shadow-float),
     inset 0 1px 0 var(--floating-edge),
     inset 0 0 0 1px var(--toolbar-border);
 }
