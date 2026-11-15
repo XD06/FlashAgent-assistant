@@ -1039,6 +1039,18 @@ function SettingsApp() {
     }
   }, [refreshOcrEngine])
 
+  const toggleSidebarCollapsed = React.useCallback(() => {
+    setSidebarCollapsed((prev) => {
+      const next = !prev
+      try {
+        localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, String(next))
+      } catch {
+        // Ignore storage errors (private mode / quota).
+      }
+      return next
+    })
+  }, [])
+
   const downloadOcrEnginePack = async () => {
     setOcrEngineError(null)
     try {
@@ -2012,18 +2024,6 @@ function SettingsApp() {
       </div>
     )
   }
-
-  const toggleSidebarCollapsed = React.useCallback(() => {
-    setSidebarCollapsed((prev) => {
-      const next = !prev
-      try {
-        localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, String(next))
-      } catch {
-        // Ignore storage errors (private mode / quota).
-      }
-      return next
-    })
-  }, [])
 
   return (
     <main className="page settings-page">
