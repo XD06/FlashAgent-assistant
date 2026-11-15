@@ -274,7 +274,7 @@ label {
   padding: 14px;
 }
 
-.settings-page {
+.page.settings-page {
   --settings-bg: var(--surface-page);
   --settings-surface: var(--surface-card);
   --settings-block: var(--surface-block);
@@ -294,7 +294,51 @@ label {
   height: 100vh;
   min-height: 0;
   overflow: hidden;
-  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  padding: 0 12px 12px;
+}
+
+.settings-titlebar {
+  flex: 0 0 auto;
+  height: 34px;
+  margin: 0 -12px;
+  padding: 0 144px 0 12px;
+  display: flex;
+  align-items: center;
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+.settings-titlebar--mac {
+  padding: 0 20px 0 78px;
+}
+
+.settings-titlebar-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  pointer-events: none;
+}
+
+.settings-titlebar-icon {
+  flex: 0 0 auto;
+  display: block;
+  width: 20px;
+  height: 20px;
+}
+
+.settings-titlebar-title {
+  color: color-mix(in srgb, var(--settings-text) 84%, var(--settings-muted));
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.4;
+  padding-block: 1px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 html[data-theme='dark'] .settings-page {
@@ -315,8 +359,9 @@ html[data-theme='dark'] .settings-page {
 
 .settings-shell {
   /* Center the bounded navigation-and-content workspace within the window. */
+  width: 100%;
   max-width: 840px;
-  height: 100%;
+  flex: 1 1 auto;
   margin: 0 auto;
   display: flex;
   flex-direction: column;
@@ -387,6 +432,11 @@ html[data-theme='dark'] .settings-page {
   border-radius: 0;
   background: transparent;
   box-shadow: none;
+  -webkit-app-region: drag;
+}
+
+.settings-sidebar button {
+  -webkit-app-region: no-drag;
 }
 
 
@@ -2760,6 +2810,10 @@ html[data-theme='dark'] .footer button:last-child {
 @media (max-width: 560px) {
   .page {
     padding: 14px;
+  }
+
+  .page.settings-page {
+    padding: 0 12px 12px;
   }
 
   .settings-layout {

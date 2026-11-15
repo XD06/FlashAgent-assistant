@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, Tray, dialog, globalShortcut, ipcMain, nativeImage, net, screen, shell, systemPreferences } from 'electron'
+import { app, BrowserWindow, Menu, Tray, dialog, globalShortcut, ipcMain, nativeImage, nativeTheme, net, screen, shell, systemPreferences } from 'electron'
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
@@ -6,7 +6,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { buildAssistantSystemPrompt, resolveProvider } from '@shared/actions'
 import { defaultPrimaryColor } from '@shared/defaults'
-import { normalizeSystemAccentColor } from '@shared/theme'
+import { deriveThemeCssVars, normalizeSystemAccentColor, type ResolvedThemeMode } from '@shared/theme'
 import { IPC } from '@shared/ipc'
 import { APP_ICON_DATA_URL, APP_TRAY_DATA_URL } from '@shared/brand'
 import type { AgentToolEvent, AiStreamRequest, SettingsPatch } from '@shared/types'
@@ -314,16 +314,56 @@ function cancelChatIdleDestroy(): void {
   }
 }
 
+const SETTINGS_TITLEBAR_HEIGHT = 34
+
+function resolveSettingsTitlebarColors(): { surfacePage: string; symbolColor: string } {
+  const settings = getSettings()
+  const resolvedMode: ResolvedThemeMode =
+    settings.theme === 'light' || settings.theme === 'dark'
+      ? settings.theme
+      : nativeTheme.shouldUseDarkColors
+        ? 'dark'
+        : 'light'
+  const vars = deriveThemeCssVars(
+    {
+      pureBlack: settings.pureBlack,
+      primaryColor: settings.primaryColor,
+      colorStyle: settings.colorStyle
+    },
+    resolvedMode,
+    readSystemAccentColor()
+  )
+  return {
+    surfacePage: vars['--surface-page'],
+    symbolColor: vars['--text-soft']
+  }
+}
+
+function applySettingsWindowTheme(win: BrowserWindow | null = settingsWindow): void {
+  if (!win || win.isDestroyed()) return
+  const { surfacePage, symbolColor } = resolveSettingsTitlebarColors()
+  win.setBackgroundColor(surfacePage)
+  if (isWin && typeof win.setTitleBarOverlay === 'function') {
+    win.setTitleBarOverlay({
+      color: surfacePage,
+      symbolColor,
+      height: SETTINGS_TITLEBAR_HEIGHT
+    })
+  }
+}
+
 function createSettingsWindow(): BrowserWindow {
   if (settingsWindow && !settingsWindow.isDestroyed()) {
     if (settingsWindow.isMinimized()) settingsWindow.restore()
     app.dock?.show()
+    applySettingsWindowTheme(settingsWindow)
     settingsWindow.show()
     settingsWindow.focus()
     return settingsWindow
   }
   cancelSettingsIdleDestroy()
 
+  const { surfacePage, symbolColor } = resolveSettingsTitlebarColors()
   settingsWindow = new BrowserWindow({
     // Open at the minimum working size — the shell layout is densest there;
     // the user can enlarge up to the max but starts compact.
@@ -334,6 +374,19 @@ function createSettingsWindow(): BrowserWindow {
     icon: appIcon,
     title: 'FlashAgent-assistant',
     autoHideMenuBar: true,
+    backgroundColor: surfacePage,
+    titleBarStyle: 'hidden',
+    ...(isWin
+      ? {
+          titleBarOverlay: {
+            color: surfacePage,
+            symbolColor,
+            height: SETTINGS_TITLEBAR_HEIGHT
+          }
+        }
+      : {
+          trafficLightPosition: { x: 14, y: 11 }
+        }),
     webPreferences: {
       preload: preloadPath,
       contextIsolation: true,
@@ -1531,14 +1584,20 @@ if (!app.requestSingleInstanceLock()) {
     applyAutoLaunch(getSettings().autoLaunch)
 
     onSettingsChanged((settings) => {
+      applySettingsWindowTheme()
       for (const win of BrowserWindow.getAllWindows()) {
         if (!win.isDestroyed()) win.webContents.send(IPC.SettingsChanged, settings)
       }
       refreshTrayMenu()
     })
 
+    nativeTheme.on('updated', () => {
+      applySettingsWindowTheme()
+    })
+
     if (isWin) {
       systemPreferences.on('accent-color-changed', () => {
+        applySettingsWindowTheme()
         const accent = readSystemAccentColor()
         for (const win of BrowserWindow.getAllWindows()) {
           if (!win.isDestroyed()) win.webContents.send(IPC.AppSystemAccentChanged, accent)

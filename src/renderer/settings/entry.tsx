@@ -36,6 +36,51 @@ type SettingsSectionId = 'api' | 'actions' | 'selection' | 'shortcuts' | 'transl
 
 // The system OCR engine wraps Windows.Media.Ocr; it cannot exist elsewhere.
 const isWindows = navigator.platform.toLowerCase().includes('win')
+const isMac = navigator.userAgent.includes('Mac OS X')
+
+// Inline vector micro-variant avoids bitmap downscale softening on fractional Windows DPI.
+function TitlebarBrandMark() {
+  return (
+    <svg className="settings-titlebar-icon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+      <rect
+        x="0.45"
+        y="0.45"
+        width="23.1"
+        height="23.1"
+        rx="6.2"
+        fill="#FFFFFF"
+        stroke="rgba(17,19,24,0.08)"
+        strokeWidth="0.3"
+      />
+      <defs>
+        <mask id="settings-titlebar-orbit-mask">
+          <rect width="24" height="24" fill="#fff" />
+          <g transform="translate(12 11.95) scale(1.22) translate(-11.86 -11.58)">
+            <path
+              d="M 3.75 15.94 C 6.75 18.94 17.72 12.56 19.50 6.94"
+              fill="none"
+              stroke="#000"
+              strokeWidth="3.09"
+              strokeLinecap="round"
+            />
+          </g>
+        </mask>
+      </defs>
+      <g transform="translate(12 11.95) scale(1.22) translate(-11.86 -11.58)">
+        <g mask="url(#settings-titlebar-orbit-mask)">
+          <path
+            d="M 11.81 3.84 Q 13.03 10.31 19.50 11.53 Q 13.03 12.75 11.81 20.06 Q 10.59 12.75 4.12 11.53 Q 10.59 10.31 11.81 3.84 Z"
+            fill="#111318"
+          />
+        </g>
+        <path
+          d="M 3.84 15.75 C 5.53 18.47 9.75 17.53 14.44 14.16 C 18.28 11.44 20.34 8.25 19.50 6.19 C 18.66 5.16 16.59 5.81 14.62 6.94 C 16.22 6.47 17.44 6.75 17.62 7.50 C 18.09 8.91 15.84 11.44 12.84 13.50 C 8.91 16.12 5.62 16.97 3.84 15.75 Z"
+          fill="#111318"
+        />
+      </g>
+    </svg>
+  )
+}
 
 type SettingsSectionMeta = {
   id: SettingsSectionId
@@ -401,7 +446,7 @@ function ActionEditor({
       {expanded && (
         <div className="prompt-template-editor">
           <div className="action-meta">
-            <label className="field action-name-field">
+            <label className="action-name-field">
               <span>{t('actionName')}</span>
               <SettingInput
                 value={action.name}
@@ -1407,7 +1452,11 @@ function SettingsApp() {
                   placeholder="http://127.0.0.1:7890"
                   onChange={(proxyUrl) => update({ proxyUrl: proxyUrl.trim() })}
                 />
-                <button type="button" className="proxy-field__test" onClick={() => void testProxyNow()} disabled={proxyTesting}>
+                <button
+                  type="button"
+                  className="proxy-field__test"
+                  onClick={() => void testProxyNow()}
+                  disabled={proxyTesting}>
                   {proxyTesting ? t('proxyTestLoading') : t('proxyTest')}
                 </button>
               </div>
@@ -1911,6 +1960,12 @@ function SettingsApp() {
 
   return (
     <main className="page settings-page">
+      <header className={isMac ? 'settings-titlebar settings-titlebar--mac' : 'settings-titlebar'}>
+        <div className="settings-titlebar-brand">
+          <TitlebarBrandMark />
+          <span className="settings-titlebar-title">FlashAgent-assistant</span>
+        </div>
+      </header>
       <div className="settings-shell">
         {!accessibilityTrusted && (
           <section className="accessibility-panel">
