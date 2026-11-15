@@ -26,6 +26,7 @@ import { applyProxy, getEffectiveProxyUrl, testProxy } from './proxy'
 import { assessMcpRisk, isMcpToolName } from './mcp/mcpUtil'
 
 import { loadTopicsFromDisk, saveTopicsToDisk } from './chatTopicsStore'
+import { APP_ICON_PNG_BASE64, TRAY_ICON_PNG_BASE64 } from './iconTiers'
 import { autoRepairRecapDoc, stripDocJunk, validateRecapDoc } from '@shared/recapDoc'
 import { ScreenshotService } from './ScreenshotService'
 import { cleanupCaptureTemp } from './capture'
@@ -105,7 +106,37 @@ const packagedIconPaths = [
 ]
 const devIconPaths = [join(__dirname, '../../build/icon.png'), join(process.cwd(), 'build', 'icon.png')]
 
-const appIcon = createNativeImageFromFile(app.isPackaged ? packagedIconPaths : devIconPaths, APP_ICON_DATA_URL)
+function buildMultiResImage(entries: Array<{ scale: number; size: number }>, source: Record<number, string>): Electron.NativeImage {
+  const ni = nativeImage.createEmpty()
+  for (const { scale, size } of entries) {
+    const b64 = source[size]
+    if (!b64) continue
+    ni.addRepresentation({
+      scaleFactor: scale,
+      width: size,
+      height: size,
+      buffer: Buffer.from(b64, 'base64')
+    })
+  }
+  return ni
+}
+
+function createTieredAppIcon(): Electron.NativeImage {
+  if (isWin) {
+    const tiered = buildMultiResImage(
+      [
+        { scale: 1.0, size: 64 },
+        { scale: 2.0, size: 128 },
+        { scale: 4.0, size: 256 }
+      ],
+      APP_ICON_PNG_BASE64
+    )
+    if (!tiered.isEmpty()) return tiered
+  }
+  return createNativeImageFromFile(app.isPackaged ? packagedIconPaths : devIconPaths, APP_ICON_DATA_URL)
+}
+
+const appIcon = createTieredAppIcon()
 const trayIcon = createNativeImageFromFile(app.isPackaged ? packagedIconPaths : devIconPaths, APP_TRAY_DATA_URL)
 const selectionService = new SelectionService(getSettings, updateSettings, preloadPath, rendererDir, appIcon)
 const screenshotService = new ScreenshotService(
@@ -134,47 +165,51 @@ const screenshotService = new ScreenshotService(
   }
 )
 
-function createTrayNativeImage(base: Electron.NativeImage): Electron.NativeImage {
-  if (base.isEmpty()) return base
-  if (isWin) {
-    const ni = nativeImage.createEmpty()
-    const scales: Array<{ scale: number; size: number }> = [
-      { scale: 1.0, size: 16 },
-      { scale: 1.25, size: 20 },
-      { scale: 1.5, size: 24 },
-      { scale: 1.75, size: 28 },
-      { scale: 2.0, size: 32 },
-      { scale: 2.5, size: 40 },
-      { scale: 3.0, size: 48 }
-    ]
-    for (const { scale, size } of scales) {
-      const resized = base.resize({ width: size, height: size, quality: 'best' })
-      ni.addRepresentation({
-        scaleFactor: scale,
-        width: size,
-        height: size,
-        buffer: resized.toPNG()
-      })
+const WIN_TRAY_SIZES = [16, 18, 20, 24, 28, 32, 36, 40, 48] as const
+
+function pickClosestTraySize(targetPx: number): number {
+  let best: number = WIN_TRAY_SIZES[0]
+  let bestDiff = Math.abs(targetPx - best)
+  for (const candidate of WIN_TRAY_SIZES) {
+    const diff = Math.abs(targetPx - candidate)
+    if (diff < bestDiff) {
+      best = candidate
+      bestDiff = diff
     }
-    return ni
+  }
+  return best
+}
+
+function createTrayNativeImage(base: Electron.NativeImage): Electron.NativeImage {
+  if (isWin) {
+    // Electron Tray converts NativeImage via its 1x bitmap into a single Win32 HICON, so passing a
+    // multi-rep image starting at 16px makes Windows upscale 16->24 at 150% DPI. Build a single-rep
+    // bitmap at exact physical tray metrics instead and refresh via display-metrics-changed.
+    const scale = app.isReady() ? screen.getPrimaryDisplay().scaleFactor || 1 : 1
+    const targetPx = pickClosestTraySize(Math.round(16 * scale))
+    const exactB64 = TRAY_ICON_PNG_BASE64[targetPx]
+    if (exactB64) {
+      const exact = nativeImage.createFromBuffer(Buffer.from(exactB64, 'base64'))
+      if (!exact.isEmpty()) return exact
+    }
   }
   if (process.platform === 'darwin') {
-    const ni = nativeImage.createEmpty()
-    ni.addRepresentation({
-      scaleFactor: 1.0,
-      width: 18,
-      height: 18,
-      buffer: base.resize({ width: 18, height: 18, quality: 'best' }).toPNG()
-    })
-    ni.addRepresentation({
-      scaleFactor: 2.0,
-      width: 36,
-      height: 36,
-      buffer: base.resize({ width: 36, height: 36, quality: 'best' }).toPNG()
-    })
-    return ni
+    const tiered = buildMultiResImage(
+      [
+        { scale: 1.0, size: 18 },
+        { scale: 2.0, size: 36 }
+      ],
+      TRAY_ICON_PNG_BASE64
+    )
+    if (!tiered.isEmpty()) return tiered
   }
-  return base.resize({ width: 18, height: 18, quality: 'best' })
+  const fallbackB64 = TRAY_ICON_PNG_BASE64[24] ?? TRAY_ICON_PNG_BASE64[18]
+  if (fallbackB64) {
+    const single = nativeImage.createFromBuffer(Buffer.from(fallbackB64, 'base64'))
+    if (!single.isEmpty()) return single
+  }
+  if (base.isEmpty()) return base
+  return base.resize({ width: 24, height: 24, quality: 'best' })
 }
 
 let cachedTrayIcon: Electron.NativeImage | null = null
