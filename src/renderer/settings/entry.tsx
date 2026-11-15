@@ -12,6 +12,7 @@ import { getActionLabel, getTranslator } from '../i18n'
 import { SegmentedControl, ShapeBadge, StatusChip, WavyProgress } from '../ui'
 import { ProviderNameInput } from './ProviderNameInput'
 import { SettingInput, SettingTextarea } from './SettingInput'
+import { FontPreviewSlider, ThemeLivePreview, ThemeModeCards } from './AppearanceStudio'
 import type {
   ActionItem,
   AppLanguage,
@@ -788,19 +789,21 @@ function ExchangeLines({ exchange, t }: { exchange: VocabEntry['exchange']; t: (
 
 function ThemeAppearanceSection({
   settings,
+  liveFontSize,
   onUpdate,
   t
 }: {
   settings: AppSettings
+  liveFontSize: number
   onUpdate: (patch: Partial<AppSettings>) => void
   t: (key: string) => string
 }) {
   const systemAccent = useSystemAccentColor()
   const sessionAddedRef = React.useRef<string | null>(null)
-  const themeModes: Array<{ value: ThemeMode; label: string; icon: string }> = [
-    { value: 'system', label: t('themeModeSystem'), icon: 'laptop' },
-    { value: 'light', label: t('themeModeLight'), icon: 'sun' },
-    { value: 'dark', label: t('themeModeDark'), icon: 'moon' }
+  const themeModes: Array<{ value: ThemeMode; label: string }> = [
+    { value: 'system', label: t('themeModeSystem') },
+    { value: 'light', label: t('themeModeLight') },
+    { value: 'dark', label: t('themeModeDark') }
   ]
   const colorStyles: Array<{ value: ColorStyle; label: string }> = [
     { value: 'vivid', label: t('colorStyle_vivid') },
@@ -851,14 +854,23 @@ function ThemeAppearanceSection({
   return (
     <SettingSection title={t('appearanceThemeGroup')} className="theme-appearance-section">
       <div className="theme-appearance-stack">
-        <SettingRow title={t('themeMode')}>
-          <SegmentedControl<ThemeMode>
+        <ThemeLivePreview settings={settings} systemAccent={systemAccent} fontSize={liveFontSize} t={t} />
+
+        <div className="theme-mode-block">
+          <div className="theme-color-header">
+            <span className="setting-title">{t('themeMode')}</span>
+          </div>
+          <ThemeModeCards
             value={settings.theme}
-            ariaLabel={t('themeMode')}
+            pureBlack={settings.pureBlack}
+            primaryColor={settings.primaryColor}
+            colorStyle={settings.colorStyle}
+            systemAccent={systemAccent}
             options={themeModes}
+            ariaLabel={t('themeMode')}
             onChange={(theme) => onUpdate({ theme })}
           />
-        </SettingRow>
+        </div>
 
         <SettingRow title={t('pureBlack')} description={t('pureBlackDesc')}>
           <Toggle
@@ -974,6 +986,7 @@ function SettingsApp() {
   const [accessibilityTrusted, setAccessibilityTrusted] = React.useState(true)
   const [activeSection, setActiveSection] = React.useState<SettingsSectionId>('api')
   const [sidebarCollapsed, setSidebarCollapsed] = React.useState(readInitialSidebarCollapsed)
+  const [draftFontSize, setDraftFontSize] = React.useState<number | null>(null)
   const [modelsByTemplate, setModelsByTemplate] = React.useState<Record<string, string[]>>({})
   const [statusByTemplate, setStatusByTemplate] = React.useState<Record<string, string>>({})
   const [visibleApiKeys, setVisibleApiKeys] = React.useState<Record<string, boolean>>({})
@@ -1880,11 +1893,17 @@ function SettingsApp() {
     }
 
     if (activeSection === 'window') {
+      const liveFontSize = draftFontSize ?? settings.fontSize
       return (
         <div className="settings-stack">
-          <ThemeAppearanceSection settings={settings} onUpdate={(patch) => void update(patch)} t={t} />
+          <ThemeAppearanceSection
+            settings={settings}
+            liveFontSize={liveFontSize}
+            onUpdate={(patch) => void update(patch)}
+            t={t}
+          />
 
-          <SettingSection title={t('appearanceFontGroup')}>
+          <SettingSection title={t('appearanceFontGroup')} className="appearance-font-section">
             <SettingRow title={t('fontFamily')} description={t('fontFamilyDesc')}>
               <SettingInput
                 value={settings.fontFamily}
@@ -1892,9 +1911,14 @@ function SettingsApp() {
                 onChange={(fontFamily) => update({ fontFamily })}
               />
             </SettingRow>
-            <SettingRow title={t('fontSize')}>
-              <NumberField value={settings.fontSize} min={10} max={28} onCommit={(fontSize) => update({ fontSize })} />
-            </SettingRow>
+            <FontPreviewSlider
+              fontFamily={settings.fontFamily}
+              value={settings.fontSize}
+              draftValue={draftFontSize}
+              onDraftChange={setDraftFontSize}
+              onCommit={(fontSize) => void update({ fontSize })}
+              t={t}
+            />
           </SettingSection>
 
           <SettingSection title={t('actionWindowTitle')} className="window-behavior-section">
