@@ -7182,6 +7182,7 @@ html[data-theme='dark'] .tr-lang select {
 .tr-card {
   display: flex;
   flex-direction: column;
+  flex-shrink: 0;
   min-width: 0;
   max-width: 100%;
   overflow: hidden;
