@@ -87,11 +87,15 @@ export function mergeSettings(current: AppSettings, patch: SettingsPatch): AppSe
     actions,
     assistantPrompt: _removedAssistantPrompt,
     actionWindowOpacity: _removedActionWindowOpacity,
-  ...rest
+    showToolbarAppIcon: _removedShowToolbarAppIcon,
+    ...rest
   } = patch as SettingsPatch & {
     assistantPrompt?: unknown
     actionWindowOpacity?: unknown
+    showToolbarAppIcon?: unknown
   }
+  const cleanCurrent = { ...current } as AppSettings & { showToolbarAppIcon?: unknown }
+  delete cleanCurrent.showToolbarAppIcon
   let nextProviderTemplates = normalizeProviderTemplates(providerTemplates ?? current.providerTemplates, current.provider)
   const nextActiveProviderTemplateId = normalizeActiveProviderTemplateId(
     activeProviderTemplateId ?? current.activeProviderTemplateId,
@@ -115,7 +119,7 @@ export function mergeSettings(current: AppSettings, patch: SettingsPatch): AppSe
   const nextPrimaryColorInput =
     'primaryColor' in rest && rest.primaryColor !== undefined ? rest.primaryColor : current.primaryColor
   return {
-    ...current,
+    ...cleanCurrent,
     ...rest,
     theme: normalizeThemeMode(rest.theme ?? current.theme),
     pureBlack: typeof (rest.pureBlack ?? current.pureBlack) === 'boolean' ? Boolean(rest.pureBlack ?? current.pureBlack) : false,
@@ -313,11 +317,14 @@ function normalizeActionItems(actions: unknown): ActionItem[] {
     let id = typeof candidate.id === 'string' && candidate.id.trim() ? candidate.id : `action-${result.length + 1}`
     while (seen.has(id)) id = `${id}-${result.length + 1}`
     seen.add(id)
+    const rawIcon = typeof candidate.icon === 'string' && candidate.icon.trim() ? candidate.icon : 'sparkles'
+    // Built-in 'summarize' migrated from the old OCR scan-frame icon to the dedicated summary glyph.
+    const icon = id === 'summarize' && rawIcon === 'scan-text' ? 'summarize' : rawIcon
     result.push({
       id,
       name: typeof candidate.name === 'string' ? candidate.name : '',
       enabled: candidate.enabled !== false,
-      icon: typeof candidate.icon === 'string' && candidate.icon.trim() ? candidate.icon : 'sparkles',
+      icon,
       type,
       promptTemplate: normalizeOptionalString(candidate.promptTemplate),
       searchUrlTemplate: normalizeOptionalString(candidate.searchUrlTemplate),

@@ -1,8 +1,9 @@
-import React from 'react'
+import React, { useId } from 'react'
 
 type IconProps = {
   size?: number
   strokeWidth?: number
+  filled?: boolean
 }
 
 function baseProps(size: number) {
@@ -17,12 +18,49 @@ function baseProps(size: number) {
   }
 }
 
-function CircleHelp({ size = 16, strokeWidth = 2 }: IconProps) {
+/** FlClash-inspired filled glyph helper: paints solid `body` shapes clipped by a negative-space `details` mask. */
+function FilledCutoutSvg({
+  size,
+  strokeWidth,
+  body,
+  details
+}: {
+  size: number
+  strokeWidth: number
+  body: React.ReactNode
+  details: React.ReactNode
+}) {
+  const maskId = useId()
   return (
     <svg {...baseProps(size)} strokeWidth={strokeWidth}>
-      <circle cx="12" cy="12" r="9" />
-      <path d="M9.5 9.25a2.7 2.7 0 0 1 5 1.4c0 1.7-1.9 2.45-2.5 3.35" />
-      <circle cx="12" cy="16.9" r="0.6" fill="currentColor" stroke="none" />
+      <defs>
+        <mask id={maskId}>
+          <rect width="24" height="24" fill="white" />
+          <g stroke="black" fill="none" strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round">
+            {details}
+          </g>
+        </mask>
+      </defs>
+      <g mask={`url(#${maskId})`} fill="currentColor" stroke="currentColor" strokeWidth={0.9}>
+        {body}
+      </g>
+    </svg>
+  )
+}
+
+function CircleHelp({ size = 16, strokeWidth = 1.8, filled = false }: IconProps) {
+  const body = <circle cx="12" cy="12" r="8.8" />
+  const details = (
+    <>
+      <path d="M9.6 9.3a2.6 2.6 0 0 1 4.9 1.2c0 1.6-1.8 2.2-2.5 3.1" />
+      <circle cx="12" cy="16.6" r="1.05" fill={filled ? 'black' : 'currentColor'} stroke="none" />
+    </>
+  )
+  if (filled) return <FilledCutoutSvg size={size} strokeWidth={strokeWidth} body={body} details={details} />
+  return (
+    <svg {...baseProps(size)} strokeWidth={strokeWidth}>
+      {body}
+      {details}
     </svg>
   )
 }
@@ -45,14 +83,44 @@ function LinkIcon({ size = 16, strokeWidth = 2 }: IconProps) {
   )
 }
 
-function FileText({ size = 16, strokeWidth = 2 }: IconProps) {
+function FileText({ size = 16, strokeWidth = 1.8, filled = false }: IconProps) {
+  const body = <path d="M14.2 3H6.8A2.3 2.3 0 0 0 4.5 5.3v13.4A2.3 2.3 0 0 0 6.8 21h10.4a2.3 2.3 0 0 0 2.3-2.3V8.3Z" />
+  const details = (
+    <>
+      <path d="M14 3.2v4.3a1 1 0 0 0 1 1h4.3" />
+      <path d="M8.5 13h7" />
+      <path d="M8.5 16.5h4.5" />
+    </>
+  )
+  if (filled) return <FilledCutoutSvg size={size} strokeWidth={strokeWidth} body={body} details={details} />
   return (
     <svg {...baseProps(size)} strokeWidth={strokeWidth}>
-      <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
-      <path d="M14 2v4a2 2 0 0 0 2 2h4" />
-      <path d="M10 9H8" />
-      <path d="M16 13H8" />
-      <path d="M16 17H8" />
+      {body}
+      {details}
+    </svg>
+  )
+}
+
+function Summarize({ size = 16, strokeWidth = 1.8, filled = false }: IconProps) {
+  // FlClash AppGlyphs.rules-inspired bullet summary card: rounded superellipse
+  // frame containing 3 concise takeaway bullets.
+  const body = <rect x="3.5" y="4" width="17" height="16" rx="3.2" />
+  const dotFill = filled ? 'black' : 'currentColor'
+  const details = (
+    <>
+      <circle cx="7.6" cy="8.4" r="1.05" fill={dotFill} stroke="none" />
+      <path d="M10.7 8.4h5.8" />
+      <circle cx="7.6" cy="12" r="1.05" fill={dotFill} stroke="none" />
+      <path d="M10.7 12h5.8" />
+      <circle cx="7.6" cy="15.6" r="1.05" fill={dotFill} stroke="none" />
+      <path d="M10.7 15.6h3.8" />
+    </>
+  )
+  if (filled) return <FilledCutoutSvg size={size} strokeWidth={strokeWidth} body={body} details={details} />
+  return (
+    <svg {...baseProps(size)} strokeWidth={strokeWidth}>
+      {body}
+      {details}
     </svg>
   )
 }
@@ -89,16 +157,16 @@ function ChevronRight({ size = 16, strokeWidth = 2 }: IconProps) {
   )
 }
 
-function CopyIcon({ size = 16, strokeWidth = 2 }: IconProps) {
+function CopyIcon({ size = 16, strokeWidth = 1.8, filled = false }: IconProps) {
   return (
     <svg {...baseProps(size)} strokeWidth={strokeWidth}>
-      <rect x="9" y="9" width="10" height="10" rx="2" />
-      <path d="M7 15H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v1" />
+      <rect x="8.5" y="8" width="11.5" height="12.5" rx="2.6" fill={filled ? 'currentColor' : 'none'} />
+      <path d="M6.5 16H6a2.2 2.2 0 0 1-2.2-2.2V6A2.2 2.2 0 0 1 6 3.8h7.8A2.2 2.2 0 0 1 16 6v.4" />
     </svg>
   )
 }
 
-function FlaskConical({ size = 16, strokeWidth = 2 }: IconProps) {
+function FlaskConical({ size = 16, strokeWidth = 1.8 }: IconProps) {
   return (
     <svg {...baseProps(size)} strokeWidth={strokeWidth}>
       <path d="M10 3h4" />
@@ -108,15 +176,15 @@ function FlaskConical({ size = 16, strokeWidth = 2 }: IconProps) {
   )
 }
 
-function Languages({ size = 16, strokeWidth = 2 }: IconProps) {
+function Languages({ size = 16, strokeWidth = 1.8, filled = false }: IconProps) {
   return (
-    <svg {...baseProps(size)} strokeWidth={strokeWidth}>
-      <path d="M4 6h7" />
-      <path d="M7.5 4v2a10 10 0 0 1-3 7" />
-      <path d="M4.5 13c1.5-.2 3-.9 4.5-2.1" />
-      <path d="M13 6h7" />
-      <path d="M16.5 4v2a10 10 0 0 1-3 7" />
-      <path d="M13.5 13c1.5-.2 3-.9 4.5-2.1" />
+    <svg {...baseProps(size)} strokeWidth={filled ? 2.15 : strokeWidth}>
+      <path d="M7.2 3.5v2.1" />
+      <path d="M3.2 5.6h8" />
+      <path d="M9.6 5.6c-.4 2.9-2.2 5.3-5.2 6.8" />
+      <path d="M5.1 7.8c1 1.6 2.6 3.1 4.8 4.2" />
+      <path d="M12.8 20.4l3.5-8.6a.65.65 0 0 1 1.2 0l3.5 8.6" />
+      <path d="M14.1 17.4h5.6" />
     </svg>
   )
 }
@@ -179,37 +247,94 @@ function PinOff({ size = 16, strokeWidth = 2 }: IconProps) {
   )
 }
 
-function ScanText({ size = 16, strokeWidth = 2 }: IconProps) {
+function ScanText({ size = 16, strokeWidth = 1.8 }: IconProps) {
   return (
     <svg {...baseProps(size)} strokeWidth={strokeWidth}>
-      <path d="M7 4H5a2 2 0 0 0-2 2v2" />
-      <path d="M17 4h2a2 2 0 0 1 2 2v2" />
-      <path d="M7 20H5a2 2 0 0 1-2-2v-2" />
-      <path d="M17 20h2a2 2 0 0 0 2-2v-2" />
-      <path d="M8 8h8" />
+      <path d="M7 4H5.3A2.3 2.3 0 0 0 3 6.3V8" />
+      <path d="M17 4h1.7A2.3 2.3 0 0 1 21 6.3V8" />
+      <path d="M7 20H5.3A2.3 2.3 0 0 1 3 17.7V16" />
+      <path d="M17 20h1.7A2.3 2.3 0 0 0 21 17.7V16" />
+      <path d="M8 8.5h8" />
       <path d="M8 12h8" />
-      <path d="M8 16h5" />
+      <path d="M8 15.5h5" />
     </svg>
   )
 }
 
-function SearchIcon({ size = 16, strokeWidth = 2 }: IconProps) {
+function SearchIcon({ size = 16, strokeWidth = 1.8, filled = false }: IconProps) {
   return (
-    <svg {...baseProps(size)} strokeWidth={strokeWidth}>
-      <circle cx="11" cy="11" r="6.5" />
-      <path d="m16 16 4 4" />
+    <svg {...baseProps(size)} strokeWidth={filled ? 2.1 : strokeWidth}>
+      <circle cx="10.5" cy="10.5" r="6.7" />
+      <path d="m15.3 15.3 4.8 4.8" />
     </svg>
   )
 }
 
-function Sparkles({ size = 16, strokeWidth = 2 }: IconProps) {
-  // Curved four-point star (lucide v2) — far more polished at small sizes
-  // than the old three straight-edged diamonds.
+function Sparkles({ size = 16, strokeWidth = 1.8, filled = false }: IconProps) {
+  // FlClash AppGlyphs.sparkle: balanced large + small curved 4-point stars.
+  const fill = filled ? 'currentColor' : 'none'
   return (
     <svg {...baseProps(size)} strokeWidth={strokeWidth}>
-      <path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z" />
-      <path d="M20 3v4" />
-      <path d="M22 5h-4" />
+      <path d="M10 6.4 Q11.3 12.5 17.4 13.8 Q11.3 15.1 10 21.2 Q8.7 15.1 2.6 13.8 Q8.7 12.5 10 6.4 Z" fill={fill} />
+      <path d="M17.8 2.9 Q18.5 5.5 21.1 6.2 Q18.5 6.9 17.8 9.5 Q17.1 6.9 14.5 6.2 Q17.1 5.5 17.8 2.9 Z" fill={fill} />
+    </svg>
+  )
+}
+
+function Bolt({ size = 16, strokeWidth = 1.8, filled = false }: IconProps) {
+  // FlClash AppGlyphs.bolt: clean quick-action lightning silhouette.
+  return (
+    <svg {...baseProps(size)} strokeWidth={strokeWidth}>
+      <path d="M14.2 3L5.2 13.5h6l-1.5 7.5 9-10.5h-6Z" fill={filled ? 'currentColor' : 'none'} />
+    </svg>
+  )
+}
+
+function Keyboard({ size = 16, strokeWidth = 1.8, filled = false }: IconProps) {
+  // FlClash AppGlyphs.keyboard: rounded superellipse housing with 8 keys + spacebar.
+  const body = <rect x="3" y="4.8" width="18" height="14.4" rx="3" />
+  const dotFill = filled ? 'black' : 'currentColor'
+  const details = (
+    <>
+      <circle cx="7" cy="8.6" r="0.95" fill={dotFill} stroke="none" />
+      <circle cx="10.3" cy="8.6" r="0.95" fill={dotFill} stroke="none" />
+      <circle cx="13.7" cy="8.6" r="0.95" fill={dotFill} stroke="none" />
+      <circle cx="17" cy="8.6" r="0.95" fill={dotFill} stroke="none" />
+      <circle cx="7" cy="12" r="0.95" fill={dotFill} stroke="none" />
+      <circle cx="10.3" cy="12" r="0.95" fill={dotFill} stroke="none" />
+      <circle cx="13.7" cy="12" r="0.95" fill={dotFill} stroke="none" />
+      <circle cx="17" cy="12" r="0.95" fill={dotFill} stroke="none" />
+      <path d="M8.5 15.5h7" />
+    </>
+  )
+  if (filled) return <FilledCutoutSvg size={size} strokeWidth={strokeWidth} body={body} details={details} />
+  return (
+    <svg {...baseProps(size)} strokeWidth={strokeWidth}>
+      {body}
+      {details}
+    </svg>
+  )
+}
+
+function Palette({ size = 16, strokeWidth = 1.8, filled = false }: IconProps) {
+  // FlClash AppGlyphs.palette: painter's palette with 4 color dots.
+  const body = (
+    <path d="M20.59 13.9A8.8 8.8 0 1 0 13.9 20.59A1.2 1.2 0 0 0 14.83 19.28A4 4 0 0 1 19.28 14.83A1.2 1.2 0 0 0 20.59 13.9Z" />
+  )
+  const dotFill = filled ? 'black' : 'currentColor'
+  const details = (
+    <>
+      <circle cx="7.54" cy="13.89" r="1.25" fill={dotFill} stroke="none" />
+      <circle cx="7.96" cy="9.32" r="1.25" fill={dotFill} stroke="none" />
+      <circle cx="12" cy="7.15" r="1.25" fill={dotFill} stroke="none" />
+      <circle cx="16.04" cy="9.32" r="1.25" fill={dotFill} stroke="none" />
+    </>
+  )
+  if (filled) return <FilledCutoutSvg size={size} strokeWidth={strokeWidth} body={body} details={details} />
+  return (
+    <svg {...baseProps(size)} strokeWidth={strokeWidth}>
+      {body}
+      {details}
     </svg>
   )
 }
@@ -314,15 +439,18 @@ function Undo2({ size = 16, strokeWidth = 2 }: IconProps) {
   )
 }
 
-function MousePointer({ size = 16, strokeWidth = 2 }: IconProps) {
+function MousePointer({ size = 16, strokeWidth = 1.8, filled = false }: IconProps) {
   return (
     <svg {...baseProps(size)} strokeWidth={strokeWidth}>
-      <path d="m4 4 7 16 2.2-7.2L20 10.5 4 4Z" />
+      <path
+        d="M5.2 4.3a.8.8 0 0 1 1-.9l13.2 5.4a.8.8 0 0 1 0 1.5l-5.6 2.1-2.1 5.6a.8.8 0 0 1-1.5 0Z"
+        fill={filled ? 'currentColor' : 'none'}
+      />
     </svg>
   )
 }
 
-function Power({ size = 16, strokeWidth = 2 }: IconProps) {
+function Power({ size = 16, strokeWidth = 1.8 }: IconProps) {
   return (
     <svg {...baseProps(size)} strokeWidth={strokeWidth}>
       <path d="M12 3v9" />
@@ -331,21 +459,29 @@ function Power({ size = 16, strokeWidth = 2 }: IconProps) {
   )
 }
 
-function BookOpen({ size = 16, strokeWidth = 2 }: IconProps) {
+function BookOpen({ size = 16, strokeWidth = 1.8, filled = false }: IconProps) {
+  const body = (
+    <path d="M12 6.4C10.4 4.9 7.8 4.4 4.2 4.4A1.2 1.2 0 0 0 3 5.6v11.6a1.2 1.2 0 0 0 1.2 1.2c3.6 0 6.2.5 7.8 2 1.6-1.5 4.2-2 7.8-2a1.2 1.2 0 0 0 1.2-1.2V5.6a1.2 1.2 0 0 0-1.2-1.2c-3.6 0-6.2.5-7.8 2Z" />
+  )
+  const details = <path d="M12 6.4v13.8" />
+  if (filled) return <FilledCutoutSvg size={size} strokeWidth={strokeWidth} body={body} details={details} />
   return (
     <svg {...baseProps(size)} strokeWidth={strokeWidth}>
-      <path d="M12 6.5C10.5 5 8 4.5 4 4.5v13c4 0 6.5.5 8 2 1.5-1.5 4-2 8-2v-13c-4 0-6.5.5-8 2Z" />
-      <path d="M12 6.5v12" />
+      {body}
+      {details}
     </svg>
   )
 }
 
-function Volume2({ size = 16, strokeWidth = 2 }: IconProps) {
+function Volume2({ size = 16, strokeWidth = 1.8, filled = false }: IconProps) {
   return (
     <svg {...baseProps(size)} strokeWidth={strokeWidth}>
-      <path d="M11 5 6 9H3v6h3l5 4V5Z" />
-      <path d="M16 8.5a5 5 0 0 1 0 7" />
-      <path d="M19 5.5a9 9 0 0 1 0 13" />
+      <path
+        d="M11 5.5a1 1 0 0 0-1.7-.7L6 8.2H3.8A1.3 1.3 0 0 0 2.5 9.5v5a1.3 1.3 0 0 0 1.3 1.3H6l3.3 3.4a1 1 0 0 0 1.7-.7Z"
+        fill={filled ? 'currentColor' : 'none'}
+      />
+      <path d="M15.5 8.8a4.8 4.8 0 0 1 0 6.4" />
+      <path d="M18.6 6a8.6 8.6 0 0 1 0 12" />
     </svg>
   )
 }
@@ -458,22 +594,26 @@ const icons: Record<string, (props: IconProps) => React.JSX.Element> = {
   'arrow-up-right': ArrowUpRight,
   'arrow-right-left': ArrowRightLeft,
   'book-open': BookOpen,
+  bolt: Bolt,
   power: Power,
   copy: CopyIcon,
   download: Download,
   'flask-conical': FlaskConical,
   eye: Eye,
   'eye-off': EyeOff,
+  keyboard: Keyboard,
   languages: Languages,
   laptop: Laptop,
   moon: Moon,
   'mouse-pointer': MousePointer,
+  palette: Palette,
   pencil: Pencil,
   pin: Pin,
   'pin-off': PinOff,
   'scan-text': ScanText,
   search: SearchIcon,
   sparkles: Sparkles,
+  summarize: Summarize,
   square: Square,
   sun: Sun,
   'trash-2': Trash2,
@@ -542,9 +682,8 @@ function NewTopic({ size = 16, strokeWidth = 1.75 }: IconProps) {
   )
 }
 
-export function Icon({ name, size = 16 }: { name: string; size?: number }) {
+export function Icon({ name, size = 16, filled = false }: { name: string; size?: number; filled?: boolean }) {
   const Component = icons[name] ?? Sparkles
-  // 1.75 stroke on the 24px grid: lighter, more refined at the 12–16px
-  // sizes the app actually renders (2.0 looked chunky).
-  return <Component size={size} strokeWidth={1.75} />
+  // 1.8 stroke on the 24px grid matches FlClash's rounded geometric Glyph proportions.
+  return <Component size={size} strokeWidth={1.8} filled={filled} />
 }

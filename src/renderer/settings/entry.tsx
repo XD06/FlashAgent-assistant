@@ -32,7 +32,7 @@ import { version as APP_VERSION } from '../../../package.json'
 
 const GITHUB_REPO_URL = 'https://github.com/XD06/FlashAgent-assistant'
 
-type SettingsSectionId = 'api' | 'actions' | 'selection' | 'translate' | 'vocabulary' | 'window'
+type SettingsSectionId = 'api' | 'actions' | 'selection' | 'shortcuts' | 'translate' | 'vocabulary' | 'window'
 
 // The system OCR engine wraps Windows.Media.Ocr; it cannot exist elsewhere.
 const isWindows = navigator.platform.toLowerCase().includes('win')
@@ -44,7 +44,7 @@ type SettingsSectionMeta = {
 }
 
 type SettingRowProps = {
-  title: string
+  title: React.ReactNode
   description?: string
   className?: string
   children: React.ReactNode
@@ -63,16 +63,19 @@ function SettingsNav({
 }) {
   return (
     <aside className="settings-sidebar" aria-label="Settings sections">
-      {sections.map((section) => (
-        <button
-          key={section.id}
-          className={section.id === activeSection ? 'settings-nav-button active' : 'settings-nav-button'}
-          onClick={() => onChange(section.id)}
-          type="button">
-          <Icon name={section.icon} size={14} />
-          <span>{section.label}</span>
-        </button>
-      ))}
+      {sections.map((section) => {
+        const isActive = section.id === activeSection
+        return (
+          <button
+            key={section.id}
+            className={isActive ? 'settings-nav-button active' : 'settings-nav-button'}
+            onClick={() => onChange(section.id)}
+            type="button">
+            <Icon name={section.icon} size={15} filled={isActive} />
+            <span>{section.label}</span>
+          </button>
+        )
+      })}
       <div className="settings-sidebar-footer">
         <button
           className="settings-github-link"
@@ -222,7 +225,7 @@ function ShortcutRecorder({
   const parts = formatShortcut(value)
 
   return (
-    <div className="shortcut-recorder">
+    <div className={recording ? 'shortcut-recorder recording' : 'shortcut-recorder'}>
       <button
         className={recording ? 'shortcut-button recording' : 'shortcut-button'}
         type="button"
@@ -263,8 +266,13 @@ function ShortcutRecorder({
         )}
       </button>
       {value && (
-        <button className="shortcut-clear" type="button" onClick={() => onChange('')} title={t('shortcutClear')}>
-          {t('shortcutClear')}
+        <button
+          className="shortcut-clear"
+          type="button"
+          onClick={() => onChange('')}
+          title={t('shortcutClear')}
+          aria-label={t('shortcutClear')}>
+          <Icon name="x" size={12} />
         </button>
       )}
     </div>
@@ -304,13 +312,15 @@ const ACTION_ICON_CHOICES = [
   'sparkles',
   'languages',
   'circle-help',
-  'scan-text',
+  'summarize',
   'search',
   'copy',
   'volume-2',
   'book-open',
+  'bolt',
   'pencil',
-  'flask-conical',
+  'file-text',
+  'scan-text',
   'mouse-pointer',
   'download',
   'arrow-up-right'
@@ -515,7 +525,15 @@ function chipMeanings(entry: VocabEntry): string {
     .trim()
 }
 
-function VocabularySection({ t }: { t: (key: string) => string }) {
+function VocabularySection({
+  autoRecord,
+  onToggleAutoRecord,
+  t
+}: {
+  autoRecord: boolean
+  onToggleAutoRecord: (autoRecord: boolean) => void
+  t: (key: string) => string
+}) {
   const [entries, setEntries] = React.useState<VocabEntry[] | null>(null)
   const [search, setSearch] = React.useState('')
   const [detail, setDetail] = React.useState<VocabEntry | null>(null)
@@ -574,6 +592,13 @@ function VocabularySection({ t }: { t: (key: string) => string }) {
   return (
     <div className="settings-stack settings-stack--vocabulary">
       <SettingSection title={t('sectionVocabulary')}>
+        <SettingRow title={t('vocabAutoRecord')} description={t('vocabAutoRecordDesc')}>
+          <Toggle
+            checked={autoRecord}
+            label={t('vocabAutoRecord')}
+            onChange={onToggleAutoRecord}
+          />
+        </SettingRow>
         <div className="vocab-toolbar">
           <SettingInput
             className="vocab-search"
@@ -1110,12 +1135,13 @@ function SettingsApp() {
   }
 
   const sections: SettingsSectionMeta[] = [
-    { id: 'api', label: t('sectionApi'), icon: 'link' },
-    { id: 'actions', label: t('sectionActions'), icon: 'mouse-pointer' },
-    { id: 'selection', label: t('sectionSelection'), icon: 'scan-text' },
+    { id: 'api', label: t('sectionApi'), icon: 'sparkles' },
+    { id: 'actions', label: t('sectionActions'), icon: 'bolt' },
+    { id: 'selection', label: t('sectionSelection'), icon: 'mouse-pointer' },
+    { id: 'shortcuts', label: t('sectionShortcuts'), icon: 'keyboard' },
     { id: 'translate', label: t('sectionTranslate'), icon: 'languages' },
     { id: 'vocabulary', label: t('sectionVocabulary'), icon: 'book-open' },
-    { id: 'window', label: t('sectionWindow'), icon: 'laptop' }
+    { id: 'window', label: t('sectionWindow'), icon: 'palette' }
   ]
   const defaultActionById = new Map(defaultActions.map((action) => [action.id, action]))
   const filterText = settings.filterList.join('\n')
@@ -1271,16 +1297,6 @@ function SettingsApp() {
             </div>
           </SettingSection>
 
-          <SettingSection title={t('webSearchGroup')}>
-            <SettingRow title={t('webSearchEnabled')} description={t('webSearchEnabledDesc')}>
-              <Toggle
-                checked={settings.webSearchEnabled}
-                label={t('webSearchEnabled')}
-                onChange={(webSearchEnabled) => update({ webSearchEnabled })}
-              />
-            </SettingRow>
-          </SettingSection>
-
           <SettingSection title={t('featureModelGroup')}>
             <SettingRow title={t('visionModel')} description={t('visionModelDesc')}>
               <SettingInput
@@ -1289,6 +1305,24 @@ function SettingsApp() {
                 onChange={(visionModel) => update({ visionModel: visionModel.trim() })}
               />
             </SettingRow>
+            <SettingRow title={t('compressModel')} description={t('compressModelDesc')}>
+              <SettingInput
+                value={settings.compressModel}
+                placeholder="gpt-4o-mini"
+                onChange={(compressModel) => update({ compressModel: compressModel.trim() })}
+              />
+            </SettingRow>
+            <SettingRow title={t('contextWindow')} description={t('contextWindowDesc')}>
+              <NumberField
+                value={settings.contextWindowTokens}
+                min={4000}
+                step={10000}
+                onCommit={(contextWindowTokens) => update({ contextWindowTokens })}
+              />
+            </SettingRow>
+          </SettingSection>
+
+          <SettingSection title={t('ocrGroup')}>
             <SettingRow
               title={t('ocrEngine')}
               description={
@@ -1356,24 +1390,16 @@ function SettingsApp() {
                 )}
               </div>
             </SettingRow>
-            <SettingRow title={t('compressModel')} description={t('compressModelDesc')}>
-              <SettingInput
-                value={settings.compressModel}
-                placeholder="gpt-4o-mini"
-                onChange={(compressModel) => update({ compressModel: compressModel.trim() })}
-              />
-            </SettingRow>
-            <SettingRow title={t('contextWindow')} description={t('contextWindowDesc')}>
-              <NumberField
-                value={settings.contextWindowTokens}
-                min={4000}
-                step={10000}
-                onCommit={(contextWindowTokens) => update({ contextWindowTokens })}
-              />
-            </SettingRow>
           </SettingSection>
 
-          <SettingSection title={t('proxyGroup')}>
+          <SettingSection title={t('networkGroup')}>
+            <SettingRow title={t('webSearchEnabled')} description={t('webSearchEnabledDesc')}>
+              <Toggle
+                checked={settings.webSearchEnabled}
+                label={t('webSearchEnabled')}
+                onChange={(webSearchEnabled) => update({ webSearchEnabled })}
+              />
+            </SettingRow>
             <SettingRow title={t('proxyUrl')} description={proxyStatus ?? t('proxyUrlDesc')}>
               <div className="proxy-field">
                 <SettingInput
@@ -1406,7 +1432,7 @@ function SettingsApp() {
     if (activeSection === 'selection') {
       return (
         <div className="settings-stack settings-stack--selection">
-          <SettingSection title={t('selectionMasterGroup')}>
+          <SettingSection title={t('selectionBehaviorGroup')}>
             <SettingRow title={t('selectionEnable')} description={t('selectionEnableDesc')}>
               <Toggle
                 checked={settings.enabled}
@@ -1414,10 +1440,7 @@ function SettingsApp() {
                 onChange={() => void toggleAssistantEnabled()}
               />
             </SettingRow>
-          </SettingSection>
-
-          <SettingSection title={t('selectionTriggerGroup')}>
-            <SettingRow title={t('triggerMode')}>
+            <SettingRow title={t('triggerMode')} description={t('triggerModeDesc')}>
               <SegmentedControl<TriggerMode>
                 value={settings.triggerMode}
                 ariaLabel={t('triggerMode')}
@@ -1428,9 +1451,51 @@ function SettingsApp() {
                 onChange={(triggerMode) => update({ triggerMode })}
               />
             </SettingRow>
+            <SettingRow title={t('compactToolbar')} description={t('compactToolbarDesc')}>
+              <Toggle
+                checked={settings.compactToolbar}
+                label={t('compactToolbar')}
+                onChange={(compactToolbar) => update({ compactToolbar })}
+              />
+            </SettingRow>
           </SettingSection>
 
-          <SettingSection title={t('selectionShortcutGroup')}>
+          <SettingSection title={t('selectionFilterGroup')}>
+            <SettingRow title={t('filterMode')} description={t('filterModeDesc')}>
+              <SegmentedControl<FilterMode>
+                value={settings.filterMode}
+                ariaLabel={t('filterMode')}
+                options={[
+                  { value: 'default', label: t('filterDefault') },
+                  { value: 'whitelist', label: t('filterWhitelist') },
+                  { value: 'blacklist', label: t('filterBlacklist') }
+                ]}
+                onChange={(filterMode) => update({ filterMode })}
+              />
+            </SettingRow>
+            <SettingRow title={t('filterList')} description={t('filterListPlaceholder')} className="tall">
+              <SettingTextarea
+                value={filterText}
+                placeholder={t('filterListPlaceholder')}
+                onChange={(val) =>
+                  update({
+                    filterList: val
+                      .split('\n')
+                      .map((item) => item.trim().toLowerCase())
+                      .filter(Boolean)
+                  })
+                }
+              />
+            </SettingRow>
+          </SettingSection>
+        </div>
+      )
+    }
+
+    if (activeSection === 'shortcuts') {
+      return (
+        <div className="settings-stack settings-stack--shortcuts">
+          <SettingSection title={t('globalShortcutsGroup')}>
             <SettingRow
               title={t('shortcutToggleAssistant')}
               description={t('shortcutToggleAssistantDesc')}
@@ -1475,69 +1540,44 @@ function SettingsApp() {
                 t={t}
               />
             </SettingRow>
+            <SettingRow
+              title={t('translateShortcut')}
+              description={t('translateShortcutDesc')}
+              className="shortcut-row">
+              <ShortcutRecorder
+                value={settings.shortcuts.translate}
+                label={t('translateShortcut')}
+                onChange={(value) => updateShortcut('translate', value)}
+                t={t}
+              />
+            </SettingRow>
           </SettingSection>
 
-          <SettingSection title={t('actionShortcutsGroup')}>
+          <SettingSection title={t('actionShortcutsGroup')} className="action-shortcuts-section">
             <div className="group-hint">{t('actionShortcutsHint')}</div>
-            {settings.actions.map((action) => (
-              <SettingRow
-                key={action.id}
-                title={getActionLabel(action, settings.language)}
-                className="shortcut-row action-shortcut-setting-row">
-                <ShortcutRecorder
-                  value={action.shortcut ?? ''}
-                  label={getActionLabel(action, settings.language)}
-                  onChange={(value) => updateAction(action.id, { shortcut: value || undefined })}
-                  t={t}
-                />
-              </SettingRow>
-            ))}
-          </SettingSection>
-
-          <SettingSection title={t('selectionToolbarGroup')}>
-            <SettingRow title={t('compactToolbar')} description={t('compactToolbarDesc')}>
-              <Toggle
-                checked={settings.compactToolbar}
-                label={t('compactToolbar')}
-                onChange={(compactToolbar) => update({ compactToolbar })}
-              />
-            </SettingRow>
-            <SettingRow title={t('showToolbarAppIcon')} description={t('showToolbarAppIconDesc')}>
-              <Toggle
-                checked={settings.showToolbarAppIcon}
-                label={t('showToolbarAppIcon')}
-                onChange={(showToolbarAppIcon) => update({ showToolbarAppIcon })}
-              />
-            </SettingRow>
-          </SettingSection>
-
-          <SettingSection title={t('selectionFilterGroup')}>
-            <SettingRow title={t('filterMode')}>
-              <SegmentedControl<FilterMode>
-                value={settings.filterMode}
-                ariaLabel={t('filterMode')}
-                options={[
-                  { value: 'default', label: t('filterDefault') },
-                  { value: 'whitelist', label: t('filterWhitelist') },
-                  { value: 'blacklist', label: t('filterBlacklist') }
-                ]}
-                onChange={(filterMode) => update({ filterMode })}
-              />
-            </SettingRow>
-            <SettingRow title={t('filterList')} description={t('filterListPlaceholder')} className="tall">
-              <SettingTextarea
-                value={filterText}
-                placeholder={t('filterListPlaceholder')}
-                onChange={(val) =>
-                  update({
-                    filterList: val
-                      .split('\n')
-                      .map((item) => item.trim().toLowerCase())
-                      .filter(Boolean)
-                  })
-                }
-              />
-            </SettingRow>
+            <div className="action-shortcuts-grid">
+              {settings.actions.map((action) => {
+                const actionLabel = getActionLabel(action, settings.language)
+                return (
+                  <SettingRow
+                    key={action.id}
+                    title={
+                      <span className="action-shortcut-label">
+                        <Icon name={action.icon} size={15} />
+                        <span>{actionLabel}</span>
+                      </span>
+                    }
+                    className="shortcut-row action-shortcut-setting-row">
+                    <ShortcutRecorder
+                      value={action.shortcut ?? ''}
+                      label={actionLabel}
+                      onChange={(value) => updateAction(action.id, { shortcut: value || undefined })}
+                      t={t}
+                    />
+                  </SettingRow>
+                )
+              })}
+            </div>
           </SettingSection>
         </div>
       )
@@ -1623,13 +1663,6 @@ function SettingsApp() {
                 value={settings.translate.tencentClientKey}
                 placeholder={t('tencentClientKeyPlaceholder')}
                 onChange={(tencentClientKey) => updateTranslate({ tencentClientKey: tencentClientKey.trim() })}
-              />
-            </SettingRow>
-            <SettingRow title={t('vocabAutoRecord')} description={t('vocabAutoRecordDesc')}>
-              <Toggle
-                checked={settings.vocabulary.autoRecord}
-                label={t('vocabAutoRecord')}
-                onChange={(autoRecord) => update({ vocabulary: { autoRecord } })}
               />
             </SettingRow>
           </SettingSection>
@@ -1752,32 +1785,37 @@ function SettingsApp() {
               </>
             )}
           </SettingSection>
-
-          <SettingSection title={t('translateShortcut')}>
-            <SettingRow
-              title={t('translateShortcut')}
-              description={t('translateShortcutDesc')}
-              className="shortcut-row">
-              <ShortcutRecorder
-                value={settings.shortcuts.translate}
-                label={t('translateShortcut')}
-                onChange={(value) => updateShortcut('translate', value)}
-                t={t}
-              />
-            </SettingRow>
-          </SettingSection>
         </div>
       )
     }
 
     if (activeSection === 'vocabulary') {
-      return <VocabularySection t={t} />
+      return (
+        <VocabularySection
+          autoRecord={settings.vocabulary.autoRecord}
+          onToggleAutoRecord={(autoRecord) => update({ vocabulary: { autoRecord } })}
+          t={t}
+        />
+      )
     }
 
     if (activeSection === 'window') {
       return (
         <div className="settings-stack">
           <ThemeAppearanceSection settings={settings} onUpdate={(patch) => void update(patch)} t={t} />
+
+          <SettingSection title={t('appearanceFontGroup')}>
+            <SettingRow title={t('fontFamily')} description={t('fontFamilyDesc')}>
+              <SettingInput
+                value={settings.fontFamily}
+                placeholder={t('fontFamilyPlaceholder')}
+                onChange={(fontFamily) => update({ fontFamily })}
+              />
+            </SettingRow>
+            <SettingRow title={t('fontSize')}>
+              <NumberField value={settings.fontSize} min={10} max={28} onCommit={(fontSize) => update({ fontSize })} />
+            </SettingRow>
+          </SettingSection>
 
           <SettingSection title={t('actionWindowTitle')} className="window-behavior-section">
             <SettingRow title={t('followToolbar')}>
@@ -1814,19 +1852,6 @@ function SettingsApp() {
                 max={1200}
                 onCommit={(actionWindowHeight) => update({ actionWindowHeight })}
               />
-            </SettingRow>
-          </SettingSection>
-
-          <SettingSection title={t('appearanceFontGroup')}>
-            <SettingRow title={t('fontFamily')} description={t('fontFamilyDesc')} className="tall">
-              <SettingInput
-                value={settings.fontFamily}
-                placeholder={t('fontFamilyPlaceholder')}
-                onChange={(fontFamily) => update({ fontFamily })}
-              />
-            </SettingRow>
-            <SettingRow title={t('fontSize')}>
-              <NumberField value={settings.fontSize} min={10} max={28} onCommit={(fontSize) => update({ fontSize })} />
             </SettingRow>
           </SettingSection>
 

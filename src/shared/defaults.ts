@@ -32,7 +32,7 @@ export const defaultActions: ActionItem[] = [
     id: 'summarize',
     name: 'Summarize',
     enabled: true,
-    icon: 'scan-text',
+    icon: 'summarize',
     type: 'prompt',
     promptTemplate:
       'Summarize the following text into 3-5 concise bullet points. Focus on the main ideas, key facts, and takeaways. Keep the wording simple and direct.\n\n{{text}}'
@@ -106,7 +106,6 @@ export const defaultSettings: AppSettings = {
   enabled: false,
   triggerMode: 'selected',
   compactToolbar: false,
-  showToolbarAppIcon: true,
   followToolbar: true,
   rememberWindowSize: false,
   autoClose: false,

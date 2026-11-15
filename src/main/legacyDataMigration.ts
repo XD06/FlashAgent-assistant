@@ -105,7 +105,6 @@ export function mergeLegacySettings(current: AppSettings, legacy: AppSettings): 
     'enabled',
     'triggerMode',
     'compactToolbar',
-    'showToolbarAppIcon',
     'followToolbar',
     'rememberWindowSize',
     'autoPin',

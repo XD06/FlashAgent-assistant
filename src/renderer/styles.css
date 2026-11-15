@@ -315,12 +315,12 @@ html[data-theme='dark'] .settings-page {
 
 .settings-shell {
   /* Center the bounded navigation-and-content workspace within the window. */
-  max-width: 920px;
+  max-width: 840px;
   height: 100%;
   margin: 0 auto;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
   min-height: 0;
 }
 
@@ -370,8 +370,8 @@ html[data-theme='dark'] .settings-page {
   flex: 1 1 auto;
   min-height: 0;
   display: grid;
-  grid-template-columns: 96px minmax(0, 1fr);
-  gap: 16px;
+  grid-template-columns: 118px minmax(0, 1fr);
+  gap: 14px;
   align-items: stretch;
 }
 
@@ -1001,12 +1001,13 @@ html[data-theme='dark'] .settings-page {
 
 .settings-stack {
   display: grid;
-  gap: 12px;
+  gap: 10px;
 }
 
 .settings-stack--api,
-.settings-stack--selection {
-  gap: 12px;
+.settings-stack--selection,
+.settings-stack--shortcuts {
+  gap: 10px;
 }
 
 .setting-section {
@@ -1067,9 +1068,9 @@ html[data-theme='dark'] .settings-page {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 14px;
-  min-height: 44px;
-  padding: 8px 14px;
+  gap: 12px;
+  min-height: 42px;
+  padding: 7px 14px;
   border-bottom: 1px solid var(--settings-line);
 }
 
@@ -1133,17 +1134,59 @@ html[data-theme='dark'] .settings-page {
 }
 
 .setting-row.shortcut-row {
-  align-items: flex-start;
-  flex-wrap: wrap;
+  align-items: center;
+  flex-wrap: nowrap;
+  min-height: 42px;
+  padding-block: 7px;
+}
+
+.action-shortcut-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.action-shortcut-label span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.action-shortcut-label svg {
+  color: var(--settings-muted);
+  flex-shrink: 0;
 }
 
 .setting-row.shortcut-row .setting-info {
-  flex: 1 1 260px;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .setting-row.shortcut-row .setting-control {
-  flex: 1 1 276px;
-  max-width: 320px;
+  flex: 0 0 auto;
+  max-width: none;
+}
+
+.action-shortcuts-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+}
+
+.action-shortcuts-grid .action-shortcut-setting-row {
+  min-height: 40px;
+  padding: 6px 14px;
+  background: var(--settings-surface);
+}
+
+.action-shortcuts-grid .action-shortcut-setting-row:hover {
+  background: color-mix(in srgb, var(--settings-text) 3%, var(--settings-surface));
+}
+
+.action-shortcuts-grid .shortcut-recorder {
+  min-width: 172px;
 }
 
 .setting-control textarea {
@@ -1212,13 +1255,9 @@ html[data-theme='dark'] .settings-page {
   box-shadow: var(--shadow-card);
 }
 
-.settings-stack--selection .setting-section {
+.settings-stack--selection .setting-section,
+.settings-stack--shortcuts .setting-section {
   gap: 5px;
-}
-
-.settings-stack--selection .setting-row.shortcut-row {
-  min-height: 50px;
-  padding-block: 8px;
 }
 
 .window-size-section .setting-section-body {
@@ -1422,61 +1461,115 @@ html[data-theme='dark'] .inline-icon-button:hover {
 }
 
 .shortcut-recorder {
-  width: 100%;
-  display: flex;
-  justify-content: flex-start;
-  gap: 8px;
+  min-width: 188px;
+  width: max-content;
+  max-width: 100%;
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  background: var(--settings-block);
+  transition:
+    background 140ms ease,
+    border-color 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.shortcut-recorder:hover {
+  background: var(--settings-inset);
+}
+
+.shortcut-recorder.recording,
+.shortcut-recorder:focus-within {
+  border-color: var(--accent);
+}
+
+.shortcut-recorder.recording {
+  background: var(--accent-soft);
 }
 
 .shortcut-button {
-  flex: 1;
+  flex: 1 1 auto;
   min-width: 0;
-  min-height: 32px;
+  min-height: 24px;
+  padding: 2px 4px;
   display: inline-flex;
   align-items: center;
   justify-content: flex-start;
-  flex-wrap: wrap;
-  gap: 5px;
-  border-color: transparent;
-  border-radius: var(--radius-control);
-  background: var(--settings-block);
+  flex-wrap: nowrap;
+  gap: 4px;
+  border: 0;
+  border-radius: calc(var(--radius-control) - 2px);
+  background: transparent;
   font-variant-numeric: tabular-nums;
   text-align: left;
 }
 
+.shortcut-button:hover,
 .shortcut-button.recording {
-  border-color: var(--accent);
-  background: var(--accent-soft);
+  background: transparent;
+}
+
+.shortcut-button:focus-visible,
+.shortcut-clear:focus-visible {
+  outline: none;
 }
 
 .shortcut-clear {
-  min-width: 48px;
-  min-height: 32px;
-  padding-inline: 10px;
+  flex: 0 0 auto;
+  width: 22px;
+  min-width: 22px;
+  height: 22px;
+  min-height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
   color: var(--settings-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.72;
+  transition: background 140ms ease, color 140ms ease, opacity 140ms ease;
+}
+
+.shortcut-clear:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--settings-text) 9%, transparent);
+  color: var(--settings-text);
 }
 
 .keycap {
-  min-width: 24px;
-  min-height: 22px;
+  min-width: 22px;
+  min-height: 20px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border: 1px solid var(--settings-line);
-  border-radius: var(--radius-inner);
-  padding: 0 7px;
+  border-radius: 6px;
+  padding: 0 6px;
   color: var(--settings-text);
   background: var(--settings-keycap);
   box-shadow: 0 1px 1px rgba(0, 0, 0, 0.045);
   font-variant-numeric: tabular-nums;
-  font-size: 12px;
+  font-size: 11.5px;
   font-weight: 600;
+  line-height: 1;
 }
 
 .shortcut-empty,
 .shortcut-recording-text {
-  color: var(--settings-muted);
+  padding-left: 2px;
+  color: var(--settings-faint);
   font-size: 12px;
+}
+
+.shortcut-recording-text {
+  color: var(--accent);
+  font-weight: 560;
 }
 
 .action-list {
@@ -1548,7 +1641,7 @@ html[data-theme='dark'] .inline-icon-button:hover {
 .prompt-template-editor {
   display: grid;
   gap: 8px;
-  padding: 0 14px 12px 66px;
+  padding: 4px 14px 12px 38px;
 }
 
 .prompt-template-editor textarea {
@@ -1595,12 +1688,12 @@ html[data-theme='dark'] .inline-icon-button:hover {
 
 .icon-picker {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(38px, 1fr));
-  gap: 6px;
+  grid-template-columns: repeat(5, minmax(34px, 1fr));
+  gap: 5px;
 }
 
 .icon-choice {
-  height: 38px;
+  height: 32px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1763,26 +1856,6 @@ html[data-theme='dark'] .inline-icon-button:hover {
 
 .toolbar-root::-webkit-scrollbar {
   display: none;
-}
-
-.toolbar-logo {
-  flex: 0 0 28px;
-  flex-shrink: 0;
-  width: 28px;
-  height: 28px;
-  border-radius: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-  -webkit-app-region: drag;
-}
-
-.toolbar-logo svg {
-  width: 22px;
-  height: 22px;
-  display: block;
-  border-radius: 7px;
 }
 
 .toolbar-button {
@@ -2685,13 +2758,30 @@ html[data-theme='dark'] .footer button:last-child {
   }
 }
 
+@media (min-width: 680px) {
+  .action-shortcuts-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1px;
+    background: var(--settings-line);
+  }
+
+  .action-shortcuts-grid .action-shortcut-setting-row {
+    border-bottom: 0;
+    padding: 6px 12px 6px 14px;
+  }
+
+  .action-shortcuts-grid .action-shortcut-setting-row:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+  }
+}
+
 @media (min-width: 720px) {
   .window-behavior-section .setting-section-body {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .window-behavior-section .setting-row {
-    min-height: 46px;
+    min-height: 44px;
   }
 
   .window-behavior-section .setting-row:nth-child(even) {
@@ -2727,6 +2817,11 @@ html[data-theme='dark'] .footer button:last-child {
   .setting-row.shortcut-row .setting-control {
     flex: 1 1 100%;
     max-width: none;
+    justify-content: flex-start;
+  }
+
+  .setting-row.shortcut-row .shortcut-recorder {
+    width: 100%;
   }
 
   .window-size-section .setting-section-body {

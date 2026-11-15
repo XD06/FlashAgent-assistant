@@ -159,10 +159,17 @@ describe('selection actions', () => {
     expect(normalized.theme).toBe('system')
   })
 
-  it('defaults showToolbarAppIcon to true during normalization', () => {
-    const { showToolbarAppIcon: _showToolbarAppIcon, ...oldSettings } = defaultSettings
-    const normalized = normalizeSettings(oldSettings)
-    expect(normalized.showToolbarAppIcon).toBe(true)
+  it('strips deprecated showToolbarAppIcon during normalization', () => {
+    const normalized = normalizeSettings({ ...defaultSettings, showToolbarAppIcon: true })
+    expect('showToolbarAppIcon' in normalized).toBe(false)
+  })
+
+  it('migrates built-in summarize action from legacy scan-text icon to summarize', () => {
+    const legacyActions = defaultSettings.actions.map((action) =>
+      action.id === 'summarize' ? { ...action, icon: 'scan-text' } : action
+    )
+    const normalized = normalizeSettings({ ...defaultSettings, actions: legacyActions })
+    expect(normalized.actions.find((action) => action.id === 'summarize')?.icon).toBe('summarize')
   })
 
   it('defaults provider api type to openai during normalization', () => {
