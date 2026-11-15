@@ -1957,15 +1957,36 @@ html[data-theme='dark'] .settings-page {
   width: 100%;
 }
 
-.settings-page input,
+.settings-page input:not([type='range']),
 .settings-page textarea,
 .settings-page select {
   min-height: 34px;
-  border: 1px solid transparent;
+  border: 0;
   border-radius: var(--radius-control);
+  padding: 6px 10px;
   color: var(--settings-text);
   background: var(--settings-block);
   font-size: 13px;
+  transition: background-color 140ms ease, box-shadow 140ms ease;
+}
+
+.settings-page input:not([type='range']):not(:disabled):hover,
+.settings-page textarea:not(:disabled):hover,
+.settings-page select:not(:disabled):hover {
+  background: color-mix(in srgb, var(--settings-block) 92%, var(--settings-text));
+}
+
+.settings-page select {
+  appearance: none;
+  padding-right: 28px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23686b75' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 9px center;
+  cursor: pointer;
+}
+
+html[data-theme='dark'] .settings-page select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239b9ba4' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
 }
 
 .settings-page textarea {
@@ -1994,16 +2015,20 @@ html[data-theme='dark'] .settings-page {
 }
 
 .provider-card__head {
-  min-height: 42px;
-  padding: 8px 12px;
+  min-height: 44px;
+  padding: 10px 14px;
   border-bottom: 1px solid var(--settings-line);
+}
+
+.provider-card .form-grid {
+  padding: 10px 14px 12px;
 }
 
 @container (min-width: 520px) {
   .provider-card .form-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 7px 10px;
-    padding: 9px 12px;
+    gap: 8px 12px;
+    padding: 10px 14px 12px;
   }
 
   .provider-card .form-grid .field--model,
@@ -2017,8 +2042,10 @@ html[data-theme='dark'] .settings-page {
   height: 26px;
 }
 
-.provider-card .form-grid input {
+.provider-card .form-grid input:not([type='range']),
+.provider-card .form-grid select {
   height: 34px;
+  border-radius: calc(var(--radius-card) - 8px);
 }
 
 .provider-section .add-row-button {
@@ -2168,8 +2195,11 @@ html[data-theme='dark'] .inline-icon-button:hover {
 .settings-page input:focus-visible,
 .settings-page textarea:focus-visible,
 .settings-page select:focus-visible,
-.settings-page button:focus-visible {
-  outline: 2.5px solid var(--settings-focus);
+.settings-page button:focus-visible,
+.settings-page .proxy-field:has(input:focus-visible),
+.settings-page .shortcut-recorder:has(.shortcut-button:focus-visible),
+.settings-page .theme-swatch-add:has(input:focus-visible) {
+  outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
   outline-offset: 1px;
 }
 
@@ -2235,45 +2265,40 @@ html[data-theme='dark'] .inline-icon-button:hover {
   min-width: 188px;
   width: max-content;
   max-width: 100%;
-  min-height: 30px;
+  min-height: 32px;
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 2px 4px;
-  border: 1px solid transparent;
+  padding: 3px 4px;
+  border: 0;
   border-radius: var(--radius-control);
   background: var(--settings-block);
   transition:
     background 140ms ease,
-    border-color 140ms ease,
     box-shadow 140ms ease;
 }
 
 .shortcut-recorder:hover {
-  background: var(--settings-inset);
-}
-
-.shortcut-recorder.recording,
-.shortcut-recorder:focus-within {
-  border-color: var(--accent);
+  background: color-mix(in srgb, var(--settings-block) 90%, var(--settings-text));
 }
 
 .shortcut-recorder.recording {
   background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1.5px var(--accent);
 }
 
 .shortcut-button {
   flex: 1 1 auto;
   min-width: 0;
-  min-height: 24px;
-  padding: 2px 4px;
+  min-height: 26px;
+  padding: 2px 5px;
   display: inline-flex;
   align-items: center;
   justify-content: flex-start;
   flex-wrap: nowrap;
   gap: 4px;
   border: 0;
-  border-radius: calc(var(--radius-control) - 2px);
+  border-radius: calc(var(--radius-control) - 3px);
   background: transparent;
   font-variant-numeric: tabular-nums;
   text-align: left;
@@ -2284,8 +2309,7 @@ html[data-theme='dark'] .inline-icon-button:hover {
   background: transparent;
 }
 
-.shortcut-button:focus-visible,
-.shortcut-clear:focus-visible {
+.settings-page .shortcut-button:focus-visible {
   outline: none;
 }
 
@@ -2319,12 +2343,14 @@ html[data-theme='dark'] .inline-icon-button:hover {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--settings-line);
-  border-radius: 6px;
+  border: 0;
+  border-radius: calc(var(--radius-control) - 4px);
   padding: 0 6px;
   color: var(--settings-text);
   background: var(--settings-keycap);
-  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.045);
+  box-shadow:
+    inset 0 0 0 1px var(--settings-line),
+    0 1px 1px rgba(0, 0, 0, 0.045);
   font-variant-numeric: tabular-nums;
   font-size: 11.5px;
   font-weight: 600;
@@ -2411,8 +2437,8 @@ html[data-theme='dark'] .inline-icon-button:hover {
 
 .prompt-template-editor {
   display: grid;
-  gap: 8px;
-  padding: 4px 14px 12px 26px;
+  gap: 10px;
+  padding: 8px 14px 14px 38px;
 }
 
 .prompt-template-editor textarea {
@@ -2425,13 +2451,6 @@ html[data-theme='dark'] .inline-icon-button:hover {
     "Liberation Mono",
     monospace;
   line-height: 1.5;
-}
-
-.prompt-template-editor button {
-  justify-self: end;
-  min-height: 28px;
-  padding: 4px 10px;
-  color: var(--settings-muted);
 }
 
 .action-ai-options {
@@ -2483,7 +2502,7 @@ html[data-theme='dark'] .inline-icon-button:hover {
   display: grid;
   grid-template-columns: repeat(15, minmax(0, 1fr));
   gap: 3px;
-  padding: 3px;
+  padding: 4px;
   border-radius: var(--radius-control);
   background: var(--settings-block);
 }
@@ -2497,8 +2516,8 @@ html[data-theme='dark'] .inline-icon-button:hover {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid transparent;
-  border-radius: calc(var(--radius-control) - 3px);
+  border: 0;
+  border-radius: calc(var(--radius-control) - 4px);
   background: transparent;
   color: var(--settings-muted);
   cursor: pointer;
@@ -2510,10 +2529,11 @@ html[data-theme='dark'] .inline-icon-button:hover {
 }
 
 .icon-picker .icon-choice.active {
-  border-color: color-mix(in srgb, var(--accent) 48%, transparent);
   color: var(--accent);
   background: var(--surface-card);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.08),
+    inset 0 0 0 1px color-mix(in srgb, var(--accent) 42%, transparent);
 }
 
 .group-hint {
@@ -2527,16 +2547,32 @@ html[data-theme='dark'] .inline-icon-button:hover {
 .action-editor-footer {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .action-editor-footer button {
   min-height: 30px;
-  padding: 5px 10px;
+  padding: 5px 12px;
+  border: 0;
+  border-radius: var(--radius-inner);
+  background: var(--settings-block);
+  color: var(--settings-muted);
+  font-size: 12px;
+  font-weight: 560;
+}
+
+.action-editor-footer button:hover {
+  background: color-mix(in srgb, var(--settings-block) 88%, var(--settings-text));
+  color: var(--settings-text);
 }
 
 .danger-text {
+  color: var(--danger);
+}
+
+.action-editor-footer button.danger-text:hover {
+  background: var(--status-err-soft);
   color: var(--danger);
 }
 
@@ -2573,36 +2609,40 @@ html[data-theme='dark'] .inline-icon-button:hover {
 .provider-card__head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
 }
 
-.provider-name {
+.settings-page input.provider-name {
   flex: 1 1 auto;
   min-width: 0;
+  min-height: 32px;
+  padding: 4px 10px;
+  border-radius: calc(var(--radius-card) - 10px);
   font-weight: 580;
 }
 
 .pill {
   flex: 0 0 auto;
+  min-height: 26px;
   padding: 3px 10px;
   border-radius: var(--radius-pill);
-  border: 1px solid var(--settings-line-strong);
-  background: transparent;
+  border: 0;
+  background: var(--settings-block);
   color: var(--settings-muted);
   font-size: 11px;
+  font-weight: 580;
   font-variant-numeric: tabular-nums;
   cursor: pointer;
 }
 
 .pill:hover:not(:disabled) {
-  color: var(--settings-text);
-  border-color: var(--primary);
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 .pill.active,
 .pill.active:disabled {
   background: var(--primary);
-  border-color: var(--primary);
   color: var(--primary-on);
   font-weight: 580;
   opacity: 1;
@@ -6724,34 +6764,40 @@ html[data-theme='light'] .chat-toast {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 2px 4px 2px 0;
-  border: 1px solid transparent;
+  padding: 3px 4px 3px 2px;
+  border: 0;
   border-radius: var(--radius-control);
   background: var(--settings-block);
-  transition: background 140ms ease, border-color 140ms ease;
+  transition: background 140ms ease, box-shadow 140ms ease;
+}
+
+.proxy-field:hover {
+  background: color-mix(in srgb, var(--settings-block) 92%, var(--settings-text));
 }
 
 .proxy-field:focus-within {
-  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 32%, transparent);
 }
 
-.proxy-field input {
+.settings-page .proxy-field input,
+.settings-page .proxy-field input:not(:disabled):hover {
   flex: 1 1 auto;
   min-width: 0;
   min-height: 28px;
   border: 0;
   padding: 4px 8px;
   background: transparent;
+  box-shadow: none;
 }
 
-.proxy-field input:focus-visible {
+.settings-page .proxy-field input:focus-visible {
   outline: none;
 }
 
 .proxy-field__test {
   flex: 0 0 auto;
-  min-height: 24px;
-  height: 24px;
+  min-height: 26px;
+  height: 26px;
   padding: 0 9px;
   border: 0;
   border-radius: calc(var(--radius-control) - 3px);
@@ -7351,7 +7397,7 @@ html[data-theme='light'] .chat-toast {
 }
 
 .danger-pill {
-  border-color: color-mix(in srgb, var(--danger) 45%, transparent) !important;
+  background: var(--status-err-soft) !important;
   color: var(--danger) !important;
 }
 
