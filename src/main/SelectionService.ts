@@ -706,6 +706,16 @@ export class SelectionService {
     this.toolbarWindow.webContents.send(IPC.SelectionSelected, payload)
     this.toolbarWindow.webContents.send(IPC.SelectionVisibility, true)
     if (!wasVisible) {
+      if (isWin) {
+        // Chromium hides the render-widget child HWND when the BrowserWindow is
+        // hidden and never restores it on re-show, so a warm toolbar paints but
+        // swallows every click (WindowFromPoint resolves to the top-level HWND,
+        // and the buttons never fire). Only a real geometry change makes Chromium
+        // re-show the child, so nudge the height by 1px while still hidden — the
+        // 16px content margin keeps the pill pixel-identical.
+        this.toolbarWindow.setBounds({ ...toolbarBounds, height: toolbarBounds.height + 1 })
+        this.toolbarWindow.setBounds(toolbarBounds)
+      }
       if (isMac || isWin) {
         this.toolbarWindow.showInactive()
       } else {
