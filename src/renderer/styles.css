@@ -1128,13 +1128,13 @@ html[data-theme='dark'] .theme-preview-tool-mini--read {
   background: rgba(96, 165, 250, 0.15);
 }
 
-.theme-preview-card--chat:not([data-preview-chat-color='minimal']) .theme-preview-prompt {
+.theme-preview-card--chat .theme-preview-prompt {
   display: inline-block;
   align-self: flex-end;
   max-width: 100%;
   padding: 2px 7px;
   border-radius: 7px;
-  background: color-mix(in srgb, var(--accent) 11%, var(--surface-block));
+  background: color-mix(in srgb, var(--text) 7%, var(--surface-block));
   color: var(--settings-text);
 }
 
@@ -3922,10 +3922,10 @@ html[data-theme='dark'] .footer button:last-child {
   width: fit-content;
   max-width: 85%;
   min-width: 0;
-  padding: 6px 11px;
-  border-radius: 11px;
-  border: 1px solid color-mix(in srgb, var(--accent) 18%, transparent);
-  background: color-mix(in srgb, var(--accent) 9%, var(--surface-block));
+  padding: 7px 12px;
+  border-radius: 12px;
+  border: 0;
+  background: color-mix(in srgb, var(--surface-inset) 84%, var(--surface-page));
   color: var(--text);
   font-size: 12.5px;
   line-height: 1.5;
@@ -3934,10 +3934,9 @@ html[data-theme='dark'] .footer button:last-child {
   word-break: break-word;
   box-sizing: border-box;
 }
-html[data-chat-color='minimal'] .screenshot-preview__user-msg {
-  border-color: transparent;
-  background: var(--hover);
-  color: var(--text-soft);
+html[data-theme='dark'] .screenshot-preview__user-msg {
+  background: var(--surface-block);
+  color: var(--text);
 }
 .screenshot-preview__user-msg--image-only {
   justify-self: end;
@@ -4296,9 +4295,7 @@ html[data-theme='dark'] .toolbar-button.toolbar-button--primary:hover {
   content-visibility: visible;
 }
 .chat-content > .result + .chat-user-msg-wrap {
-  margin-top: 8px;
-  padding-top: 14px;
-  border-top: 1px dashed color-mix(in srgb, var(--divider-hairline) 90%, transparent);
+  margin-top: 14px;
 }
 .chat-empty {
   margin: auto;
@@ -4967,17 +4964,22 @@ background: var(--hover);
 opacity: 0.3;
 cursor: not-allowed;
 }
-.chat-input__tool--active {
-  color: var(--accent);
-  background: var(--accent-soft);
+.chat-input__tool--active,
+.chat-input__tool--agent-active {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 7.5%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 9%, transparent);
+  border: 0;
 }
-.chat-input__tool--active:hover:not(:disabled) {
-  color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 22%, transparent);
+.chat-input__tool--active:hover:not(:disabled),
+.chat-input__tool--agent-active:hover:not(:disabled) {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 12%, transparent);
 }
 .chat-input__tool--temporary.chat-input__tool--active {
   color: var(--text);
   background: var(--hover);
+  box-shadow: none;
 }
 .chat-input__tool--temporary.chat-input__tool--active:hover:not(:disabled) {
   color: var(--text);
@@ -5003,54 +5005,12 @@ html[data-theme='dark'] .chat-input--temporary:has(textarea:focus-visible) {
     0 0 0 2px rgba(255, 255, 255, 0.22),
     var(--shadow-float);
 }
-.chat-input__tool--agent-active {
-  position: relative;
-  color: var(--accent);
-  background: var(--accent-soft);
-  border: 0;
-}
-
-.chat-input__tool--agent-active:hover:not(:disabled) {
-  color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 22%, transparent);
-}
-
-.chat-input__tool-dot {
-  position: absolute;
-  top: 3px;
-  right: 3px;
-  width: 5.5px;
-  height: 5.5px;
-  border-radius: 50%;
-  background: var(--status-ok);
-  box-shadow: 0 0 0 1.5px var(--panel);
-}
-
-html[data-chat-color='theme'] .chat-input__tool-dot {
-  background: var(--accent);
-}
-
-html[data-chat-color='minimal'] .chat-input__tool--active,
-html[data-chat-color='minimal'] .chat-input__tool--agent-active {
-  color: var(--text);
-  background: var(--hover);
-}
-
-html[data-chat-color='minimal'] .chat-input__tool--active:hover:not(:disabled),
-html[data-chat-color='minimal'] .chat-input__tool--agent-active:hover:not(:disabled) {
-  color: var(--text);
-  background: var(--active);
-}
-
-html[data-chat-color='minimal'] .chat-input__tool-dot {
-  background: var(--text-soft);
-}
 
 /* ---- Agent tool groups (step anchors & high-contrast category icons) ---- */
 .agent-tool-group {
   border: 0;
   border-radius: 0;
-  margin: 7px 0 10px;
+  margin: 6px 0 9px;
   background: transparent;
   box-shadow: none;
   overflow: visible;
@@ -6626,6 +6586,7 @@ html[data-theme='dark'] .chat-baseline-nav__item--active .chat-baseline-nav__tic
   background: transparent;
   box-shadow: none;
   color: var(--muted);
+  font-variant-numeric: tabular-nums;
   user-select: none;
   /* Out-of-flow and pinned to the true horizontal center of the bar on wider
    * windows; drops cleanly into flow below 640px so side clusters never collide. */

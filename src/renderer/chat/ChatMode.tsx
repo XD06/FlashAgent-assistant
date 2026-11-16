@@ -3608,7 +3608,6 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
             }}
           >
             <Icon name="terminal" size={16} />
-            {agentEnabled && <span className="chat-input__tool-dot" />}
           </button>
           <button
             className="chat-input__tool"
@@ -3622,9 +3621,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
           <div className="chat-input__spacer" />
           {turnMetrics && (turnMetrics.running || turnMetrics.durationStr) && (
             <StatusChip
-              tone={turnMetrics.running ? 'ok' : 'neutral'}
-              dot
-              pulse={turnMetrics.running}
+              tone="neutral"
               className="chat-stats-pill"
               title={
                 isZh
