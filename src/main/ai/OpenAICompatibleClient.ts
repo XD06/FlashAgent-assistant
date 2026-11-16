@@ -73,12 +73,12 @@ function parseRetryAfter(header: string | null): number | null {
 function sleepUnlessAborted(ms: number, signal: AbortSignal | null | undefined): Promise<void> {
   return new Promise((resolvePromise, rejectPromise) => {
     if (signal?.aborted) {
-      rejectPromise(new DOMException('The operation was aborted.', 'AbortError'))
+      rejectPromise(signal.reason ?? new DOMException('The operation was aborted.', 'AbortError'))
       return
     }
     const onAbort = (): void => {
       clearTimeout(timer)
-      rejectPromise(new DOMException('The operation was aborted.', 'AbortError'))
+      rejectPromise(signal?.reason ?? new DOMException('The operation was aborted.', 'AbortError'))
     }
     const timer = setTimeout(() => {
       signal?.removeEventListener('abort', onAbort)
@@ -89,6 +89,14 @@ function sleepUnlessAborted(ms: number, signal: AbortSignal | null | undefined):
 }
 
 const REQUEST_HEADERS_TIMEOUT_MS = 30_000
+
+function abortError(signal: AbortSignal): unknown {
+  return signal.reason ?? new DOMException('The operation was aborted.', 'AbortError')
+}
+
+function throwIfAborted(signal: AbortSignal): void {
+  if (signal.aborted) throw abortError(signal)
+}
 
 async function fetchWithAttemptTimeout(
   url: string,
@@ -103,20 +111,20 @@ async function fetchWithAttemptTimeout(
     )
   }, REQUEST_HEADERS_TIMEOUT_MS)
 
-  const onOuterAbort = (): void => {
-    timeoutController.abort(outerSignal?.reason ?? new DOMException('The operation was aborted.', 'AbortError'))
-  }
   if (outerSignal?.aborted) {
     clearTimeout(timer)
-    throw (outerSignal.reason ?? new DOMException('The operation was aborted.', 'AbortError'))
+    throw abortError(outerSignal)
   }
-  outerSignal?.addEventListener('abort', onOuterAbort, { once: true })
+  // Tie the request to the caller's signal for the whole response lifetime,
+  // not just until the headers arrive: an abort after this point must also
+  // cancel the SSE body. The old manual forwarding listener was removed in
+  // this function's finally, which is exactly when the body starts.
+  const signal = outerSignal ? AbortSignal.any([timeoutController.signal, outerSignal]) : timeoutController.signal
 
   try {
-    return await fetchProvider(url, { ...init, signal: timeoutController.signal }, options)
+    return await fetchProvider(url, { ...init, signal }, options)
   } finally {
     clearTimeout(timer)
-    outerSignal?.removeEventListener('abort', onOuterAbort)
   }
 }
 
@@ -136,7 +144,7 @@ async function fetchProviderWithRetry(
     try {
       const response = await fetchWithAttemptTimeout(url, init, options, signal)
       if (response.ok || !RETRYABLE_STATUS.has(response.status)) return response
-      failure = await readProviderError(response)
+      failure = await readProviderError(response, signal ?? undefined)
       retryAfterMs = parseRetryAfter(response.headers.get('retry-after'))
     } catch (error) {
       // Abort is the user's call, never retried; anything else at the fetch
@@ -161,8 +169,11 @@ function assertProviderReady(provider: ProviderSettings, requireModel = true): v
   }
 }
 
-async function readProviderError(response: Response): Promise<string> {
+async function readProviderError(response: Response, signal?: AbortSignal): Promise<string> {
   const body = await response.text().catch(() => '')
+  // A stop while the error body is being drained is still a user abort, not a
+  // provider failure that should be retried or surfaced as a 4xx/5xx.
+  if (signal) throwIfAborted(signal)
   return `Provider request failed (${response.status}): ${body || response.statusText}`
 }
 
@@ -435,13 +446,26 @@ export function isStreamDoneEvent(event: string): boolean {
   return false
 }
 
-async function readSseStream(body: ReadableStream<Uint8Array>, onEvent: (event: string) => void): Promise<void> {
+async function readSseStream(
+  body: ReadableStream<Uint8Array>,
+  signal: AbortSignal,
+  onEvent: (event: string) => void
+): Promise<void> {
   const reader = body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
   let streamCompleted = false
+  let onAbort: (() => void) | null = null
+  // Resolve (never reject) on abort so losing the race cannot leave an
+  // unhandled rejection behind. The null chunk below is the abort marker.
+  const aborted = new Promise<null>((resolve) => {
+    onAbort = (): void => resolve(null)
+    if (signal.aborted) onAbort()
+    else signal.addEventListener('abort', onAbort, { once: true })
+  })
   try {
     while (!streamCompleted) {
+      throwIfAborted(signal)
       let timer: ReturnType<typeof setTimeout> | undefined
       const idle = new Promise<never>((_, reject) => {
         timer = setTimeout(
@@ -449,17 +473,19 @@ async function readSseStream(body: ReadableStream<Uint8Array>, onEvent: (event: 
           STREAM_IDLE_TIMEOUT_MS
         )
       })
-      let chunk: Awaited<ReturnType<typeof reader.read>>
+      let chunk: Awaited<ReturnType<typeof reader.read>> | null
       try {
-        chunk = await Promise.race([reader.read(), idle])
+        chunk = await Promise.race([reader.read(), idle, aborted])
       } finally {
         clearTimeout(timer)
       }
+      if (chunk === null) throw abortError(signal)
       if (chunk.done) break
       buffer += decoder.decode(chunk.value, { stream: true })
       const events = buffer.split(SSE_EVENT_SEPARATOR)
       buffer = events.pop() ?? ''
       for (const event of events) {
+        throwIfAborted(signal)
         onEvent(event)
         if (isStreamDoneEvent(event)) {
           streamCompleted = true
@@ -468,9 +494,11 @@ async function readSseStream(body: ReadableStream<Uint8Array>, onEvent: (event: 
       }
     }
     if (!streamCompleted && buffer.trim()) {
+      throwIfAborted(signal)
       onEvent(buffer)
     }
   } finally {
+    if (onAbort) signal.removeEventListener('abort', onAbort)
     void reader.cancel().catch(() => undefined)
   }
 }
@@ -834,15 +862,16 @@ export async function streamChatMessages(
       body,
       (_waitMs, attempt, max) => notifyRetry(attempt, max)
     )
-    if (!response.ok) throw new Error(await readProviderError(response))
+    if (!response.ok) throw new Error(await readProviderError(response, signal))
     if (!response.body) throw new Error('Provider returned an empty response body.')
 
     const usageAcc: Partial<TokenUsage> = {}
-    await readSseStream(response.body, (event) => {
+    await readSseStream(response.body, signal, (event) => {
       const delta = parseProviderStreamEvent(provider.apiType, event)
       if (delta) onDelta(delta)
       collectUsage(event, usageAcc)
     })
+    throwIfAborted(signal)
     emitUsage(usageAcc)
     return
   }
@@ -886,6 +915,7 @@ export async function streamChatMessages(
   // True when the loop ends with the model still asking for tool calls.
   let roundLimitHit = true
   for (let round = 0; round < maxRounds; round++) {
+    throwIfAborted(signal)
     if (Date.now() - loopStart - toolTimeMs > toolLoopTimeoutMs) {
       throw new Error(`Tool-calling loop timed out (${Math.round(toolLoopTimeoutMs / 1000)}s of model streaming)`)
     }
@@ -970,7 +1000,7 @@ export async function streamChatMessages(
         notifyRetry(attempt, max)
       }
     )
-    if (!response.ok) throw new Error(await readProviderError(response))
+    if (!response.ok) throw new Error(await readProviderError(response, signal))
     if (!response.body) throw new Error('Provider returned an empty response body.')
 
     // Stream, forward deltas, and accumulate this round's content for the
@@ -1043,7 +1073,8 @@ export async function streamChatMessages(
       }
     }
 
-    await readSseStream(response.body, handleEvent)
+    await readSseStream(response.body, signal, handleEvent)
+    throwIfAborted(signal)
     emitUsage(usageAcc)
 
     if (options.onToolStreaming) {
@@ -1231,6 +1262,7 @@ export async function streamChatMessages(
     const execStart = Date.now()
 
     const executeOneCall = async (tc: AccumulatedToolCall): Promise<{ id: string; content: string }> => {
+      throwIfAborted(signal)
       let args: Record<string, unknown> = {}
       let parseError: string | null = null
       try {
@@ -1258,6 +1290,10 @@ export async function streamChatMessages(
           result = `[System notice: Duplicate tool call skipped. This exact ${tc.name} call was already executed in previous rounds with identical arguments. Stop repeating it and immediately proceed with actual file/command actions.]`
         } else {
           result = await onToolCall!(tc.name, args, { id: tc.id, index: tc.index, round })
+          // The callback may return normally after an abort (e.g. approval
+          // resolves to "rejected" instead of throwing) — never treat that as
+          // a real tool result and continue the loop.
+          throwIfAborted(signal)
           if (consecutiveDuplicateRounds === 1) {
             result += `\n\n[System note: This tool call is identical to the previous round. If this was a checklist update, it is already current. Proceed to execute concrete tools (such as read_file, edit_file, or run_command) for the active step.]`
           }
@@ -1299,11 +1335,14 @@ export async function streamChatMessages(
     }
 
     for (const batch of batches) {
+      throwIfAborted(signal)
       if (batch.isParallel && batch.calls.length > 1) {
         const batchResults = await Promise.all(batch.calls.map((tc) => executeOneCall(tc)))
+        throwIfAborted(signal)
         toolResults.push(...batchResults)
       } else {
         for (const tc of batch.calls) {
+          throwIfAborted(signal)
           toolResults.push(await executeOneCall(tc))
         }
       }
@@ -1340,6 +1379,7 @@ export async function streamChatMessages(
   // Surface round exhaustion instead of ending the reply silently — the
   // user can simply ask to continue in the next turn.
   if (roundLimitHit && options.roundLimitNotice) {
+    throwIfAborted(signal)
     onDelta({ content: `\n\n${options.roundLimitNotice}` })
   }
 }

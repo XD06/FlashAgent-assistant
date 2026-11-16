@@ -28,4 +28,13 @@ describe('AgentSession approvals', () => {
     })
     expect(resolveApproval('c3', true, false, 7)).toBe(false)
   })
+
+  it('settles a pending approval as rejected when the stream aborts', async () => {
+    const controller = new AbortController()
+    const pending = waitForApproval('c4', 'r4', controller.signal, 7)
+    controller.abort()
+    await expect(pending).resolves.toEqual({ approved: false, alwaysAllow: false })
+    // The call must not become approvable after the stream is gone.
+    expect(resolveApproval('c4', true, true, 7)).toBe(false)
+  })
 })

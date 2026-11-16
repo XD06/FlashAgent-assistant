@@ -960,6 +960,9 @@ function registerIpc(): void {
     // sending chunks into a destroyed WebContents.
     const sendChunk = (payload: Record<string, unknown>): void => {
       try {
+        // Last line of defence: after a stop, no chunk (not even done/error)
+        // may reach a renderer that already settled the turn locally.
+        if (controller.signal.aborted) return
         if (event.sender.isDestroyed()) {
           controller.abort()
           return
@@ -1067,6 +1070,7 @@ function registerIpc(): void {
         args: Record<string, unknown>,
         explicitCallId?: string
       ): Promise<string> => {
+        controller.signal.throwIfAborted()
         const callId = explicitCallId || randomUUID()
         const summary = summarizeToolCall(name, args, workingDir)
         const argsJson = argsJsonForEvent(args)
@@ -1102,6 +1106,10 @@ function registerIpc(): void {
         if (risk === 'dangerous' || (!approvalWaived && requiresApproval(name, args, workingDir))) {
           sendTool({ state: 'pending-approval' })
           const approval = await waitForApproval(callId, request.requestId, controller.signal, event.sender.id)
+          // waitForApproval resolves {approved:false} on abort (it does not
+          // reject), so a stop here must be re-thrown explicitly or the tool
+          // loop would treat it as a normal "user rejected" result.
+          controller.signal.throwIfAborted()
           if (approval.alwaysAllow) alwaysAllow = true
           if (!approval.approved) {
             sendTool({ state: 'rejected' })
@@ -1109,7 +1117,8 @@ function registerIpc(): void {
           }
         }
         sendTool({ state: 'running' })
-        const snapshot = await snapshotForMutation(name, args, workingDir)
+        let snapshot: Awaited<ReturnType<typeof snapshotForMutation>> = null
+        let snapshotSaved = false
         // Live output for long-running commands: keep the tail, throttle pushes.
         let liveBuffer = ''
         let liveTimer: NodeJS.Timeout | null = null
@@ -1122,6 +1131,10 @@ function registerIpc(): void {
           }, 300)
         }
         try {
+          // Snapshot inside the try so a size/IO refusal surfaces as a normal
+          // tool error instead of tearing down the whole stream.
+          snapshot = await snapshotForMutation(name, args, workingDir)
+          controller.signal.throwIfAborted()
           const output =
             name === 'read_tool_output'
               ? await readToolOutput(
@@ -1137,7 +1150,13 @@ function registerIpc(): void {
                   name === 'run_command' ? pushLiveOutput : undefined,
                   settings.commandShell
                 )
-          if (snapshot) void saveSnapshot(callId, snapshot)
+          // Persist the pre-image before the abort check: if the tool already
+          // wrote, the user must still be able to revert it.
+          if (snapshot) {
+            await saveSnapshot(callId, snapshot)
+            snapshotSaved = true
+          }
+          controller.signal.throwIfAborted()
           if (name !== 'read_tool_output') await saveToolOutput(callId, output)
           if (name === 'write_file' || name === 'edit_file') {
             const targetPath = typeof args.path === 'string' ? args.path : ''
@@ -1157,6 +1176,8 @@ function registerIpc(): void {
           sendTool({ state: 'done', result: capResultForEvent(output) })
           return output
         } catch (error) {
+          if (snapshot && !snapshotSaved) await saveSnapshot(callId, snapshot)
+          if (controller.signal.aborted) throw error
           const message = error instanceof Error ? error.message : String(error)
           sendTool({ state: 'error', result: message })
           return `[Tool failed: ${message}]`
@@ -1172,6 +1193,7 @@ function registerIpc(): void {
         args: Record<string, unknown>,
         explicitCallId?: string
       ): Promise<string> => {
+        controller.signal.throwIfAborted()
         const callId = explicitCallId || randomUUID()
         const summary = `${mcpManager.describeTool(name)} · ${JSON.stringify(args).slice(0, 160)}`
         const argsJson = argsJsonForEvent(args)
@@ -1187,6 +1209,9 @@ function registerIpc(): void {
         if (risk === 'dangerous' || !approvalWaived) {
           sendTool({ state: 'pending-approval' })
           const approval = await waitForApproval(callId, request.requestId, controller.signal, event.sender.id)
+          // See runAgentTool: abort resolves the approval promise, it does not
+          // reject it, so re-throw here before treating it as a rejection.
+          controller.signal.throwIfAborted()
           if (approval.alwaysAllow) alwaysAllow = true
           if (!approval.approved) {
             sendTool({ state: 'rejected' })
@@ -1195,10 +1220,13 @@ function registerIpc(): void {
         }
         sendTool({ state: 'running' })
         try {
+          controller.signal.throwIfAborted()
           const output = await mcpManager.callTool(name, args, controller.signal)
+          controller.signal.throwIfAborted()
           sendTool({ state: 'done', result: capResultForEvent(output) })
           return output.slice(0, 20_000)
         } catch (error) {
+          if (controller.signal.aborted) throw error
           const message = error instanceof Error ? error.message : String(error)
           sendTool({ state: 'error', result: message })
           return `[Tool failed: ${message}]`

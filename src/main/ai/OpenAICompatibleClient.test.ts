@@ -1133,3 +1133,133 @@ describe('stream completion and connection keep-alive handling', () => {
   })
 })
 
+describe('stream abort propagation', () => {
+  it('cancels the body and stops callbacks when aborted after the headers', async () => {
+    const encoder = new TextEncoder()
+    let readerCancelled = false
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"first"}}]}\n\n'))
+        // Keep the stream open: the old implementation only aborted while
+        // waiting for headers, so this read would hang until the 90s idle.
+      },
+      cancel() {
+        readerCancelled = true
+      }
+    })
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(body, { status: 200 }))
+
+    const controller = new AbortController()
+    const deltas: string[] = []
+    let firstDelta!: () => void
+    const sawFirst = new Promise<void>((resolve) => {
+      firstDelta = resolve
+    })
+    const promise = streamChatMessages(
+      provider,
+      [{ role: 'user', text: 'hi' }],
+      'system',
+      controller.signal,
+      (delta) => {
+        if (delta.content) {
+          deltas.push(delta.content)
+          firstDelta()
+        }
+      },
+      'off'
+    )
+    const outcome = promise.catch((error: unknown) => error)
+
+    await sawFirst
+    controller.abort()
+    const error = await outcome
+    expect(error).toMatchObject({ name: 'AbortError' })
+    expect(deltas).toEqual(['first'])
+    expect(readerCancelled).toBe(true)
+  })
+
+  it('does not deliver the rest of a multi-event chunk after an abort in the first callback', async () => {
+    const encoder = new TextEncoder()
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          encoder.encode(
+            'data: {"choices":[{"delta":{"content":"one"}}]}\n\n' +
+              'data: {"choices":[{"delta":{"content":"two"}}]}\n\n'
+          )
+        )
+      }
+    })
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(body, { status: 200 }))
+
+    const controller = new AbortController()
+    const deltas: string[] = []
+    const promise = streamChatMessages(
+      provider,
+      [{ role: 'user', text: 'hi' }],
+      'system',
+      controller.signal,
+      (delta) => {
+        if (!delta.content) return
+        deltas.push(delta.content)
+        controller.abort()
+      },
+      'off'
+    )
+    const outcome = promise.catch((error: unknown) => error)
+    const error = await outcome
+    expect(error).toMatchObject({ name: 'AbortError' })
+    expect(deltas).toEqual(['one'])
+  })
+
+  it('stops the tool loop when a tool callback returns normally after an abort', async () => {
+    const encoder = new TextEncoder()
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          encoder.encode(
+            'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c_abort","function":{"name":"run_command","arguments":"{}"}}]}}]}\n\n'
+          )
+        )
+        controller.close()
+      }
+    })
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(body, { status: 200 }))
+    const controller = new AbortController()
+    let toolStarted!: () => void
+    const started = new Promise<void>((resolve) => {
+      toolStarted = resolve
+    })
+    const onToolCall = vi.fn(async () => {
+      toolStarted()
+      await new Promise<void>((resolve) => {
+        controller.signal.addEventListener('abort', () => resolve(), { once: true })
+      })
+      // Mirrors waitForApproval: abort resolves to a "rejected" result instead
+      // of throwing. The loop must still stop on the signal check.
+      return '[User rejected this action.]'
+    })
+
+    const promise = streamChatMessages(
+      provider,
+      [{ role: 'user', text: 'run' }],
+      'system',
+      controller.signal,
+      () => {},
+      'off',
+      {
+        tools: [{ name: 'run_command', description: 'run', parameters: { type: 'object', properties: {} } }],
+        onToolCall,
+        maxToolRounds: 3
+      }
+    )
+    const outcome = promise.catch((error: unknown) => error)
+    await started
+    controller.abort()
+    const error = await outcome
+    expect(error).toMatchObject({ name: 'AbortError' })
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+    expect(onToolCall).toHaveBeenCalledTimes(1)
+  })
+})
+
