@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from 'node:fs'
 import { tmpdir, homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
@@ -16,9 +16,12 @@ import {
   requiresApproval,
   resolveAgentPath,
   resolveCommandShell,
+  restoreSnapshot,
   shellSyntaxLabel,
+  snapshotForMutation,
   summarizeToolCall
 } from './AgentTools'
+import { MAX_MUTATION_BYTES } from './mutationLimits'
 
 const workDir = mkdtempSync(join(tmpdir(), 'agent-tools-test-'))
 
@@ -679,5 +682,70 @@ describe('isReadOnlyTool classification', () => {
     expect(isReadOnlyTool('mcp__server__list_repos')).toBe(true)
     expect(isReadOnlyTool('mcp__server__delete_record')).toBe(false)
     expect(isReadOnlyTool('mcp__server__execute_sql')).toBe(false)
+  })
+})
+
+describe('mutation size limits', () => {
+  it('refuses to create a file larger than the limit and leaves no file behind', async () => {
+    const file = join(workDir, 'too-big-new.txt')
+    await expect(
+      executeAgentTool('write_file', { path: file, content: 'a'.repeat(MAX_MUTATION_BYTES + 1) }, workDir)
+    ).rejects.toThrow(/File mutation refused/)
+    expect(existsSync(file)).toBe(false)
+  })
+
+  it('refuses to overwrite an existing file larger than the limit', async () => {
+    const file = join(workDir, 'too-big-existing.txt')
+    const original = 'a'.repeat(MAX_MUTATION_BYTES + 1)
+    writeFileSync(file, original, 'utf8')
+    await expect(executeAgentTool('write_file', { path: file, content: 'small' }, workDir)).rejects.toThrow(
+      /File mutation refused/
+    )
+    expect(readFileSync(file, 'utf8')).toBe(original)
+  })
+
+  it('refuses to edit a file larger than the limit', async () => {
+    const file = join(workDir, 'too-big-edit.txt')
+    const original = 'a'.repeat(MAX_MUTATION_BYTES + 1)
+    writeFileSync(file, original, 'utf8')
+    await expect(
+      executeAgentTool('edit_file', { path: file, old_text: 'a', new_text: 'b', replace_all: true }, workDir)
+    ).rejects.toThrow(/File mutation refused/)
+    expect(readFileSync(file, 'utf8')).toBe(original)
+  })
+
+  it('refuses an edit whose result would exceed the limit, without writing', async () => {
+    const file = join(workDir, 'edit-grow.txt')
+    const original = `${'a'.repeat(MAX_MUTATION_BYTES - 20)}MARKER`
+    writeFileSync(file, original, 'utf8')
+    await expect(
+      executeAgentTool('edit_file', { path: file, old_text: 'MARKER', new_text: 'b'.repeat(100) }, workDir)
+    ).rejects.toThrow(/File mutation refused/)
+    expect(readFileSync(file, 'utf8')).toBe(original)
+  })
+
+  it('refuses a snapshot of a file larger than the limit', async () => {
+    const file = join(workDir, 'too-big-snapshot.txt')
+    writeFileSync(file, 'a'.repeat(MAX_MUTATION_BYTES + 1), 'utf8')
+    await expect(snapshotForMutation('edit_file', { path: file }, workDir)).rejects.toThrow(/File mutation refused/)
+  })
+
+  it('refuses to restore an oversized snapshot and keeps the target intact', async () => {
+    const target = join(workDir, 'restore-target.txt')
+    writeFileSync(target, 'keep me', 'utf8')
+    await expect(
+      restoreSnapshot({ path: target, content: 'a'.repeat(MAX_MUTATION_BYTES + 1) })
+    ).rejects.toThrow(/File mutation refused/)
+    expect(readFileSync(target, 'utf8')).toBe('keep me')
+  })
+
+  it('refuses a malformed snapshot instead of treating it as a created file', async () => {
+    const target = join(workDir, 'restore-malformed.txt')
+    writeFileSync(target, 'keep me', 'utf8')
+    await expect(
+      restoreSnapshot({ path: target, content: undefined as unknown as string })
+    ).rejects.toThrow(/Invalid snapshot/)
+    expect(existsSync(target)).toBe(true)
+    expect(readFileSync(target, 'utf8')).toBe('keep me')
   })
 })

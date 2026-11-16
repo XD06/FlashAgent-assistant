@@ -5,6 +5,7 @@ import { basename, dirname, isAbsolute, relative, resolve } from 'node:path'
 import { isWin } from '../platform'
 import type { ToolDefinition } from '../ai/OpenAICompatibleClient'
 import type { AiMessageInput, CommandShell, TodoItem } from '@shared/types'
+import { MAX_MUTATION_BYTES, mutationTooLargeError } from './mutationLimits'
 
 const MAX_READ_LINES = 2000
 // Reading loads the whole file into a string first — cap the size so the
@@ -292,8 +293,19 @@ async function readFileTool(workingDir: string, args: Record<string, unknown>): 
 async function writeFileTool(workingDir: string, args: Record<string, unknown>): Promise<string> {
   const filePath = resolveAgentPath(workingDir, asString(args.path))
   const content = asString(args.content)
+  const contentBytes = Buffer.byteLength(content, 'utf8')
+  if (contentBytes > MAX_MUTATION_BYTES) throw mutationTooLargeError(filePath, contentBytes)
+  // Refuse to replace a file we cannot snapshot: the undo path would be lost
+  // and the old content would be read into memory anyway.
+  let existed = true
+  try {
+    const stat = await fs.stat(filePath)
+    if (stat.size > MAX_MUTATION_BYTES) throw mutationTooLargeError(filePath, stat.size)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') throw error
+    existed = false
+  }
   await fs.mkdir(dirname(filePath), { recursive: true })
-  const existed = existsSync(filePath)
   await fs.writeFile(filePath, content, 'utf8')
   return `${existed ? 'Overwrote' : 'Created'} ${filePath} (${content.length} chars)`
 }
@@ -378,6 +390,8 @@ async function editFileTool(workingDir: string, args: Record<string, unknown>): 
   const oldText = asString(args.old_text)
   const newText = asString(args.new_text)
   if (!oldText) throw new Error('old_text must not be empty')
+  const stat = await fs.stat(filePath)
+  if (stat.size > MAX_MUTATION_BYTES) throw mutationTooLargeError(filePath, stat.size)
   const raw = await fs.readFile(filePath, 'utf8')
   // Tiered matching: exact bytes first, then line-ending tolerance, then
   // trailing-whitespace tolerance — each tier only runs when the stricter
@@ -395,6 +409,12 @@ async function editFileTool(workingDir: string, args: Record<string, unknown>): 
   if (ranges.length > 1 && args.replace_all !== true) {
     throw new Error(`old_text matches multiple locations (${ranges.length}) in ${basename(filePath)} — include more surrounding context to make it unique, or set replace_all to true`)
   }
+  let removedBytes = 0
+  for (const range of ranges) {
+    removedBytes += Buffer.byteLength(raw.slice(range.start, range.end), 'utf8')
+  }
+  const finalBytes = Buffer.byteLength(raw, 'utf8') - removedBytes + Buffer.byteLength(replacement, 'utf8') * ranges.length
+  if (finalBytes > MAX_MUTATION_BYTES) throw mutationTooLargeError(filePath, finalBytes)
   let next = ''
   let cursor = 0
   for (const range of ranges) {
@@ -865,12 +885,16 @@ export async function snapshotForMutation(
   workingDir: string
 ): Promise<MutationSnapshot | null> {
   if (name !== 'write_file' && name !== 'edit_file') return null
+  const filePath = resolveAgentPath(workingDir, asString(args.path))
   try {
-    const filePath = resolveAgentPath(workingDir, asString(args.path))
-    const content = existsSync(filePath) ? await fs.readFile(filePath, 'utf8') : null
-    return { path: filePath, content }
-  } catch {
-    return null
+    const stat = await fs.stat(filePath)
+    if (stat.size > MAX_MUTATION_BYTES) throw mutationTooLargeError(filePath, stat.size)
+    return { path: filePath, content: await fs.readFile(filePath, 'utf8') }
+  } catch (error) {
+    // Only "file does not exist yet" is a valid null snapshot. Permission and
+    // size errors must surface so the tool never mutates without an undo path.
+    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return { path: filePath, content: null }
+    throw error
   }
 }
 
@@ -878,9 +902,14 @@ export async function snapshotForMutation(
 export async function restoreSnapshot(snapshot: MutationSnapshot): Promise<void> {
   if (snapshot.content === null) {
     await fs.rm(snapshot.path, { force: true })
-  } else {
-    await fs.writeFile(snapshot.path, snapshot.content, 'utf8')
+    return
   }
+  if (typeof snapshot.content !== 'string') {
+    throw new Error(`Invalid snapshot for ${snapshot.path}; refusing to modify the file.`)
+  }
+  const bytes = Buffer.byteLength(snapshot.content, 'utf8')
+  if (bytes > MAX_MUTATION_BYTES) throw mutationTooLargeError(snapshot.path, bytes)
+  await fs.writeFile(snapshot.path, snapshot.content, 'utf8')
 }
 
 export async function executeAgentTool(
