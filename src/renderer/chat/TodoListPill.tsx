@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import type { TodoItem } from '@shared/types'
 
 export interface TodoListPillProps {
@@ -6,10 +6,33 @@ export interface TodoListPillProps {
   isZh: boolean
 }
 
-/** Non-blocking docked task bar directly above the chat composer. Expands inline
- * cleanly so active chat history is never covered by a floating overlay. */
+/** Floating task pill anchored centered just above .chat-input so it adds
+ * zero full-width row height between messages and composer. Clicking pops
+ * the checklist card cleanly above the pill without shifting chat layout. */
 export const TodoListPill: React.FC<TodoListPillProps> = ({ tasks, isZh }) => {
   const [expanded, setExpanded] = useState(false)
+  const wrapRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!expanded) return
+    const onPointerDown = (event: PointerEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(event.target as Node)) {
+        setExpanded(false)
+      }
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.stopPropagation()
+        setExpanded(false)
+      }
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    window.addEventListener('keydown', onKeyDown, true)
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown)
+      window.removeEventListener('keydown', onKeyDown, true)
+    }
+  }, [expanded])
 
   if (!tasks || tasks.length === 0) return null
 
@@ -20,7 +43,7 @@ export const TodoListPill: React.FC<TodoListPillProps> = ({ tasks, isZh }) => {
 
   const ratio = total > 0 ? completed / total : 0
   const hasInProgress = tasks.some((t) => t.status === 'in_progress')
-  const ringRadius = 5.5
+  const ringRadius = 4.8
   const ringCircumference = 2 * Math.PI * ringRadius
   const ringOffset = ringCircumference * (1 - ratio)
 
@@ -36,6 +59,7 @@ export const TodoListPill: React.FC<TodoListPillProps> = ({ tasks, isZh }) => {
 
   return (
     <div
+      ref={wrapRef}
       className={`todo-dock${expanded ? ' todo-dock--expanded' : ''}${isAllDone ? ' todo-dock--done' : hasInProgress ? ' todo-dock--active' : ''}`}
     >
       {expanded && (
@@ -81,19 +105,19 @@ export const TodoListPill: React.FC<TodoListPillProps> = ({ tasks, isZh }) => {
           aria-hidden="true"
         >
           {isAllDone ? (
-            <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
-              <circle cx="8" cy="8" r="6.5" fill="currentColor" fillOpacity="0.16" stroke="currentColor" strokeWidth="1.5" />
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+              <circle cx="8" cy="8" r="6.3" fill="currentColor" fillOpacity="0.16" stroke="currentColor" strokeWidth="1.5" />
               <path d="M5.2 8.2l1.8 1.8 3.8-3.8" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           ) : (
-            <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
-              <circle cx="8" cy="8" r={ringRadius} stroke="currentColor" strokeOpacity="0.22" strokeWidth="1.9" />
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+              <circle cx="8" cy="8" r={ringRadius} stroke="currentColor" strokeOpacity="0.22" strokeWidth="1.8" />
               <circle
                 cx="8"
                 cy="8"
                 r={ringRadius}
                 stroke="currentColor"
-                strokeWidth="2"
+                strokeWidth="1.9"
                 strokeDasharray={ringCircumference.toFixed(2)}
                 strokeDashoffset={ringOffset.toFixed(2)}
                 strokeLinecap="round"
@@ -109,8 +133,8 @@ export const TodoListPill: React.FC<TodoListPillProps> = ({ tasks, isZh }) => {
           </span>
           <svg
             className={`todo-dock__chevron${expanded ? ' todo-dock__chevron--open' : ''}`}
-            width="11.5"
-            height="11.5"
+            width="10.5"
+            height="10.5"
             viewBox="0 0 24 24"
             fill="none"
             stroke="currentColor"
@@ -120,9 +144,6 @@ export const TodoListPill: React.FC<TodoListPillProps> = ({ tasks, isZh }) => {
           >
             <polyline points="18 15 12 9 6 15" />
           </svg>
-        </span>
-        <span className="todo-dock__progress-track" aria-hidden="true">
-          <span className="todo-dock__progress-fill" style={{ width: `${Math.round(ratio * 100)}%` }} />
         </span>
       </button>
     </div>

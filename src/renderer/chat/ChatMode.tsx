@@ -3469,9 +3469,8 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
         />
       )}
 
-      {todoList && todoList.length > 0 && <TodoListPill tasks={todoList} isZh={isZh} />}
-
       <div className={`chat-input${temporaryChat ? ' chat-input--temporary' : ''}`}>
+        {todoList && todoList.length > 0 && <TodoListPill tasks={todoList} isZh={isZh} />}
         {queued.length > 0 && (
           <div className="chat-queue">
             {queued.map((q, i) => (
