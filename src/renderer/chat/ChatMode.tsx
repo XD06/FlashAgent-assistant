@@ -790,18 +790,28 @@ function AgentToolGroup({
   )
   const diffStats = React.useMemo(() => aggregateEventDiffStats(events), [events])
   const isLiveGroup = active || (current && live)
-  const groupDotClass = isLiveGroup
-    ? 'agent-tool-group__dot--live'
-    : hasError
-      ? 'agent-tool-group__dot--err'
-      : 'agent-tool-group__dot--done'
   return (
     <div className={`agent-tool-group${open ? ' agent-tool-group--open' : ''}${isLiveGroup ? ' agent-tool-group--live' : ''}`}>
       <div className="agent-tool-group__header" onClick={() => setManual(!open)}>
         <span className="agent-tool-group__chevron">
           <Icon name="chevron-down" size={12} />
         </span>
-        <span className={`agent-tool-group__dot ${groupDotClass}`} aria-hidden="true" />
+        {isLiveGroup ? (
+          <span className="agent-tool-group__status agent-tool-group__status--live" aria-hidden="true">
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+              <circle cx="8" cy="8" r="5.5" stroke="currentColor" strokeOpacity="0.22" strokeWidth="1.7" />
+              <path d="M8 2.5a5.5 5.5 0 0 1 5.5 5.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+            </svg>
+          </span>
+        ) : hasError ? (
+          <span className="agent-tool-group__status agent-tool-group__status--err" aria-hidden="true">
+            <Icon name="x" size={12} />
+          </span>
+        ) : (
+          <span className="agent-tool-group__status agent-tool-group__status--done" aria-hidden="true">
+            <Icon name="check" size={12} />
+          </span>
+        )}
         <span className="agent-tool-group__title">{summaryLabel}</span>
         {!open && diffStats && (
           <span className="agent-tool-row__diffstats">
@@ -847,7 +857,7 @@ function TurnProcessTrace({
           <Icon name="chevron-down" size={12} />
         </span>
         <span className="agent-process-trace__badge" aria-hidden="true">
-          <Icon name="bolt" size={11} />
+          <Icon name="bolt" size={12} />
         </span>
         <span className="agent-process-trace__title">{summary.label}</span>
         {summary.diff && (
