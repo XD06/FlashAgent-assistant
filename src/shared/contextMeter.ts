@@ -92,20 +92,62 @@ function addJson(acc: MutableMeasurement, value: unknown, material: MessageMater
   }
 }
 
-function base64ByteLength(base64: string): number {
-  const normalized = base64.replace(/\s/g, '')
-  if (!normalized) return 0
-  const padding = normalized.endsWith('==') ? 2 : normalized.endsWith('=') ? 1 : 0
-  return Math.max(0, Math.floor((normalized.length * 3) / 4) - padding)
+function byteLengthOfCleanBase64(clean: string): number {
+  if (!clean) return 0
+  const padding = clean.endsWith('==') ? 2 : clean.endsWith('=') ? 1 : 0
+  return Math.max(0, Math.floor((clean.length * 3) / 4) - padding)
 }
 
-function decodeBase64(base64: string): string | null {
+function base64ByteLength(base64: string): number {
+  const clean = /\s/.test(base64) ? base64.replace(/\s/g, '') : base64
+  return byteLengthOfCleanBase64(clean)
+}
+
+/**
+ * Decode a small byte window without materialising the whole image. Offsets
+ * are aligned out to 3-byte/4-char quanta so the slice stays valid base64.
+ * Image data URLs produced by canvas/Electron carry no whitespace; the one
+ * normalisation happens in readImageDimensionsFromBase64.
+ */
+function readBase64Window(base64: string, byteOffset: number, count: number): string | null {
+  if (byteOffset < 0 || count <= 0) return null
+  const startChar = Math.floor(byteOffset / 3) * 4
+  const endChar = Math.min(base64.length, Math.ceil((byteOffset + count) / 3) * 4)
+  if (startChar >= base64.length || endChar <= startChar) return null
   try {
     if (typeof globalThis.atob !== 'function') return null
-    return globalThis.atob(base64.replace(/\s/g, ''))
+    const decoded = globalThis.atob(base64.slice(startChar, endChar))
+    const start = byteOffset - (startChar / 4) * 3
+    return decoded.slice(start, start + count)
   } catch {
     return null
   }
+}
+
+/**
+ * Cheap, O(1) fingerprint used as the dimension-cache key. It samples at most
+ * ~224 characters instead of hashing (or storing) the whole payload, so a
+ * 20MB screenshot is never retained by the cache. A collision can only
+ * mis-estimate imagePixels for one request; it cannot affect the image data.
+ */
+function imageFingerprint(base64: string): string {
+  const length = base64.length
+  let h1 = 0x811c9dc5
+  let h2 = 0x9e3779b9
+  const mix = (start: number, size: number): void => {
+    const end = Math.min(length, start + size)
+    for (let i = start; i < end; i++) {
+      const code = base64.charCodeAt(i)
+      h1 = Math.imul(h1 ^ code, 0x01000193) >>> 0
+      h2 = Math.imul(h2 ^ code, 0x85ebca6b) >>> 0
+    }
+  }
+  mix(0, 64)
+  mix(Math.max(0, length - 64), 64)
+  for (let k = 1; k <= 6; k++) {
+    mix(Math.min(Math.max(0, length - 16), Math.floor((length * k) / 7)), 16)
+  }
+  return `${length}:${h1.toString(36)}:${h2.toString(36)}`
 }
 
 function readUint16(binary: string, offset: number, littleEndian = false): number | null {
@@ -125,58 +167,78 @@ function readUint32(binary: string, offset: number): number | null {
   )
 }
 
-function readImageDimensions(binary: string): { width: number; height: number } | null {
-  if (
-    binary.length >= 24 &&
-    binary.slice(0, 8) === '\x89PNG\r\n\x1a\n'
-  ) {
-    const width = readUint32(binary, 16)
-    const height = readUint32(binary, 20)
-    return width && height ? { width, height } : null
-  }
-  if (binary.length >= 10 && (binary.slice(0, 6) === 'GIF87a' || binary.slice(0, 6) === 'GIF89a')) {
-    const width = readUint16(binary, 6, true)
-    const height = readUint16(binary, 8, true)
-    return width && height ? { width, height } : null
-  }
-  if (binary.length < 10 || binary.charCodeAt(0) !== 0xff || binary.charCodeAt(1) !== 0xd8) return null
-
+function readJpegDimensions(base64: string, totalBytes: number): { width: number; height: number } | null {
   let offset = 2
-  while (offset + 8 < binary.length) {
-    while (offset < binary.length && binary.charCodeAt(offset) === 0xff) offset += 1
-    const marker = binary.charCodeAt(offset)
-    offset += 1
-    if (marker === 0xd8 || marker === 0xd9 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) continue
-    const segmentLength = readUint16(binary, offset)
-    if (!segmentLength || segmentLength < 2 || offset + segmentLength > binary.length) return null
-    const isStartOfFrame = (marker >= 0xc0 && marker <= 0xc3) || (marker >= 0xc5 && marker <= 0xc7) || (marker >= 0xc9 && marker <= 0xcb) || (marker >= 0xcd && marker <= 0xcf)
+  while (offset + 9 <= totalBytes) {
+    const head = readBase64Window(base64, offset, 12)
+    if (!head || head.length < 9 || head.charCodeAt(0) !== 0xff) return null
+    const marker = head.charCodeAt(1)
+    if (marker === 0xff) {
+      // Fill byte before the real marker.
+      offset += 1
+      continue
+    }
+    if (marker === 0xd8 || marker === 0xd9 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) {
+      offset += 2
+      continue
+    }
+    const segmentLength = (head.charCodeAt(2) << 8) | head.charCodeAt(3)
+    if (!segmentLength || segmentLength < 2 || offset + 2 + segmentLength > totalBytes) return null
+    const isStartOfFrame =
+      (marker >= 0xc0 && marker <= 0xc3) ||
+      (marker >= 0xc5 && marker <= 0xc7) ||
+      (marker >= 0xc9 && marker <= 0xcb) ||
+      (marker >= 0xcd && marker <= 0xcf)
     if (isStartOfFrame) {
-      const height = readUint16(binary, offset + 3)
-      const width = readUint16(binary, offset + 5)
+      // FF marker | length | precision | height | width
+      const height = (head.charCodeAt(5) << 8) | head.charCodeAt(6)
+      const width = (head.charCodeAt(7) << 8) | head.charCodeAt(8)
       return width && height ? { width, height } : null
     }
-    offset += segmentLength
+    offset += 2 + segmentLength
+  }
+  return null
+}
+
+function readImageDimensionsFromBase64(base64: string): { width: number; height: number } | null {
+  const clean = /\s/.test(base64) ? base64.replace(/\s/g, '') : base64
+  const totalBytes = byteLengthOfCleanBase64(clean)
+  if (totalBytes < 10) return null
+  const head = readBase64Window(clean, 0, 24)
+  if (!head) return null
+  if (head.length >= 24 && head.slice(0, 8) === '\x89PNG\r\n\x1a\n') {
+    const width = readUint32(head, 16)
+    const height = readUint32(head, 20)
+    return width && height ? { width, height } : null
+  }
+  if (head.length >= 10 && (head.slice(0, 6) === 'GIF87a' || head.slice(0, 6) === 'GIF89a')) {
+    const width = readUint16(head, 6, true)
+    const height = readUint16(head, 8, true)
+    return width && height ? { width, height } : null
+  }
+  if (head.length >= 2 && head.charCodeAt(0) === 0xff && head.charCodeAt(1) === 0xd8) {
+    return readJpegDimensions(clean, totalBytes)
   }
   return null
 }
 
 // measureContext runs once per tool round over the whole message history, so
-// the same image payloads get re-parsed every round. Cache dimensions by the
-// base64 payload itself (keys are references, values are two numbers) — FIFO
-// and bounded so dropped history images are not retained forever.
+// the same image payloads get re-parsed every round. Cache by a small sampled
+// fingerprint — never by the base64 payload itself — so a dropped history
+// image is not retained by this module for the window's lifetime.
 const IMAGE_DIMENSION_CACHE_LIMIT = 16
 const imageDimensionsCache = new Map<string, { width: number; height: number } | null>()
 
 function cachedImageDimensions(base64: string): { width: number; height: number } | null {
-  const cached = imageDimensionsCache.get(base64)
+  const key = imageFingerprint(base64)
+  const cached = imageDimensionsCache.get(key)
   if (cached !== undefined) return cached
-  const binary = decodeBase64(base64)
-  const dimensions = binary ? readImageDimensions(binary) : null
+  const dimensions = readImageDimensionsFromBase64(base64)
   if (imageDimensionsCache.size >= IMAGE_DIMENSION_CACHE_LIMIT) {
     const oldest = imageDimensionsCache.keys().next().value
     if (oldest !== undefined) imageDimensionsCache.delete(oldest)
   }
-  imageDimensionsCache.set(base64, dimensions)
+  imageDimensionsCache.set(key, dimensions)
   return dimensions
 }
 

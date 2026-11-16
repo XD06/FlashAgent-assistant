@@ -131,4 +131,52 @@ describe('measureContext', () => {
     expect(atobSpy.mock.calls.length).toBe(before + 1)
     atobSpy.mockRestore()
   })
+
+  it('reads JPEG dimensions past a large APP segment and progressive SOF', () => {
+    const appPayload = new Array<number>(4096).fill(0x41)
+    const bytes = [
+      0xff, 0xd8,
+      // APP1 with a 4098-byte segment (2 length bytes + 4096 payload)
+      0xff, 0xe1, 0x10, 0x02, ...appPayload,
+      // Progressive SOF2: 10×20
+      0xff, 0xc2, 0x00, 0x0b, 0x08, 0x00, 0x14, 0x00, 0x0a, 0x01, 0x01, 0x11, 0x00,
+      0xff, 0xd9
+    ]
+    const dataUrl = `data:image/jpeg;base64,${btoa(String.fromCharCode(...bytes))}`
+    const measurement = measureContext({
+      systemPrompt: '',
+      messages: [{ role: 'user', content: [{ type: 'image_url', image_url: { url: dataUrl } }] }]
+    })
+    expect(measurement.imagesWithKnownDimensions).toBe(1)
+    expect(measurement.imagePixels).toBe(200)
+  })
+
+  it('tolerates whitespace in the base64 payload', () => {
+    const raw = btoa(String.fromCharCode(0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x03, 0x00, 0x04, 0x00))
+    const wrapped = raw.replace(/(.{4})/g, '$1\n')
+    const measurement = measureContext({
+      systemPrompt: '',
+      messages: [{ role: 'user', content: [{ type: 'image_url', image_url: { url: `data:image/gif;base64,${wrapped}` } }] }]
+    })
+    expect(measurement.imagesWithKnownDimensions).toBe(1)
+    expect(measurement.imagePixels).toBe(12)
+  })
+
+  it('decodes only a small window for a huge payload', () => {
+    // 12 bytes so the header itself has no padding; appending raw base64
+    // characters keeps the payload valid enough for the header parser.
+    const header = btoa(
+      String.fromCharCode(0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00)
+    )
+    const huge = `${header}${'A'.repeat(1_000_000)}`
+    const atobSpy = vi.spyOn(globalThis, 'atob')
+    const measurement = measureContext({
+      systemPrompt: '',
+      messages: [{ role: 'user', content: [{ type: 'image_url', image_url: { url: `data:image/gif;base64,${huge}` } }] }]
+    })
+    expect(measurement.imagePixels).toBe(1)
+    const longestAtobInput = Math.max(...atobSpy.mock.calls.map((call) => String(call[0]).length))
+    expect(longestAtobInput).toBeLessThan(64)
+    atobSpy.mockRestore()
+  })
 })
