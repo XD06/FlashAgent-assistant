@@ -192,7 +192,10 @@ export class McpManager {
     const entry = this.servers.get(id)
     if (!entry) return
     this.servers.delete(id)
-    if (entry.client) closeClient(entry.client)
+    if (entry.client) {
+      closeClient(entry.client)
+      entry.client = null
+    }
   }
 
   private async connect(config: McpServerConfig): Promise<void> {
@@ -213,8 +216,16 @@ export class McpManager {
         closeClient(client)
         return
       }
-      const listed = await client.listTools(undefined, { timeout: CALL_TIMEOUT_MS })
+      // Own the client before the first await: a reconnect/delete during
+      // listTools must be able to close it, and a listTools failure below must
+      // not leave an orphaned server process behind.
       entry.client = client
+      const listed = await client.listTools(undefined, { timeout: CALL_TIMEOUT_MS })
+      if (this.servers.get(config.id) !== entry) {
+        closeClient(client)
+        entry.client = null
+        return
+      }
       const taken = this.takenExposedNames(config.id)
       entry.tools = listed.tools.map((tool) => {
         const exposedName = dedupeMcpToolName(buildMcpToolName(config.name, tool.name), taken)
@@ -231,7 +242,15 @@ export class McpManager {
       })
       entry.state = 'connected'
     } catch (error) {
-      if (this.servers.get(config.id) !== entry) return
+      if (this.servers.get(config.id) !== entry) {
+        // A drop/reconnect already closed (or is closing) this client.
+        if (client && entry.client === client) closeClient(client)
+        return
+      }
+      if (entry.client) {
+        closeClient(entry.client)
+        entry.client = null
+      }
       entry.state = 'error'
       const baseErr = error instanceof Error ? error.message : String(error)
       const recentLogs = stderrBuffer.length > 0 ? stderrBuffer.slice(-2).join('; ') : ''

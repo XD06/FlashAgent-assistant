@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { McpManager } from './McpManager'
+import type { McpServerConfig } from '@shared/types'
 
 function addConnectedServer(manager: McpManager, id: string): void {
   const internals = manager as unknown as {
@@ -28,5 +29,30 @@ describe('McpManager tool availability', () => {
 
     expect(manager.getToolDefinitions(new Set())).toEqual([])
     expect(manager.getToolDefinitions(new Set(['selected'])).map((tool) => tool.name)).toEqual(['mcp__selected__read'])
+  })
+})
+
+describe('McpManager failed connection cleanup', () => {
+  it('closes the client when listTools fails instead of leaking its process', async () => {
+    const manager = new McpManager()
+    const close = vi.fn().mockResolvedValue(undefined)
+    const listTools = vi.fn().mockRejectedValue(new Error('listTools failed'))
+    const internals = manager as unknown as {
+      openClient: () => Promise<unknown>
+      connect: (config: McpServerConfig) => Promise<void>
+    }
+    internals.openClient = vi.fn().mockResolvedValue({ listTools, close, transport: null })
+    const config: McpServerConfig = {
+      id: 'broken',
+      name: 'broken',
+      transport: 'stdio',
+      command: 'npx broken',
+      enabled: true
+    }
+
+    await internals.connect(config)
+
+    expect(close).toHaveBeenCalledTimes(1)
+    expect(manager.getStatuses([config])[0]).toMatchObject({ state: 'error' })
   })
 })
