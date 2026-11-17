@@ -62,6 +62,7 @@ async function loadModule(): Promise<PaddleOcrModule> {
 let service: PaddleOcrEngine | null = null
 let initPromise: Promise<PaddleOcrEngine> | null = null
 let idleTimer: NodeJS.Timeout | null = null
+let activeRecognitions = 0
 
 async function createService(): Promise<PaddleOcrEngine> {
   const { PaddleOcrService } = await loadModule()
@@ -120,11 +121,22 @@ export async function recognizeWithPaddle(
   const started = Date.now()
   const arrayBuffer = png.buffer.slice(png.byteOffset, png.byteOffset + png.byteLength)
   const ocr = await getOcr()
-  const result = await ocr.recognize(arrayBuffer, { flatten: true })
-  scheduleIdleDestroy()
-  return {
-    text: (result.text ?? '').trim(),
-    confidence: typeof result.confidence === 'number' ? result.confidence : null,
-    elapsedMs: Date.now() - started
+  activeRecognitions += 1
+  if (idleTimer) {
+    clearTimeout(idleTimer)
+    idleTimer = null
+  }
+  try {
+    const result = await ocr.recognize(arrayBuffer, { flatten: true })
+    return {
+      text: (result.text ?? '').trim(),
+      confidence: typeof result.confidence === 'number' ? result.confidence : null,
+      elapsedMs: Date.now() - started
+    }
+  } finally {
+    // A failed recognition must not leave the ~200MB engine resident until
+    // app exit. Only start the idle timer when no other call is in flight.
+    activeRecognitions = Math.max(0, activeRecognitions - 1)
+    if (activeRecognitions === 0) scheduleIdleDestroy()
   }
 }
