@@ -1,6 +1,7 @@
 import { existsSync, promises as fs } from 'node:fs'
 import { join } from 'node:path'
 import { app } from 'electron'
+import type { TopicSaveResult } from '@shared/types'
 
 // Chat history on disk: one shard file per topic under `chat-topics/`, plus a
 // small index.json holding the sidebar order. Rewriting the whole
@@ -28,8 +29,39 @@ const states = new Map<string, ShardState>()
 // state object — two independently created states would lose each other's
 // order/materialized bookkeeping.
 const stateInFlight = new Map<string, Promise<ShardState>>()
-let pendingSave: { topics: unknown[]; changed: Set<string> | null; baseDir: string } | null = null
-let saveInFlight: Promise<boolean> | null = null
+
+interface PendingJob {
+  /** A complete snapshot from the legacy/full-save entry point. */
+  full: { topics: unknown[]; changed: Set<string> | null } | null
+  /** Only the topic bodies declared changed by the renderer. */
+  upserts: Map<string, unknown>
+  /** New sidebar order (full ids, including untouched topics). */
+  order: string[] | null
+}
+
+interface SaveQueue {
+  pending: PendingJob
+  running: boolean
+  promise: Promise<TopicSaveResult> | null
+}
+
+// One queue per baseDir: portable/test saves must not interleave with the
+// default userData history. The renderer sends patches serially, so this also
+// guarantees index and shard writes land in arrival order.
+const queues = new Map<string, SaveQueue>()
+
+function getQueue(baseDir: string): SaveQueue {
+  let queue = queues.get(baseDir)
+  if (!queue) {
+    queue = { pending: { full: null, upserts: new Map(), order: null }, running: false, promise: null }
+    queues.set(baseDir, queue)
+  }
+  return queue
+}
+
+function hasWork(pending: PendingJob): boolean {
+  return !!pending.full || pending.upserts.size > 0 || pending.order !== null
+}
 
 function baseDirOf(customDir?: string): string {
   return customDir || (app ? app.getPath('userData') : process.cwd())
@@ -124,9 +156,122 @@ async function writeShards(next: { topics: unknown[]; changed: Set<string> | nul
   }
 }
 
-function mergeChanged(prev: Set<string> | null, next: Set<string> | null): Set<string> | null {
-  if (!prev || !next) return null
-  return new Set([...prev, ...next])
+function takeJob(pending: PendingJob): PendingJob {
+  const job: PendingJob = {
+    full: pending.full,
+    upserts: new Map(pending.upserts),
+    order: pending.order
+  }
+  pending.full = null
+  pending.upserts.clear()
+  pending.order = null
+  return job
+}
+
+function sameOrder(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((id, index) => id === b[index])
+}
+
+/**
+ * Apply a renderer patch: only the upserted shards and the index are written.
+ * Returns needsFull when the shard layout is not materialized yet or a new
+ * order entry has no body — the renderer then retries once with the full
+ * snapshot (the only path that can write a legacy single file).
+ */
+async function writeIncremental(
+  baseDir: string,
+  order: string[],
+  upserts: Map<string, unknown>,
+  state: ShardState
+): Promise<TopicSaveResult> {
+  if (!state.materialized) return { ok: false, needsFull: true }
+  const keep = new Set(order)
+  if (keep.size !== order.length) return { ok: false, needsFull: true }
+  const known = new Set(state.order)
+  for (const id of order) {
+    if (!known.has(id) && !upserts.has(id)) return { ok: false, needsFull: true }
+  }
+  for (const id of upserts.keys()) {
+    if (!keep.has(id)) return { ok: false, needsFull: true }
+  }
+
+  const dir = shardDirOf(baseDir)
+  await fs.mkdir(dir, { recursive: true })
+  for (const oldId of state.order) {
+    if (!keep.has(oldId)) await fs.rm(join(dir, shardFileName(oldId)), { force: true })
+  }
+  for (const [id, topic] of upserts) {
+    const file = join(dir, shardFileName(id))
+    const tmp = `${file}.tmp`
+    await fs.writeFile(tmp, JSON.stringify(topic), 'utf8')
+    await fs.rename(tmp, file)
+  }
+  const indexFile = join(dir, INDEX_FILE_NAME)
+  const indexTmp = `${indexFile}.tmp`
+  await fs.writeFile(indexTmp, JSON.stringify({ version: INDEX_VERSION, order }), 'utf8')
+  await fs.rename(indexTmp, indexFile)
+  state.order = order
+  state.materialized = true
+  return { ok: true }
+}
+
+async function writeJob(baseDir: string, job: PendingJob): Promise<TopicSaveResult> {
+  const state = await ensureState(baseDir)
+  if (job.full) {
+    await writeShards({ topics: job.full.topics, changed: job.full.changed, baseDir })
+    // A patch queued after the full snapshot still needs to be applied (the
+    // full write may not contain it). When it is just the full snapshot's own
+    // order, skip the extra index rewrite.
+    if (job.upserts.size === 0 && (!job.order || sameOrder(job.order, idsOf(job.full.topics)))) {
+      return { ok: true }
+    }
+  }
+  return writeIncremental(baseDir, job.order ?? state.order, job.upserts, state)
+}
+
+function drain(baseDir: string): Promise<TopicSaveResult> {
+  const queue = getQueue(baseDir)
+  if (queue.running) return queue.promise!
+  queue.running = true
+  queue.promise = (async () => {
+    let ok = true
+    let needsFull = false
+    while (true) {
+      if (!hasWork(queue.pending)) {
+        // No await between this check and clearing the flag: an enqueue can
+        // only run between awaits, so it either lands before this check (and
+        // is drained) or after running=false (and starts a new drain).
+        queue.running = false
+        break
+      }
+      const job = takeJob(queue.pending)
+      try {
+        const result = await writeJob(baseDir, job)
+        if (!result.ok) ok = false
+        if (result.needsFull) needsFull = true
+      } catch (err) {
+        ok = false
+        console.error('[saveTopicsToDisk] failed:', err)
+      }
+    }
+    return needsFull ? { ok, needsFull: true } : { ok }
+  })()
+  return queue.promise
+}
+
+function enqueueFull(baseDir: string, topics: unknown[], changed: Set<string> | null): void {
+  const queue = getQueue(baseDir)
+  queue.pending.full = { topics, changed }
+  // The full snapshot supersedes any earlier patch: it was produced later by
+  // the renderer and already contains those changes.
+  queue.pending.upserts.clear()
+  queue.pending.order = idsOf(topics)
+}
+
+function enqueuePatch(baseDir: string, order: string[], upserts: Array<{ id: string }>): void {
+  const queue = getQueue(baseDir)
+  for (const topic of upserts) queue.pending.upserts.set(topic.id, topic)
+  queue.pending.order = order
 }
 
 export async function saveTopicsToDisk(
@@ -137,32 +282,47 @@ export async function saveTopicsToDisk(
   const state = await ensureState(baseDir)
   const changed =
     state.materialized && Array.isArray(options.changedTopicIds) ? new Set(options.changedTopicIds) : null
-  pendingSave = {
-    topics,
-    // Overlapping saves merge their change sets and keep the newest array —
-    // the drained write then covers every id from both, at latest content.
-    changed: pendingSave ? mergeChanged(pendingSave.changed, changed) : changed,
-    baseDir
-  }
-  if (saveInFlight) return saveInFlight
+  enqueueFull(baseDir, topics, changed)
+  const result = await drain(baseDir)
+  return result.ok
+}
 
-  saveInFlight = (async () => {
-    let ok = true
-    while (pendingSave) {
-      const next = pendingSave
-      pendingSave = null
-      try {
-        await writeShards(next)
-      } catch (err) {
-        ok = false
-        console.error('[saveTopicsToDisk] failed:', err)
-      }
-    }
-    return ok
-  })().finally(() => {
-    saveInFlight = null
-  })
-  return saveInFlight
+/**
+ * Incremental save used by the chat renderer: send the new id order plus only
+ * the topic bodies that changed. The main process keeps every untouched shard
+ * on disk and never receives the whole history over IPC.
+ */
+export async function saveTopicChangesToDisk(
+  payload: { order?: unknown; upserts?: unknown },
+  options: { customDir?: string } = {}
+): Promise<TopicSaveResult> {
+  const baseDir = baseDirOf(options.customDir)
+  if (!payload || !Array.isArray(payload.order) || !Array.isArray(payload.upserts)) {
+    return { ok: false, needsFull: true }
+  }
+  const order = payload.order.filter((id): id is string => typeof id === 'string')
+  if (order.length !== payload.order.length || new Set(order).size !== order.length) {
+    return { ok: false, needsFull: true }
+  }
+  const upserts = payload.upserts.filter(
+    (topic): topic is { id: string } =>
+      !!topic && typeof topic === 'object' && typeof (topic as { id?: unknown }).id === 'string'
+  )
+  if (upserts.length !== payload.upserts.length) return { ok: false, needsFull: true }
+  const orderSet = new Set(order)
+  for (const topic of upserts) {
+    if (!orderSet.has(topic.id)) return { ok: false, needsFull: true }
+  }
+
+  const state = await ensureState(baseDir)
+  if (!state.materialized) return { ok: false, needsFull: true }
+  const known = new Set(state.order)
+  const upsertIds = new Set(upserts.map((topic) => topic.id))
+  for (const id of order) {
+    if (!known.has(id) && !upsertIds.has(id)) return { ok: false, needsFull: true }
+  }
+  enqueuePatch(baseDir, order, upserts)
+  return drain(baseDir)
 }
 
 async function readShards(

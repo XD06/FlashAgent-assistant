@@ -25,7 +25,7 @@ import { mcpManager } from './mcp/McpManager'
 import { applyProxy, getEffectiveProxyUrl, testProxy } from './proxy'
 import { assessMcpRisk, isMcpToolName } from './mcp/mcpUtil'
 
-import { loadTopicsFromDisk, saveTopicsToDisk } from './chatTopicsStore'
+import { loadTopicsFromDisk, saveTopicChangesToDisk, saveTopicsToDisk } from './chatTopicsStore'
 import { APP_ICON_PNG_BASE64, TRAY_ICON_PNG_BASE64 } from './iconTiers'
 import { autoRepairRecapDoc, stripDocJunk, validateRecapDoc } from '@shared/recapDoc'
 import { ScreenshotService } from './ScreenshotService'
@@ -1448,6 +1448,9 @@ function registerIpc(): void {
       ? payload.changedTopicIds.filter((id): id is string => typeof id === 'string')
       : undefined
     return saveTopicsToDisk(payload.topics, { changedTopicIds })
+  })
+  ipcMain.handle(IPC.ChatSaveTopicChanges, async (_event, payload: { order?: unknown; upserts?: unknown }) => {
+    return saveTopicChangesToDisk(payload)
   })
   ipcMain.handle(IPC.AiListModels, (_event, providerTemplateId?: string) =>
     listModels(resolveProvider(getSettings(), providerTemplateId), { fetcher: providerFetch })

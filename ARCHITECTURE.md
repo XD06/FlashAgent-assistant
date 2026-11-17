@@ -82,7 +82,7 @@ graph TD
 - **渲染视图与实时预览**：代码块采用 highlight.js 高亮与自适应高度折叠，HTML/SVG 支持无缝切入独立沙箱 iframe 实时预览与全屏覆盖，采用虚拟隐藏与 DOM 缓存杜绝 RenderFrame 重建卡顿；预览帧为 opaque origin（刻意不授予 `allow-same-origin`，srcdoc 继承父源后能经 `window.parent` 拿到 contextBridge）。
 - **翻译/词典/TTS 上游**：均为 Web API，各自需要签名或固定请求头；Edge TTS 补充请求头防盗链绕过，小米 MiMo TTS 走 OpenAI 兼容聊天补全端点合成音频；有道 dictvoice 音频有防盗链，经主进程代理换 data URL。
 - **MCP**：`@modelcontextprotocol/sdk` 懒加载（首次连接才 import），自动向 stdio 子进程与远程 MCP 注入系统/应用网络代理、清洗嵌套 `cmd /c` 与补充 `-y` 参数、实时捕获 stderr 管道排查日志，并支持行内配置可视化修改与热重载。工具注册时对 sanitize 后重名的工具名加 `__N` 后缀，调用不会误路由到先连接的 server。
-- **聊天持久化**：分片存储——`chat-topics/<topicId>.json` 每话题一文件 + `index.json` 记侧栏顺序，渲染端保存时声明变更的话题 id，主进程只重写对应分片与索引（单飞行合并、tmp+rename 原子落盘），流式结束不再全量序列化阻塞主进程；旧版单文件 `chat-topics.json` 在首次分片保存后自动退役为 `.bak`，分片布局就绪前声明式增量自动降级为全量保存（不会丢话题）。
+- **聊天持久化**：分片存储——`chat-topics/<topicId>.json` 每话题一文件 + `index.json` 记侧栏顺序。渲染端通过 `chat:save-topic-changes` 只传「新顺序 + 变更话题正文」，主进程按 baseDir 维护串行队列（同 id 后到覆盖、旧全量快照优先替换基线），只重写变更分片与索引（tmp+rename 原子落盘）；分片布局未就绪或新顺序缺少正文时返回 `needsFull`，渲染端回退一次全量保存。旧版单文件 `chat-topics.json` 在首次分片保存后自动退役为 `.bak`。注意：所有话题正文目前仍常驻渲染进程内存，按需加载尚未实现。
 
 - **OS 集成**：`selection-hook`（划词，Windows/macOS 双实现）、`csc.exe` 编译的 helper、`Windows.Media.Ocr`、系统托盘与全局快捷键。交给系统外壳的链接只有 `app:open-external` 一条通道且只放行 http(s)/mailto（Windows 的 `shell.openExternal` 会执行盘符路径与 `file:` 指向的 .lnk/.exe）；`will-navigate` 一律阻止，仅放行当前文档重载。
 

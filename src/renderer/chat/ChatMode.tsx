@@ -324,18 +324,103 @@ function loadInitialTopics(): ChatTopic[] {
   return typeof bridge?.chat?.loadTopics === 'function' ? [] : loadLocalTopics()
 }
 
-function saveTopics(topics: ChatTopic[], changedTopicIds?: string[]): boolean {
-  try {
-    if (window.assistantLite?.chat?.saveTopics) {
-      // The main process rewrites only the changed topic shards; omit the ids
-      // for full reconciliation (migration paths, unknown-scope callers).
-      void window.assistantLite.chat.saveTopics(topics, changedTopicIds)
+interface TopicSaveJob {
+  topics: ChatTopic[]
+  changed: Set<string>
+  /** A full snapshot (new topic / migration / fallback), not a patch. */
+  full: boolean
+}
+
+let pendingTopicSave: TopicSaveJob | null = null
+let topicSaveInFlight: Promise<boolean> | null = null
+let topicSaveRunning = false
+
+// Read through a function: TypeScript's control-flow analysis assumes the
+// module variable stays null across the await, but another save may have
+// queued newer work while the IPC write was in flight.
+function currentPendingSave(): TopicSaveJob | null {
+  return pendingTopicSave
+}
+
+function saveTopics(topics: ChatTopic[], changedTopicIds?: string[]): Promise<boolean> {
+  const bridge = window.assistantLite?.chat
+  // Browser preview has no durable store; keep the old "silently succeed"
+  // behaviour instead of showing a save-failure toast.
+  if (!bridge) return Promise.resolve(true)
+  const full = !Array.isArray(changedTopicIds)
+  if (!pendingTopicSave) {
+    pendingTopicSave = { topics, changed: new Set(), full }
+  } else {
+    // Newer topics win; change ids merge so a failed/queued save is not lost.
+    pendingTopicSave.topics = topics
+    pendingTopicSave.full = pendingTopicSave.full || full
+  }
+  if (Array.isArray(changedTopicIds)) {
+    for (const id of changedTopicIds) pendingTopicSave.changed.add(id)
+  }
+  if (!topicSaveRunning) {
+    topicSaveRunning = true
+    topicSaveInFlight = drainTopicSaves()
+  }
+  return topicSaveInFlight!
+}
+
+async function drainTopicSaves(): Promise<boolean> {
+  let ok = true
+  while (true) {
+    if (!pendingTopicSave) {
+      // No await between this check and clearing the flag: a save arriving
+      // after this point sees running=false and starts a fresh drain.
+      topicSaveRunning = false
+      topicSaveInFlight = null
+      break
     }
-    // The main process owns the full history file. Serializing the first 50
-    // complete topics into localStorage on every update duplicates potentially
-    // megabytes of text on the renderer's main thread and made normal-mode
-    // close noticeably slower than privacy mode.
-    return true
+    const job = pendingTopicSave
+    pendingTopicSave = null
+    const saved = await sendTopicSave(job)
+    if (saved) continue
+    ok = false
+    // Keep the dirty ids for the next save / unload flush, but never replace
+    // newer topics that arrived while this write was in flight.
+    const queued = currentPendingSave()
+    if (queued) {
+      for (const id of job.changed) queued.changed.add(id)
+      queued.full = queued.full || job.full
+    } else {
+      pendingTopicSave = { topics: job.topics, changed: new Set(job.changed), full: job.full }
+    }
+    topicSaveRunning = false
+    topicSaveInFlight = null
+    break
+  }
+  return ok
+}
+
+async function sendTopicSave(job: TopicSaveJob): Promise<boolean> {
+  const bridge = window.assistantLite?.chat
+  if (!bridge) return false
+  const canPatch = typeof bridge.saveTopicChanges === 'function'
+  if (job.full || !canPatch) {
+    try {
+      return await bridge.saveTopics(job.topics)
+    } catch {
+      return false
+    }
+  }
+  try {
+    const result = await bridge.saveTopicChanges({
+      order: job.topics.map((topic) => topic.id),
+      upserts: job.topics.filter((topic) => job.changed.has(topic.id))
+    })
+    if (result?.ok) return true
+    if (result?.needsFull) {
+      try {
+        return await bridge.saveTopics(job.topics)
+      } catch {
+        return false
+      }
+    }
+    return false
   } catch {
     return false
   }
@@ -1469,9 +1554,11 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
       next = [topic, ...prev]
     }
     next = next.slice(0, MAX_TOPICS)
-    if (!saveTopics(next, [id])) {
-      setToast(isZh ? '对话历史保存失败（存储空间不足）' : 'Failed to save history (storage quota exceeded)')
-    }
+    void saveTopics(next, [id]).then((saved) => {
+      if (!saved) {
+        setToast(isZh ? '对话历史保存失败（存储空间不足）' : 'Failed to save history (storage quota exceeded)')
+      }
+    })
     if (!activeTopicId) setActiveTopicId(id)
     setTopics(next)
   }, [activeTopicId, isZh, selectedModel])
@@ -2734,11 +2821,13 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
     const title = renameDraft.trim().slice(0, 60)
     if (!title) return
     const next = topicsRef.current.map((tp) => (tp.id === id ? { ...tp, title, customTitle: true } : tp))
-    if (!saveTopics(next, [id])) {
-      setToast(isZh ? '重命名失败（存储空间不足）' : 'Failed to save (storage quota exceeded)')
-      return
-    }
-    setTopics(next)
+    void saveTopics(next, [id]).then((saved) => {
+      if (!saved) {
+        setToast(isZh ? '重命名失败（存储空间不足）' : 'Failed to save (storage quota exceeded)')
+        return
+      }
+      setTopics(next)
+    })
   }
 
   const togglePin = () => {

@@ -443,3 +443,17 @@ export interface OcrEngineStatusPayload {
   downloading: boolean
   progress: OcrEngineProgress | null
 }
+
+/** Incremental chat-history save: the new sidebar order plus only the topic
+ * bodies whose content changed. The main process keeps untouched shards. */
+export interface TopicChangesPayload {
+  order: string[]
+  upserts: unknown[]
+}
+
+export interface TopicSaveResult {
+  ok: boolean
+  /** The main process cannot apply this patch (legacy layout or missing body);
+   * the renderer should retry once with the full saveTopics array. */
+  needsFull?: boolean
+}

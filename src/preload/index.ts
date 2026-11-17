@@ -14,6 +14,8 @@ import type {
   SelectedTextPayload,
   SettingsPatch,
   SkillInfo,
+  TopicChangesPayload,
+  TopicSaveResult,
   TranslateChunkPayload,
   VocabEntry
 } from '@shared/types'
@@ -111,7 +113,10 @@ const api = {
     /** changedTopicIds narrows the write to the touched topic shards; omitted
      * means "reconcile everything" (migration, unknown callers). */
     saveTopics: (topics: unknown[], changedTopicIds?: string[]): Promise<boolean> =>
-      ipcRenderer.invoke(IPC.ChatSaveTopics, { topics, changedTopicIds })
+      ipcRenderer.invoke(IPC.ChatSaveTopics, { topics, changedTopicIds }),
+    /** Patch channel: order + changed bodies only, never the whole history. */
+    saveTopicChanges: (payload: TopicChangesPayload): Promise<TopicSaveResult> =>
+      ipcRenderer.invoke(IPC.ChatSaveTopicChanges, payload)
   },
   translate: {
     /** Kick off all enabled services; results arrive via onChunk per service. */
