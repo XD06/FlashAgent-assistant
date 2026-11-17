@@ -5,6 +5,7 @@ import {
   highlightCode,
   buildHtmlPreviewDoc,
   buildSvgPreviewDoc,
+  splitMarkdownSegments,
   streamingParser,
   PREVIEW_IFRAME_SANDBOX
 } from './Markdown'
@@ -127,5 +128,36 @@ describe('Markdown Code Block & Syntax Highlighting', () => {
     expect(parsed).toContain('data-lang="html"')
     expect(parsed).not.toContain('hljs-')
     expect(parsed).toContain('&lt;div class=&quot;card&quot;&gt;Hello World&lt;/div&gt;')
+  })
+})
+
+describe('splitMarkdownSegments', () => {
+  it('keeps top-level blocks separate so settled blocks can reuse their DOM', () => {
+    const segments = splitMarkdownSegments(
+      'first paragraph\n\nsecond paragraph\n\n```ts\nconst x = 1\n```'
+    )
+    expect(segments).toHaveLength(3)
+    expect(segments[0]).toContain('first paragraph')
+    expect(segments[2]).toContain('const x = 1')
+  })
+
+  it('falls back to one segment when reference definitions are present', () => {
+    const md = '[docs]: https://example.com\n\nSee [docs].'
+    expect(splitMarkdownSegments(md)).toEqual([md])
+  })
+
+  it('does not treat a reference-like line inside a code fence as a definition', () => {
+    const md = '```\n[docs]: https://example.com\n```\n\nplain text'
+    expect(splitMarkdownSegments(md).length).toBe(2)
+  })
+
+  it('keeps a long answer in many segments rather than collapsing to one', () => {
+    const md = Array.from({ length: 40 }, (_, i) => `paragraph ${i} ${'x'.repeat(4000)}`).join('\n\n')
+    const segments = splitMarkdownSegments(md)
+    expect(segments.length).toBe(40)
+  })
+
+  it('returns no segments for empty text', () => {
+    expect(splitMarkdownSegments('')).toEqual([])
   })
 })

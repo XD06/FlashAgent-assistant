@@ -528,6 +528,21 @@ function buildPreviewDoc(codeBlock: HTMLElement): string {
 }
 
 /**
+ * Split markdown into top-level blocks so settled blocks keep their parsed
+ * DOM while only the streaming tail is re-parsed. Reference definitions are
+ * document-scoped: if the document declares any, fall back to one segment so
+ * link targets keep working (this renderer has no footnote extension).
+ */
+export function splitMarkdownSegments(text: string): string[] {
+  if (!text) return []
+  const tokens = marked.lexer(text)
+  if (tokens.links && Object.keys(tokens.links).length > 0) return [text]
+  // `space` tokens are only the blank lines between blocks; parsing them
+  // produces empty divs and inflates the segment list.
+  return tokens.filter((token) => token.type !== 'space').map((token) => token.raw)
+}
+
+/**
  * MarkdownView — renders markdown as sanitized HTML via `marked` + `DOMPurify`.
  *
  * Code blocks natively include `.code-block` wrappers and `.code-copy` buttons,
@@ -577,14 +592,11 @@ export const MarkdownView = React.memo(function MarkdownView({
     []
   )
 
-  // Block-split streaming: lex the latest text into top-level blocks so each
-  // flush re-parses only the tail block (lexer is ~1ms on 150KB vs ~60ms for a
-  // full highlighted parse). Settled blocks keep their DOM untouched — the
-  // memoized MarkdownSegment bails on unchanged raw source.
-  const segments = React.useMemo(() => {
-    if (!pending) return [displayedText]
-    return marked.lexer(displayedText).map((token) => token.raw)
-  }, [displayedText, pending])
+  // Block-split rendering (streaming and settled): each top-level block keeps
+  // its own parsed DOM. Settling used to collapse everything into one segment,
+  // which re-ran marked + highlight.js + DOMPurify over the whole answer and
+  // replaced the entire subtree — a visible freeze at the end of long replies.
+  const segments = React.useMemo(() => splitMarkdownSegments(displayedText), [displayedText])
 
   // Mount-once delegated interactions (click delegation + Escape-to-exit).
   // Deliberately decoupled from content updates: re-attaching listeners on
