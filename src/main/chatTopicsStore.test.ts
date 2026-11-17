@@ -2,7 +2,14 @@ import { describe, expect, it, afterEach, beforeEach, vi } from 'vitest'
 import { mkdtempSync, promises as fs } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { loadTopicsFromDisk, saveTopicChangesToDisk, saveTopicsToDisk } from './chatTopicsStore'
+import {
+  loadTopicFromDisk,
+  loadTopicSummariesFromDisk,
+  loadTopicsFromDisk,
+  saveTopicChangesToDisk,
+  saveTopicsToDisk,
+  updateTopicMetaOnDisk
+} from './chatTopicsStore'
 
 describe('chatTopicsStore', () => {
   // A fresh directory per test: the store caches per-path shard state, so a
@@ -176,5 +183,51 @@ describe('chatTopicsStore', () => {
 
     await expect(patch(['t1'], [{ id: 't1', v: 2 }])).resolves.toEqual({ ok: true })
     await expect(loadTopicsFromDisk(testDir)).resolves.toEqual([{ id: 't1', v: 2 }])
+  })
+
+  it('loads summaries without transcripts and fetches one body on demand', async () => {
+    await save([
+      { id: 't1', title: 'One', turns: [{ role: 'user', text: 'hello' }], updatedAt: 1 },
+      { id: 't2', title: 'Two', turns: [{ role: 'user', text: 'world' }], updatedAt: 2 }
+    ])
+    await expect(loadTopicSummariesFromDisk(testDir)).resolves.toEqual({
+      topics: [
+        { id: 't1', title: 'One', turns: [], updatedAt: 1 },
+        { id: 't2', title: 'Two', turns: [], updatedAt: 2 }
+      ],
+      bodiesLoaded: false
+    })
+    await expect(loadTopicFromDisk('t2', testDir)).resolves.toEqual({
+      id: 't2',
+      title: 'Two',
+      turns: [{ role: 'user', text: 'world' }],
+      updatedAt: 2
+    })
+    await expect(loadTopicFromDisk('missing', testDir)).resolves.toBeNull()
+  })
+
+  it('returns full bodies for the legacy single-file layout', async () => {
+    const legacy = [{ id: 't1', title: 'One', turns: [{ role: 'user', text: 'hi' }] }]
+    await fs.writeFile(join(testDir, 'chat-topics.json'), JSON.stringify(legacy), 'utf8')
+    await expect(loadTopicSummariesFromDisk(testDir)).resolves.toEqual({
+      topics: legacy,
+      bodiesLoaded: true
+    })
+  })
+
+  it('updates metadata without rewriting the transcript', async () => {
+    await save([{ id: 't1', title: 'Old', turns: [{ role: 'user', text: 'keep me' }] }])
+    await expect(updateTopicMetaOnDisk('t1', { title: 'New', isPinned: true }, testDir)).resolves.toBe(true)
+    await expect(loadTopicFromDisk('t1', testDir)).resolves.toEqual({
+      id: 't1',
+      title: 'New',
+      isPinned: true,
+      turns: [{ role: 'user', text: 'keep me' }]
+    })
+  })
+
+  it('refuses metadata updates before the shard layout exists', async () => {
+    await fs.writeFile(join(testDir, 'chat-topics.json'), JSON.stringify([{ id: 't1', turns: [] }]), 'utf8')
+    await expect(updateTopicMetaOnDisk('t1', { title: 'New' }, testDir)).resolves.toBe(false)
   })
 })

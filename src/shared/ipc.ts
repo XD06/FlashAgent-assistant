@@ -35,6 +35,9 @@ export const IPC = {
 
   ChatExportMarkdown: 'chat:export-markdown',
   ChatLoadTopics: 'chat:load-topics',
+  ChatLoadTopicSummaries: 'chat:load-topic-summaries',
+  ChatLoadTopic: 'chat:load-topic',
+  ChatUpdateTopicMeta: 'chat:update-topic-meta',
   ChatSaveTopics: 'chat:save-topics',
   ChatSaveTopicChanges: 'chat:save-topic-changes',
 

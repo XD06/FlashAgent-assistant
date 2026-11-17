@@ -15,7 +15,9 @@ import type {
   SettingsPatch,
   SkillInfo,
   TopicChangesPayload,
+  TopicMetaPatch,
   TopicSaveResult,
+  TopicSummariesResult,
   TranslateChunkPayload,
   VocabEntry
 } from '@shared/types'
@@ -110,6 +112,12 @@ const api = {
     exportMarkdown: (title: string, markdown: string): Promise<string | null> =>
       ipcRenderer.invoke(IPC.ChatExportMarkdown, { title, markdown }),
     loadTopics: (): Promise<unknown[]> => ipcRenderer.invoke(IPC.ChatLoadTopics),
+    /** Sidebar metadata only; `turns` are loaded per topic on demand. */
+    loadTopicSummaries: (): Promise<TopicSummariesResult> => ipcRenderer.invoke(IPC.ChatLoadTopicSummaries),
+    loadTopic: (id: string): Promise<unknown | null> => ipcRenderer.invoke(IPC.ChatLoadTopic, id),
+    /** Rename/pin/auto-title without sending or rewriting the topic's turns. */
+    updateTopicMeta: (id: string, patch: TopicMetaPatch): Promise<boolean> =>
+      ipcRenderer.invoke(IPC.ChatUpdateTopicMeta, { id, patch }),
     /** changedTopicIds narrows the write to the touched topic shards; omitted
      * means "reconcile everything" (migration, unknown callers). */
     saveTopics: (topics: unknown[], changedTopicIds?: string[]): Promise<boolean> =>

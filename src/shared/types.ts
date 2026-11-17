@@ -457,3 +457,19 @@ export interface TopicSaveResult {
    * the renderer should retry once with the full saveTopics array. */
   needsFull?: boolean
 }
+
+/** Startup payload for the chat sidebar: topic metadata only, no `turns`.
+ * `bodiesLoaded` is true only for the legacy single-file layout, where the
+ * whole history necessarily arrives in one read. */
+export interface TopicSummariesResult {
+  topics: unknown[]
+  bodiesLoaded: boolean
+}
+
+/** Metadata-only patch applied to a shard without transferring its turns. */
+export interface TopicMetaPatch {
+  title?: string
+  customTitle?: boolean
+  aiTitle?: boolean
+  isPinned?: boolean
+}

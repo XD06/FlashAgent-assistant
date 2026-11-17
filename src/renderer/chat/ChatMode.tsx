@@ -1,5 +1,5 @@
 import React from 'react'
-import type { AgentToolEvent, AiChunkPayload, AiMessageInput, AppSettings, ReasoningMode, TodoItem } from '@shared/types'
+import type { AgentToolEvent, AiChunkPayload, AiMessageInput, AppSettings, ReasoningMode, TodoItem, TopicMetaPatch } from '@shared/types'
 import type { ContextMeasurement } from '@shared/contextMeter'
 import { MarkdownView } from '../Markdown'
 import { Icon } from '../icons'
@@ -108,6 +108,8 @@ interface ChatTopic {
 
 const isMac = navigator.userAgent.includes('Mac OS X')
 const MAX_TOPICS = 1000
+/** Transcript bodies kept in the renderer; the rest are metadata-only. */
+const MAX_LOADED_TOPICS = 8
 const MAX_CONTEXT_MEASUREMENTS_PER_TURN = 64
 const STORAGE_KEY = 'aia-chat-topics'
 const MODELS_CACHE_KEY = 'aia-models-cache'
@@ -327,6 +329,8 @@ function loadInitialTopics(): ChatTopic[] {
 interface TopicSaveJob {
   topics: ChatTopic[]
   changed: Set<string>
+  /** Ids whose turns are actually in memory (the rest are metadata-only). */
+  loaded: Set<string>
   /** A full snapshot (new topic / migration / fallback), not a patch. */
   full: boolean
 }
@@ -334,6 +338,11 @@ interface TopicSaveJob {
 let pendingTopicSave: TopicSaveJob | null = null
 let topicSaveInFlight: Promise<boolean> | null = null
 let topicSaveRunning = false
+let saveLoadedTopicIds: Set<string> = new Set()
+
+function syncSaveLoadedTopicIds(ids: Set<string>): void {
+  saveLoadedTopicIds = new Set(ids)
+}
 
 // Read through a function: TypeScript's control-flow analysis assumes the
 // module variable stays null across the await, but another save may have
@@ -349,10 +358,11 @@ function saveTopics(topics: ChatTopic[], changedTopicIds?: string[]): Promise<bo
   if (!bridge) return Promise.resolve(true)
   const full = !Array.isArray(changedTopicIds)
   if (!pendingTopicSave) {
-    pendingTopicSave = { topics, changed: new Set(), full }
+    pendingTopicSave = { topics, changed: new Set(), loaded: new Set(saveLoadedTopicIds), full }
   } else {
     // Newer topics win; change ids merge so a failed/queued save is not lost.
     pendingTopicSave.topics = topics
+    pendingTopicSave.loaded = new Set(saveLoadedTopicIds)
     pendingTopicSave.full = pendingTopicSave.full || full
   }
   if (Array.isArray(changedTopicIds)) {
@@ -387,7 +397,12 @@ async function drainTopicSaves(): Promise<boolean> {
       for (const id of job.changed) queued.changed.add(id)
       queued.full = queued.full || job.full
     } else {
-      pendingTopicSave = { topics: job.topics, changed: new Set(job.changed), full: job.full }
+      pendingTopicSave = {
+        topics: job.topics,
+        changed: new Set(job.changed),
+        loaded: new Set(job.loaded),
+        full: job.full
+      }
     }
     topicSaveRunning = false
     topicSaveInFlight = null
@@ -400,26 +415,27 @@ async function sendTopicSave(job: TopicSaveJob): Promise<boolean> {
   const bridge = window.assistantLite?.chat
   if (!bridge) return false
   const canPatch = typeof bridge.saveTopicChanges === 'function'
-  if (job.full || !canPatch) {
+  // A full snapshot is only safe when every topic body is in memory. With
+  // lazy loading most topics are metadata-only, so a full save would replace
+  // their shards with empty transcripts.
+  const allLoaded = job.topics.every((topic) => job.loaded.has(topic.id))
+  const upserts = job.topics.filter((topic) => job.changed.has(topic.id) || job.loaded.has(topic.id))
+  const saveFull = async (): Promise<boolean> => {
     try {
       return await bridge.saveTopics(job.topics)
     } catch {
       return false
     }
   }
+  if (job.full && allLoaded) return saveFull()
+  if (!canPatch) return false
   try {
     const result = await bridge.saveTopicChanges({
       order: job.topics.map((topic) => topic.id),
-      upserts: job.topics.filter((topic) => job.changed.has(topic.id))
+      upserts
     })
     if (result?.ok) return true
-    if (result?.needsFull) {
-      try {
-        return await bridge.saveTopics(job.topics)
-      } catch {
-        return false
-      }
-    }
+    if (result?.needsFull) return allLoaded ? saveFull() : false
     return false
   } catch {
     return false
@@ -1104,47 +1120,65 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
   const requestToTopicId = React.useRef<Map<string, string>>(new Map())
   const topicToRequestId = React.useRef<Map<string, string>>(new Map())
   const [runningTopicIds, setRunningTopicIds] = React.useState<Set<string>>(new Set())
+  const runningTopicIdsRef = React.useRef<Set<string>>(new Set())
   const runningTurnsRef = React.useRef<Map<string, ChatTurn[]>>(new Map())
+  // Transcripts currently in memory. Sidebar metadata for every other topic
+  // stays in `topics`; its turns live only on disk until the topic is opened.
+  const loadedTopicIdsRef = React.useRef<Set<string>>(new Set())
+  const loadedOrderRef = React.useRef<string[]>([])
   const [expandedProjects, setExpandedProjects] = React.useState<Record<string, boolean>>({})
   const [expandedTasks, setExpandedTasks] = React.useState(false)
 
-  // Load full topics asynchronously from main process disk store
   React.useEffect(() => {
-    if (window.assistantLite?.chat?.loadTopics) {
-      void window.assistantLite.chat.loadTopics().then(async (list) => {
-        if (list && Array.isArray(list) && list.length > 0) {
-          setTopics(list as ChatTopic[])
-          topicsRef.current = list as ChatTopic[]
+    runningTopicIdsRef.current = runningTopicIds
+  }, [runningTopicIds])
+
+  // Load sidebar metadata first; transcripts are fetched per topic on demand.
+  React.useEffect(() => {
+    const chat = window.assistantLite?.chat
+    if (!chat) return
+    syncSaveLoadedTopicIds(loadedTopicIdsRef.current)
+    const load = typeof chat.loadTopicSummaries === 'function'
+      ? chat.loadTopicSummaries()
+      : chat.loadTopics().then((topics) => ({ topics, bodiesLoaded: true }))
+    void load.then(async (result) => {
+      const list = Array.isArray(result?.topics) ? (result.topics as ChatTopic[]) : []
+      if (list.length) {
+        setTopics(list)
+        topicsRef.current = list
+        if (result.bodiesLoaded) {
+          loadedTopicIdsRef.current = new Set(list.map((topic) => topic.id))
+          loadedOrderRef.current = list.map((topic) => topic.id)
+          syncSaveLoadedTopicIds(loadedTopicIdsRef.current)
         }
         // Release the redundant pre-disk-store snapshot left by older builds.
-        // Do this after the async load so an empty/new disk store can still use
-        // it as a one-time migration fallback below.
-        if (list && Array.isArray(list) && list.length > 0) {
+        try {
+          localStorage.removeItem(STORAGE_KEY)
+        } catch {
+          // ignore storage cleanup errors
+        }
+        return
+      }
+      // Empty disk store: one-time migration from the old localStorage copy.
+      // Let the first chat frame paint before parsing it.
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 0))
+      const legacy = loadLocalTopics()
+      if (legacy.length) {
+        setTopics(legacy)
+        topicsRef.current = legacy
+        loadedTopicIdsRef.current = new Set(legacy.map((topic) => topic.id))
+        loadedOrderRef.current = legacy.map((topic) => topic.id)
+        syncSaveLoadedTopicIds(loadedTopicIdsRef.current)
+        const saved = await chat.saveTopics(legacy)
+        if (saved) {
           try {
             localStorage.removeItem(STORAGE_KEY)
           } catch {
             // ignore storage cleanup errors
           }
-        } else if (!list?.length) {
-          // Let the first chat frame paint before parsing a legacy snapshot;
-          // migration must not recreate the startup hitch it is removing.
-          await new Promise<void>((resolve) => window.setTimeout(resolve, 0))
-          const legacy = loadLocalTopics()
-          if (legacy.length) {
-            setTopics(legacy)
-            topicsRef.current = legacy
-            const saved = await window.assistantLite.chat.saveTopics(legacy)
-            if (saved) {
-              try {
-                localStorage.removeItem(STORAGE_KEY)
-              } catch {
-                // ignore storage cleanup errors
-              }
-            }
-          }
         }
-      })
-    }
+      }
+    })
   }, [])
 
   // ---- Current chat state ----
@@ -1477,6 +1511,43 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
   React.useEffect(() => {
     topicsRef.current = topics
   }, [topics])
+
+  const noteTopicLoaded = React.useCallback((id: string) => {
+    loadedTopicIdsRef.current.add(id)
+    loadedOrderRef.current = [...loadedOrderRef.current.filter((loadedId) => loadedId !== id), id]
+    syncSaveLoadedTopicIds(loadedTopicIdsRef.current)
+  }, [])
+
+  // Keep only a handful of transcripts resident. The active and running topics
+  // are never evicted; everything else falls back to its metadata row and is
+  // re-read from its shard when the user opens it again.
+  const evictLoadedTopics = React.useCallback(() => {
+    const active = activeTopicIdRef.current
+    const running = runningTopicIdsRef.current
+    while (loadedOrderRef.current.length > MAX_LOADED_TOPICS) {
+      const victim = loadedOrderRef.current.find((id) => id !== active && !running.has(id))
+      if (!victim) break
+      loadedOrderRef.current = loadedOrderRef.current.filter((id) => id !== victim)
+      loadedTopicIdsRef.current.delete(victim)
+      setTopics((prev) => {
+        const next = prev.map((topic) => (topic.id === victim ? { ...topic, turns: [] } : topic))
+        topicsRef.current = next
+        return next
+      })
+    }
+    syncSaveLoadedTopicIds(loadedTopicIdsRef.current)
+  }, [])
+
+  /** Rename/pin/auto-title without loading or rewriting the transcript. */
+  const updateTopicMeta = React.useCallback(async (id: string, patch: TopicMetaPatch): Promise<boolean> => {
+    const bridge = window.assistantLite?.chat
+    if (typeof bridge?.updateTopicMeta !== 'function') return false
+    try {
+      return await bridge.updateTopicMeta(id, patch)
+    } catch {
+      return false
+    }
+  }, [])
   // Snapshot of the current session toggles, read by the debounced persist so
   // the saved topic always carries the latest working context.
   const sessionSnapshotRef = React.useRef<TopicSession>({
@@ -1554,6 +1625,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
       next = [topic, ...prev]
     }
     next = next.slice(0, MAX_TOPICS)
+    noteTopicLoaded(id)
     void saveTopics(next, [id]).then((saved) => {
       if (!saved) {
         setToast(isZh ? '对话历史保存失败（存储空间不足）' : 'Failed to save history (storage quota exceeded)')
@@ -1561,6 +1633,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
     })
     if (!activeTopicId) setActiveTopicId(id)
     setTopics(next)
+    evictLoadedTopics()
   }, [activeTopicId, isZh, selectedModel])
 
   const persistTopic = React.useCallback((turns: ChatTurn[], model?: string) => {
@@ -1639,8 +1712,19 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
         const next = topicsRef.current.map((tp) =>
           tp.id === id ? { ...tp, title, aiTitle: true } : tp
         )
-        saveTopics(next, [id])
-        setTopics(next)
+        void updateTopicMeta(id, { title, aiTitle: true }).then((saved) => {
+          if (saved) {
+            setTopics((prev) => prev.map((tp) => (tp.id === id ? { ...tp, title, aiTitle: true } : tp)))
+            return
+          }
+          // Legacy/non-materialized store: fall back to a normal patch only
+          // when this topic's transcript is already in memory.
+          if (loadedTopicIdsRef.current.has(id)) {
+            void saveTopics(next, [id]).then((ok) => {
+              if (ok) setTopics(next)
+            })
+          }
+        })
       })
       .catch(() => {})
   }, [chat, selectedModel])
@@ -2196,6 +2280,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
           // for the window's lifetime.
           runningTurnsRef.current.delete(targetTopicId)
           if (finalTurns.length) {
+            noteTopicLoaded(targetTopicId)
             setTopics((prev) => {
               const idx = prev.findIndex((t) => t.id === targetTopicId)
               if (idx < 0) return prev
@@ -2209,6 +2294,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
               saveTopics(nextTopics, [targetTopicId])
               return nextTopics
             })
+            evictLoadedTopics()
             // Auto name topic after the first completed round
             const targetTopic = topicsRef.current.find((t) => t.id === targetTopicId)
             if (targetTopic && !targetTopic.customTitle && !targetTopic.aiTitle) {
@@ -2710,7 +2796,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
     }
   }
 
-  const loadTopic = (topic: ChatTopic) => {
+  const loadTopic = async (topic: ChatTopic) => {
     setTemporaryChat(false)
     temporaryChatRef.current = false
     if (preSendRef.current) {
@@ -2721,13 +2807,40 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
     activeTopicIdRef.current = topic.id
 
     const isRunning = runningTopicIds.has(topic.id)
-    const turnsToLoad = isRunning && runningTurnsRef.current.has(topic.id)
-      ? runningTurnsRef.current.get(topic.id)!
-      : topic.turns
+    const hasRunningTurns = isRunning && runningTurnsRef.current.has(topic.id)
+    let loadedTopic = topic
+    if (!hasRunningTurns && !loadedTopicIdsRef.current.has(topic.id)) {
+      const bridge = window.assistantLite?.chat
+      let full: unknown = null
+      try {
+        full = typeof bridge?.loadTopic === 'function' ? await bridge.loadTopic(topic.id) : null
+      } catch {
+        full = null
+      }
+      // The user switched again while the shard was being read.
+      if (activeTopicIdRef.current !== topic.id) return
+      if (!full || typeof full !== 'object') {
+        setToast(isZh ? '打开话题失败（历史文件不可读）' : 'Could not open topic (history file unreadable)')
+        chatRef.current = []
+        setChat([])
+        setActiveTopicId(null)
+        activeTopicIdRef.current = null
+        return
+      }
+      loadedTopic = full as ChatTopic
+      if (!Array.isArray(loadedTopic.turns)) loadedTopic = { ...loadedTopic, turns: [] }
+      noteTopicLoaded(topic.id)
+      const merged = topicsRef.current.map((tp) => (tp.id === topic.id ? loadedTopic : tp))
+      topicsRef.current = merged
+      setTopics(merged)
+      evictLoadedTopics()
+    }
+
+    const turnsToLoad = hasRunningTurns ? runningTurnsRef.current.get(topic.id)! : loadedTopic.turns
 
     activeRequestId.current = topicToRequestId.current.get(topic.id) ?? null
     chatRef.current = turnsToLoad
-    compactRef.current = topic.compact ?? null
+    compactRef.current = loadedTopic.compact ?? null
     chatSessionRef.current += 1
     clearCompactNotice()
     const findLatestTodoList = (turns: ChatTurn[]): TodoItem[] | null => {
@@ -2749,9 +2862,9 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
     // Restore the persisted usage snapshot — the token gauge and the
     // compaction trigger pick up where the topic left off instead of
     // falling back to turn counting until the next usage report arrives.
-    contextUsageRef.current = topic.usage?.tokens ?? null
-    usageTurnsRef.current = Math.min(topic.usage?.atTurns ?? 0, turnsToLoad.length)
-    setContextUsage(topic.usage?.tokens ?? null)
+    contextUsageRef.current = loadedTopic.usage?.tokens ?? null
+    usageTurnsRef.current = Math.min(loadedTopic.usage?.atTurns ?? 0, turnsToLoad.length)
+    setContextUsage(loadedTopic.usage?.tokens ?? null)
     lastUserTextRef.current = [...turnsToLoad].reverse().find((turn) => turn.role === 'user')?.text ?? ''
     stickToBottomRef.current = true
     queuedRef.current = []
@@ -2759,11 +2872,11 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
     setEditingUser(null)
     setChat(turnsToLoad)
     setTurnMetrics(null)
-    if (topic.model) setSelectedModel(topic.model)
+    if (loadedTopic.model) setSelectedModel(loadedTopic.model)
     // Restore the session context saved with the topic. MCP connection state is
     // global: connected servers are always available to Agent, so changing
     // topics never changes MCP connections behind the user's back.
-    const session = topic.session
+    const session = loadedTopic.session
     if (session) {
       setSearchEnabled(session.searchEnabled)
       const hasAgentDir = session.agentEnabled && !!session.workingDir
@@ -2779,9 +2892,24 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
   }
 
   const togglePinTopic = (id: string) => {
-    const next = topicsRef.current.map((tp) => (tp.id === id ? { ...tp, isPinned: !tp.isPinned } : tp))
-    saveTopics(next, [id])
-    setTopics(next)
+    const target = topicsRef.current.find((tp) => tp.id === id)
+    if (!target) return
+    const nextPinned = !target.isPinned
+    const next = topicsRef.current.map((tp) => (tp.id === id ? { ...tp, isPinned: nextPinned } : tp))
+    void updateTopicMeta(id, { isPinned: nextPinned }).then((saved) => {
+      if (saved) {
+        setTopics((prev) => prev.map((tp) => (tp.id === id ? { ...tp, isPinned: nextPinned } : tp)))
+        return
+      }
+      if (loadedTopicIdsRef.current.has(id)) {
+        void saveTopics(next, [id]).then((ok) => {
+          if (ok) setTopics(next)
+          else setToast(isZh ? '置顶保存失败' : 'Failed to save pin state')
+        })
+      } else {
+        setToast(isZh ? '置顶保存失败' : 'Failed to save pin state')
+      }
+    })
   }
 
   const deleteTopic = (id: string) => {
@@ -2821,12 +2949,21 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
     const title = renameDraft.trim().slice(0, 60)
     if (!title) return
     const next = topicsRef.current.map((tp) => (tp.id === id ? { ...tp, title, customTitle: true } : tp))
-    void saveTopics(next, [id]).then((saved) => {
-      if (!saved) {
-        setToast(isZh ? '重命名失败（存储空间不足）' : 'Failed to save (storage quota exceeded)')
+    void updateTopicMeta(id, { title, customTitle: true }).then((saved) => {
+      if (saved) {
+        setTopics((prev) => prev.map((tp) => (tp.id === id ? { ...tp, title, customTitle: true } : tp)))
         return
       }
-      setTopics(next)
+      // Legacy/non-materialized store: only a loaded topic can be patched
+      // without replacing its transcript with an empty one.
+      if (loadedTopicIdsRef.current.has(id)) {
+        void saveTopics(next, [id]).then((ok) => {
+          if (ok) setTopics(next)
+          else setToast(isZh ? '重命名失败（存储空间不足）' : 'Failed to save (storage quota exceeded)')
+        })
+        return
+      }
+      setToast(isZh ? '重命名失败（历史文件不可写）' : 'Rename failed (history file not writable)')
     })
   }
 

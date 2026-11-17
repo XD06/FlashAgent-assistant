@@ -1,7 +1,7 @@
 import { existsSync, promises as fs } from 'node:fs'
 import { join } from 'node:path'
 import { app } from 'electron'
-import type { TopicSaveResult } from '@shared/types'
+import type { TopicMetaPatch, TopicSaveResult, TopicSummariesResult } from '@shared/types'
 
 // Chat history on disk: one shard file per topic under `chat-topics/`, plus a
 // small index.json holding the sidebar order. Rewriting the whole
@@ -37,6 +37,8 @@ interface PendingJob {
   upserts: Map<string, unknown>
   /** New sidebar order (full ids, including untouched topics). */
   order: string[] | null
+  /** Metadata-only edits (rename/pin/auto-title), applied in the same queue. */
+  meta: Map<string, TopicMetaPatch>
 }
 
 interface SaveQueue {
@@ -53,14 +55,18 @@ const queues = new Map<string, SaveQueue>()
 function getQueue(baseDir: string): SaveQueue {
   let queue = queues.get(baseDir)
   if (!queue) {
-    queue = { pending: { full: null, upserts: new Map(), order: null }, running: false, promise: null }
+    queue = {
+      pending: { full: null, upserts: new Map(), order: null, meta: new Map() },
+      running: false,
+      promise: null
+    }
     queues.set(baseDir, queue)
   }
   return queue
 }
 
 function hasWork(pending: PendingJob): boolean {
-  return !!pending.full || pending.upserts.size > 0 || pending.order !== null
+  return !!pending.full || pending.upserts.size > 0 || pending.order !== null || pending.meta.size > 0
 }
 
 function baseDirOf(customDir?: string): string {
@@ -160,11 +166,13 @@ function takeJob(pending: PendingJob): PendingJob {
   const job: PendingJob = {
     full: pending.full,
     upserts: new Map(pending.upserts),
-    order: pending.order
+    order: pending.order,
+    meta: new Map(pending.meta)
   }
   pending.full = null
   pending.upserts.clear()
   pending.order = null
+  pending.meta.clear()
   return job
 }
 
@@ -215,18 +223,50 @@ async function writeIncremental(
   return { ok: true }
 }
 
+async function applyTopicMeta(baseDir: string, topicId: string, patch: TopicMetaPatch): Promise<boolean> {
+  const file = join(shardDirOf(baseDir), shardFileName(topicId))
+  try {
+    const value: unknown = JSON.parse(await fs.readFile(file, 'utf8'))
+    if (!hasStringId(value) || value.id !== topicId) return false
+    const next = { ...(value as Record<string, unknown>) }
+    if (typeof patch.title === 'string') next.title = patch.title
+    if (typeof patch.customTitle === 'boolean') next.customTitle = patch.customTitle
+    if (typeof patch.aiTitle === 'boolean') next.aiTitle = patch.aiTitle
+    if (typeof patch.isPinned === 'boolean') next.isPinned = patch.isPinned
+    const tmp = `${file}.tmp`
+    await fs.writeFile(tmp, JSON.stringify(next), 'utf8')
+    await fs.rename(tmp, file)
+    return true
+  } catch {
+    return false
+  }
+}
+
 async function writeJob(baseDir: string, job: PendingJob): Promise<TopicSaveResult> {
   const state = await ensureState(baseDir)
+  let result: TopicSaveResult = { ok: true }
   if (job.full) {
     await writeShards({ topics: job.full.topics, changed: job.full.changed, baseDir })
     // A patch queued after the full snapshot still needs to be applied (the
     // full write may not contain it). When it is just the full snapshot's own
     // order, skip the extra index rewrite.
-    if (job.upserts.size === 0 && (!job.order || sameOrder(job.order, idsOf(job.full.topics)))) {
-      return { ok: true }
+    if (job.upserts.size > 0 || (job.order && !sameOrder(job.order, idsOf(job.full.topics)))) {
+      result = await writeIncremental(baseDir, job.order ?? state.order, job.upserts, state)
+    }
+  } else if (job.upserts.size > 0 || job.order) {
+    result = await writeIncremental(baseDir, job.order ?? state.order, job.upserts, state)
+  }
+  // Metadata edits share the queue with body writes, so a rename cannot read
+  // an old shard while a stream-end body write is replacing it.
+  if (job.meta.size > 0) {
+    const order = job.order ?? state.order
+    for (const [id, patch] of job.meta) {
+      if (!order.includes(id)) continue
+      const applied = await applyTopicMeta(baseDir, id, patch)
+      if (!applied) result = { ok: false, ...(result.needsFull ? { needsFull: true } : {}) }
     }
   }
-  return writeIncremental(baseDir, job.order ?? state.order, job.upserts, state)
+  return result
 }
 
 function drain(baseDir: string): Promise<TopicSaveResult> {
@@ -272,6 +312,12 @@ function enqueuePatch(baseDir: string, order: string[], upserts: Array<{ id: str
   const queue = getQueue(baseDir)
   for (const topic of upserts) queue.pending.upserts.set(topic.id, topic)
   queue.pending.order = order
+}
+
+function enqueueMeta(baseDir: string, id: string, patch: TopicMetaPatch): void {
+  const queue = getQueue(baseDir)
+  const prev = queue.pending.meta.get(id) ?? {}
+  queue.pending.meta.set(id, { ...prev, ...patch })
 }
 
 export async function saveTopicsToDisk(
@@ -327,7 +373,8 @@ export async function saveTopicChangesToDisk(
 
 async function readShards(
   dir: string,
-  indexOrder: string[]
+  indexOrder: string[],
+  transform: (topic: unknown) => unknown = (topic) => topic
 ): Promise<{ topics: unknown[]; order: string[] }> {
   let fileNames: string[] = []
   try {
@@ -357,7 +404,7 @@ async function readShards(
     if (!present.has(fileName) || loadedIds.has(id)) continue
     const shard = await readShard(fileName)
     if (!shard) continue
-    topics.push(shard.value)
+    topics.push(transform(shard.value))
     order.push(shard.id)
     loadedIds.add(shard.id)
   }
@@ -367,7 +414,7 @@ async function readShards(
     if (expected.has(fileName)) continue
     const shard = await readShard(fileName)
     if (!shard || loadedIds.has(shard.id)) continue
-    topics.push(shard.value)
+    topics.push(transform(shard.value))
     order.push(shard.id)
     loadedIds.add(shard.id)
   }
@@ -400,4 +447,78 @@ export async function loadTopicsFromDisk(customDir?: string): Promise<unknown[]>
   } catch {
     return []
   }
+}
+
+/** Strip the transcript but keep every sidebar/restore field. */
+function stripTurns(topic: unknown): unknown {
+  if (!topic || typeof topic !== 'object') return topic
+  const copy = { ...(topic as Record<string, unknown>) }
+  copy.turns = []
+  return copy
+}
+
+/**
+ * Startup read for the sidebar: metadata only, so a renderer with hundreds of
+ * topics never receives the whole transcript over IPC. Shards are read one at
+ * a time and their bodies released immediately.
+ */
+export async function loadTopicSummariesFromDisk(customDir?: string): Promise<TopicSummariesResult> {
+  const baseDir = baseDirOf(customDir)
+  const dir = shardDirOf(baseDir)
+  let indexOrder: string[] | null = null
+  try {
+    const parsed: unknown = JSON.parse(await fs.readFile(join(dir, INDEX_FILE_NAME), 'utf8'))
+    const order = (parsed as { order?: unknown })?.order
+    if (Array.isArray(order)) indexOrder = order.filter((id): id is string => typeof id === 'string')
+  } catch {
+    // Fall through to the legacy single file.
+  }
+  if (indexOrder) {
+    const { topics, order } = await readShards(dir, indexOrder, stripTurns)
+    states.set(baseDir, { order, materialized: !existsSync(join(baseDir, LEGACY_FILE_NAME)) })
+    return { topics, bodiesLoaded: false }
+  }
+  try {
+    const parsed: unknown = JSON.parse(await fs.readFile(join(baseDir, LEGACY_FILE_NAME), 'utf8'))
+    if (Array.isArray(parsed)) {
+      states.set(baseDir, { order: idsOf(parsed), materialized: false })
+      return { topics: parsed, bodiesLoaded: true }
+    }
+  } catch {
+    // No history yet.
+  }
+  return { topics: [], bodiesLoaded: true }
+}
+
+/** Load one topic's full transcript on demand. */
+export async function loadTopicFromDisk(topicId: string, customDir?: string): Promise<unknown | null> {
+  if (typeof topicId !== 'string' || !topicId) return null
+  const baseDir = baseDirOf(customDir)
+  const file = join(shardDirOf(baseDir), shardFileName(topicId))
+  try {
+    const value: unknown = JSON.parse(await fs.readFile(file, 'utf8'))
+    return hasStringId(value) && value.id === topicId ? value : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Rename / pin / auto-title without transferring the transcript. The shard is
+ * read and rewritten in place; unloaded topics never enter renderer memory.
+ * The edit goes through the same per-directory queue as body saves so a
+ * concurrent stream-end write cannot be clobbered by an older read.
+ */
+export async function updateTopicMetaOnDisk(
+  topicId: string,
+  patch: TopicMetaPatch,
+  customDir?: string
+): Promise<boolean> {
+  if (typeof topicId !== 'string' || !topicId || !patch || typeof patch !== 'object') return false
+  const baseDir = baseDirOf(customDir)
+  const state = await ensureState(baseDir)
+  if (!state.materialized || !state.order.includes(topicId)) return false
+  enqueueMeta(baseDir, topicId, patch)
+  const result = await drain(baseDir)
+  return result.ok
 }

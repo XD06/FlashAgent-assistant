@@ -9,7 +9,7 @@ import { defaultPrimaryColor } from '@shared/defaults'
 import { deriveThemeCssVars, normalizeSystemAccentColor, type ResolvedThemeMode } from '@shared/theme'
 import { IPC } from '@shared/ipc'
 import { APP_ICON_DATA_URL, APP_TRAY_DATA_URL } from '@shared/brand'
-import type { AgentToolEvent, AiStreamRequest, OpenNewWindowOptions, SettingsPatch } from '@shared/types'
+import type { AgentToolEvent, AiStreamRequest, OpenNewWindowOptions, SettingsPatch, TopicMetaPatch } from '@shared/types'
 import { listModels, streamChatMessages, testModel, type ProviderFetch } from './ai/OpenAICompatibleClient'
 import { extractPartialProperty, parseStreamingToolArgs } from './ai/streamingArgsParser'
 import { formatSearchContext, searchWithFallback, webSearchTool } from './ai/WebSearch'
@@ -25,7 +25,14 @@ import { mcpManager } from './mcp/McpManager'
 import { applyProxy, getEffectiveProxyUrl, testProxy } from './proxy'
 import { assessMcpRisk, isMcpToolName } from './mcp/mcpUtil'
 
-import { loadTopicsFromDisk, saveTopicChangesToDisk, saveTopicsToDisk } from './chatTopicsStore'
+import {
+  loadTopicFromDisk,
+  loadTopicSummariesFromDisk,
+  loadTopicsFromDisk,
+  saveTopicChangesToDisk,
+  saveTopicsToDisk,
+  updateTopicMetaOnDisk
+} from './chatTopicsStore'
 import { APP_ICON_PNG_BASE64, TRAY_ICON_PNG_BASE64 } from './iconTiers'
 import { autoRepairRecapDoc, stripDocJunk, validateRecapDoc } from '@shared/recapDoc'
 import { ScreenshotService } from './ScreenshotService'
@@ -1441,6 +1448,18 @@ function registerIpc(): void {
   })
   ipcMain.handle(IPC.ChatLoadTopics, async () => {
     return loadTopicsFromDisk()
+  })
+  ipcMain.handle(IPC.ChatLoadTopicSummaries, async () => {
+    return loadTopicSummariesFromDisk()
+  })
+  ipcMain.handle(IPC.ChatLoadTopic, async (_event, topicId: string) => {
+    return typeof topicId === 'string' ? loadTopicFromDisk(topicId) : null
+  })
+  ipcMain.handle(IPC.ChatUpdateTopicMeta, async (_event, payload: { id?: unknown; patch?: unknown }) => {
+    if (!payload || typeof payload.id !== 'string') return false
+    const patch = payload.patch
+    if (!patch || typeof patch !== 'object') return false
+    return updateTopicMetaOnDisk(payload.id, patch as TopicMetaPatch)
   })
   ipcMain.handle(IPC.ChatSaveTopics, async (_event, payload: { topics?: unknown; changedTopicIds?: unknown }) => {
     if (!payload || !Array.isArray(payload.topics)) return false
