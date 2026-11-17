@@ -16,6 +16,7 @@ import { isMac } from './platform'
 import { captureDisplay } from './capture'
 import { recognizeAndCopy } from './ocr'
 import { applyPngDpi } from './pngDpi'
+import { encodeVisionImage } from './visionImage'
 
 export interface OverlayInitPayload {
   imageDataUrl: string
@@ -233,6 +234,9 @@ export class ScreenshotService {
 
     let dataUrl: string
     let size: { width: number; height: number }
+    // The full-resolution image is still needed for save/copy/pin/OCR; only
+    // the AI vision path is re-encoded to a bounded JPEG below.
+    let visionImage: Electron.NativeImage | null = null
 
     if (payload.imageDataUrl) {
       // Renderer has already rasterized the crop (with annotations).
@@ -241,6 +245,7 @@ export class ScreenshotService {
       if (image.isEmpty()) return
       dataUrl = payload.imageDataUrl
       size = image.getSize()
+      visionImage = image
     } else {
       // Map selection from overlay-viewport CSS pixels to the actual captured
       // image pixels using the real viewport/image ratio. This is robust to
@@ -260,6 +265,7 @@ export class ScreenshotService {
       if (cropped.isEmpty()) return
       dataUrl = cropped.toDataURL()
       size = cropped.getSize()
+      visionImage = cropped
     }
 
     switch (payload.action) {
@@ -279,7 +285,7 @@ export class ScreenshotService {
         return
       case 'explain':
       default:
-        this.onExplainImage(dataUrl)
+        this.onExplainImage(visionImage ? encodeVisionImage(visionImage) : dataUrl)
     }
   }
 
@@ -442,7 +448,10 @@ export class ScreenshotService {
     const menu = Menu.buildFromTemplate([
       {
         label: labels.explain,
-        click: () => this.onExplainImage(state.dataUrl)
+        click: () => {
+          const image = nativeImage.createFromDataURL(state.dataUrl)
+          if (!image.isEmpty()) this.onExplainImage(encodeVisionImage(image))
+        }
       },
       {
         label: labels.copy,
