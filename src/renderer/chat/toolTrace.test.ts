@@ -45,4 +45,19 @@ describe('buildToolTrace', () => {
     expect(trace[0].result).toContain('[x] 1. step 1')
     expect(trace[0].result).not.toContain('输出已省略')
   })
+
+  it('never omits ask_user answers even when withOutput is false', () => {
+    const askEvent: AgentToolEvent = {
+      callId: 'call-ask',
+      toolName: 'ask_user',
+      summary: 'Pick database',
+      argsJson: '{"question":"Pick database","options":["SQLite","Postgres"]}',
+      state: 'done',
+      result: 'User answered:\n- Selected: SQLite'
+    }
+    const trace = buildToolTrace([askEvent], true, false)
+    expect(trace[0].result).toContain('User answered:')
+    expect(trace[0].result).toContain('Selected: SQLite')
+    expect(trace[0].result).not.toContain('输出已省略')
+  })
 })

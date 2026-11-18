@@ -155,6 +155,14 @@ export function parseStreamingToolArgs(
       }
     }
 
+    if (toolName === 'ask_user') {
+      const question = extractAnyProperty(rawArgs, ['question', 'prompt', 'title'])
+      return {
+        summary: question || '...',
+        charCount
+      }
+    }
+
     // MCP or generic tool: try common property names
     const candidate =
       extractAnyProperty(rawArgs, ['path', 'filePath', 'file_path']) ||

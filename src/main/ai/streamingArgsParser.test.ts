@@ -108,4 +108,11 @@ describe('parseStreamingToolArgs', () => {
     expect(result.content).toContain('... [前略] ...\n')
     expect(result.content!.length).toBeLessThan(4050)
   })
+
+  it('extracts ask_user question while arguments stream in', () => {
+    const partialJson = '{"question": "Which database should we use?", "options": ["SQLite"'
+    const result = parseStreamingToolArgs('ask_user', partialJson)
+    expect(result.summary).toBe('Which database should we use?')
+    expect(result.charCount).toBe(partialJson.length)
+  })
 })

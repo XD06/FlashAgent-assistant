@@ -14,6 +14,7 @@ import {
 } from './turnCollapse'
 import { ThinkingBlock } from './ThinkingBlock'
 import { ExtensionsPanel } from './ExtensionsPanel'
+import { AskUserCard } from './AskUserCard'
 import { TodoListPill } from './TodoListPill'
 import { renderTerminalText, highlightLineNumbers } from './ansi'
 import { buildToolTrace, TOOL_TRACE_OUTPUT_PER_CALL } from './toolTrace'
@@ -535,7 +536,8 @@ const TOOL_LABELS: Record<string, { zh: string; en: string }> = {
   list_dir: { zh: '目录', en: 'List' },
   search_files: { zh: '搜索', en: 'Search' },
   run_command: { zh: '命令', en: 'Run' },
-  todo_list: { zh: '待办', en: 'Todo' }
+  todo_list: { zh: '待办', en: 'Todo' },
+  ask_user: { zh: '询问', en: 'Ask' }
 }
 
 const TOOL_ICONS: Record<string, string> = {
@@ -545,11 +547,12 @@ const TOOL_ICONS: Record<string, string> = {
   list_dir: 'folder',
   search_files: 'search',
   run_command: 'terminal',
-  todo_list: 'check'
+  todo_list: 'check',
+  ask_user: 'circle-help'
 }
 
-/** Visual category — read-only lookups, file mutations, shell commands, todos
- * and external MCP calls get distinct accent colors (restrained semantic hues). */
+/** Visual category — read-only lookups, file mutations, shell commands, todos,
+ * user questions and external MCP calls get distinct accent colors (restrained semantic hues). */
 const TOOL_CATEGORIES: Record<string, string> = {
   read_file: 'read',
   list_dir: 'read',
@@ -557,7 +560,8 @@ const TOOL_CATEGORIES: Record<string, string> = {
   write_file: 'write',
   edit_file: 'write',
   run_command: 'command',
-  todo_list: 'todo'
+  todo_list: 'todo',
+  ask_user: 'ask'
 }
 
 function getToolCategory(toolName: string): string {
@@ -570,6 +574,8 @@ function stateLabel(state: AgentToolEvent['state'], isZh: boolean): string {
       return isZh ? '正在生成…' : 'Streaming…'
     case 'pending-approval':
       return isZh ? '等待确认' : 'Needs approval'
+    case 'awaiting-input':
+      return isZh ? '等待回答' : 'Awaiting input'
     case 'running':
       return isZh ? '执行中' : 'Running'
     case 'done':
@@ -694,10 +700,21 @@ const AgentToolRow = React.memo(function AgentToolRow({
   const isMcp = event.toolName.startsWith('mcp__')
   const category = getToolCategory(event.toolName)
   const title = label ? (isZh ? label.zh : label.en) : isMcp ? 'MCP' : event.toolName
-  const hasDetail = !!(event.oldText || event.newText || event.result || event.liveOutput)
+  const needsInput = event.state === 'awaiting-input' && live && !!event.askUser
+  const hasDetail = !!(
+    event.oldText ||
+    event.newText ||
+    event.result ||
+    event.liveOutput ||
+    (!needsInput && event.askUser)
+  )
 
-  // Auto-expand during streaming, execution (running), pending-approval, or on error
-  const isLive = event.state === 'streaming' || event.state === 'running' || event.state === 'pending-approval'
+  // Auto-expand during streaming, execution (running), pending-approval, awaiting-input, or on error
+  const isLive =
+    event.state === 'streaming' ||
+    event.state === 'running' ||
+    event.state === 'pending-approval' ||
+    event.state === 'awaiting-input'
   const isError = event.state === 'error' || event.state === 'rejected'
   const showDetail = userToggledOpen !== null ? userToggledOpen : (isLive || isError)
   const canRevert = (event.toolName === 'write_file' || event.toolName === 'edit_file') && event.state === 'done'
@@ -706,6 +723,15 @@ const AgentToolRow = React.memo(function AgentToolRow({
       ? computeDiffStats(event.oldText, event.newText)
       : null
   const needsApproval = event.state === 'pending-approval' && live
+  const askAnswerPreview = React.useMemo(() => {
+    if (event.toolName !== 'ask_user' || !event.askUserAnswer) return null
+    if (!event.askUserAnswer.answered) return isZh ? '已跳过' : 'Skipped'
+    const parts = [
+      ...(event.askUserAnswer.selectedOptions ?? []),
+      ...(event.askUserAnswer.customText?.trim() ? [event.askUserAnswer.customText.trim()] : [])
+    ]
+    return parts.join(', ') || null
+  }, [event.toolName, event.askUserAnswer, isZh])
   // Silence = success: only render inline state text when active, reverted, or failed/rejected.
   const showStateText = event.state !== 'done'
   const approve = (approved: boolean, alwaysAllow = false) => {
@@ -720,7 +746,7 @@ const AgentToolRow = React.memo(function AgentToolRow({
 
   return (
     <div
-      className={`agent-tool-row agent-tool-row--${event.state} agent-tool-row--cat-${category}${needsApproval ? ' agent-tool-row--needs-approval' : ''}`}>
+      className={`agent-tool-row agent-tool-row--${event.state} agent-tool-row--cat-${category}${needsApproval ? ' agent-tool-row--needs-approval' : ''}${needsInput ? ' agent-tool-row--needs-input' : ''}`}>
       <div
         className="agent-tool-row__head"
         onClick={() => hasDetail && setUserToggledOpen(!showDetail)}
@@ -735,6 +761,11 @@ const AgentToolRow = React.memo(function AgentToolRow({
           <span className="agent-tool-row__diffstats">
             {diffStats.added > 0 && <span className="agent-tool-row__stat-add">+{diffStats.added}</span>}
             {diffStats.removed > 0 && <span className="agent-tool-row__stat-del">-{diffStats.removed}</span>}
+          </span>
+        )}
+        {askAnswerPreview && event.state !== 'awaiting-input' && (
+          <span className="agent-tool-row__ask-badge" title={askAnswerPreview}>
+            {askAnswerPreview}
           </span>
         )}
         {showStateText && (
@@ -775,6 +806,18 @@ const AgentToolRow = React.memo(function AgentToolRow({
           </button>
         </div>
       )}
+      {needsInput && event.askUser && (
+        <div className="agent-tool-row__ask-live">
+          <AskUserCard
+            callId={event.callId}
+            prompt={event.askUser}
+            answer={event.askUserAnswer}
+            state={event.state}
+            live={live}
+            isZh={isZh}
+          />
+        </div>
+      )}
       {showDetail && hasDetail && (
         <div className="agent-tool-row__detail">
           {(event.oldText !== undefined || event.newText !== undefined) && (
@@ -798,7 +841,17 @@ const AgentToolRow = React.memo(function AgentToolRow({
               pinToBottom
             />
           )}
-          {event.result &&
+          {!needsInput && event.askUser && event.state !== 'error' ? (
+            <AskUserCard
+              callId={event.callId}
+              prompt={event.askUser}
+              answer={event.askUserAnswer}
+              state={event.state}
+              live={false}
+              isZh={isZh}
+            />
+          ) : (
+            event.result &&
             (category === 'command' || category === 'mcp' || event.state === 'error' || event.state === 'rejected' ? (
               <TerminalOutput
                 className={`agent-tool-row__result agent-tool-row__result--${
@@ -814,7 +867,8 @@ const AgentToolRow = React.memo(function AgentToolRow({
               />
             ) : (
               <pre className={`agent-tool-row__result agent-tool-row__result--${category}`}>{event.result}</pre>
-            ))}
+            ))
+          )}
         </div>
       )}
     </div>
@@ -826,6 +880,7 @@ function summarizeToolGroup(events: AgentToolEvent[], active: boolean, isZh: boo
   let edits = 0
   let commands = 0
   let todos = 0
+  let asks = 0
   let mcps = 0
   let other = 0
   let failed = 0
@@ -836,6 +891,7 @@ function summarizeToolGroup(events: AgentToolEvent[], active: boolean, isZh: boo
     else if (cat === 'write') edits++
     else if (cat === 'command') commands++
     else if (cat === 'todo') todos++
+    else if (cat === 'ask') asks++
     else if (cat === 'mcp') mcps++
     else other++
   }
@@ -846,6 +902,7 @@ function summarizeToolGroup(events: AgentToolEvent[], active: boolean, isZh: boo
     if (edits) parts.push(`修改 ${edits} 处`)
     if (commands) parts.push(`${commands} 命令`)
     if (todos) parts.push(`待办 ${todos}`)
+    if (asks) parts.push(`询问 ${asks}`)
     if (mcps) parts.push(`${mcps} 扩展`)
     if (other) parts.push(`${other} 操作`)
     const lead = active ? '正在执行' : '已完成'
@@ -856,6 +913,7 @@ function summarizeToolGroup(events: AgentToolEvent[], active: boolean, isZh: boo
   if (edits) parts.push(`${edits} edit${edits > 1 ? 's' : ''}`)
   if (commands) parts.push(`${commands} cmd${commands > 1 ? 's' : ''}`)
   if (todos) parts.push(`${todos} todo${todos > 1 ? 's' : ''}`)
+  if (asks) parts.push(`${asks} question${asks > 1 ? 's' : ''}`)
   if (mcps) parts.push(`${mcps} MCP`)
   if (other) parts.push(`${other} action${other > 1 ? 's' : ''}`)
   const lead = active ? 'Running' : 'Completed'
@@ -880,7 +938,13 @@ function AgentToolGroup({
   isZh: boolean
   onRevert: (callId: string) => void
 }) {
-  const active = events.some((ev) => ev.state === 'pending-approval' || ev.state === 'running' || ev.state === 'streaming')
+  const active = events.some(
+    (ev) =>
+      ev.state === 'pending-approval' ||
+      ev.state === 'awaiting-input' ||
+      ev.state === 'running' ||
+      ev.state === 'streaming'
+  )
   const hasError = events.some((ev) => ev.state === 'error' || ev.state === 'rejected')
   const autoOpen = active || (current && live) || hasError
   const [manual, setManual] = React.useState<boolean | null>(null)

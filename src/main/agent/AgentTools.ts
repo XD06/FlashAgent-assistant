@@ -4,7 +4,7 @@ import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, relative, resolve } from 'node:path'
 import { isWin } from '../platform'
 import type { ToolDefinition } from '../ai/OpenAICompatibleClient'
-import type { AiMessageInput, CommandShell, TodoItem } from '@shared/types'
+import type { AiMessageInput, AskUserAnswer, AskUserOption, AskUserPrompt, CommandShell, TodoItem } from '@shared/types'
 import { MAX_MUTATION_BYTES, mutationTooLargeError } from './mutationLimits'
 
 const MAX_READ_LINES = 2000
@@ -262,6 +262,33 @@ export const agentToolDefinitions: ToolDefinition[] = [
         }
       },
       required: ['tasks']
+    }
+  },
+  {
+    name: 'ask_user',
+    description:
+      'Ask the user a focused clarifying question, present structured options, or request high-impact confirmation/input before continuing. Supports single/multi-select options plus free-text reply. Only invoke when genuine ambiguity or an impactful decision blocks progress — do not interrupt routine steps.',
+    parameters: {
+      type: 'object',
+      properties: {
+        question: { type: 'string', description: 'Concise question displayed prominently to the user.' },
+        options: {
+          type: 'array',
+          description: 'Optional choices as objects ({ label, description? }) or short label strings.',
+          items: {
+            type: 'object',
+            properties: {
+              label: { type: 'string', description: 'Short option label.' },
+              description: { type: 'string', description: 'Optional brief explanation or trade-off.' }
+            },
+            required: ['label']
+          }
+        },
+        multi_select: { type: 'boolean', description: 'Allow selecting multiple options. Default false.' },
+        allow_custom: { type: 'boolean', description: 'Show a custom text input alongside options. Default true.' },
+        placeholder: { type: 'string', description: 'Optional hint shown inside the custom input box.' }
+      },
+      required: ['question']
     }
   }
 ]
@@ -768,6 +795,8 @@ export function summarizeToolCall(name: string, args: Record<string, unknown>, w
       const done = tasks.filter((t) => t.status === 'completed').length
       return `Update checklist (${done}/${tasks.length} done)`
     }
+    case 'ask_user':
+      return asString(args.question).trim() || 'Question'
     case 'run_command':
       return asString(args.command)
     case 'search_files':
@@ -794,6 +823,51 @@ export function summarizeToolCall(name: string, args: Record<string, unknown>, w
     default:
       return JSON.stringify(args).slice(0, 200)
   }
+}
+
+export function parseAskUserArgs(args: Record<string, unknown>): AskUserPrompt {
+  const question = asString(args.question).trim()
+  const rawOptions = Array.isArray(args.options) ? args.options : []
+  const seen = new Set<string>()
+  const options: AskUserOption[] = []
+  for (const item of rawOptions) {
+    if (options.length >= 8) break
+    if (typeof item === 'string') {
+      const label = item.trim()
+      if (label && !seen.has(label)) {
+        seen.add(label)
+        options.push({ label })
+      }
+      continue
+    }
+    if (item && typeof item === 'object') {
+      const obj = item as Record<string, unknown>
+      const label = asString(obj.label ?? obj.title ?? obj.value).trim()
+      if (!label || seen.has(label)) continue
+      seen.add(label)
+      const description = asString(obj.description ?? obj.desc).trim()
+      options.push(description ? { label, description } : { label })
+    }
+  }
+  const multiSelect = args.multi_select === true || args.allow_multiple === true
+  // Always keep free-text enabled when no selectable options exist so the user is never stuck.
+  const allowCustom = args.allow_custom === false && options.length > 0 ? false : true
+  const placeholder = asString(args.placeholder).trim() || undefined
+  return { question, options, multiSelect, allowCustom, ...(placeholder ? { placeholder } : {}) }
+}
+
+export function formatAskUserResult(prompt: AskUserPrompt, answer: AskUserAnswer): string {
+  if (!answer.answered) {
+    return `[User skipped/dismissed question "${prompt.question}" without providing an answer.]`
+  }
+  const lines: string[] = [`User answered "${prompt.question}":`]
+  if (answer.selectedOptions?.length) {
+    lines.push(`- Selected: ${answer.selectedOptions.join(', ')}`)
+  }
+  if (answer.customText?.trim()) {
+    lines.push(`- Response: ${answer.customText.trim()}`)
+  }
+  return lines.join('\n')
 }
 
 export function parseTodoTasks(raw: unknown): TodoItem[] {
@@ -933,6 +1007,8 @@ export async function executeAgentTool(
       return listDirTool(workingDir, args)
     case 'todo_list':
       return todoListTool(args)
+    case 'ask_user':
+      throw new Error('ask_user must be handled by an interactive Agent session')
     case 'run_command':
       return runCommandTool(workingDir, args, signal, onOutput, shellPref)
     default:

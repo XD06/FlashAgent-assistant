@@ -88,5 +88,11 @@ export function validateAgentToolArgs(name: string, args: Record<string, unknown
       return `Invalid arguments for search_files: at least one of "glob" or "pattern" must be provided (both are empty). Pass glob="*.ts" to match filenames, or pattern="someText" to search file contents. Fix the arguments and call the tool again.`
     }
   }
+  if (name === 'ask_user') {
+    const question = typeof args.question === 'string' ? args.question.trim() : ''
+    if (!question) {
+      return `Invalid arguments for ask_user: "question" must be a non-empty string. Provide a clear question for the user and call ask_user again.`
+    }
+  }
   return null
 }

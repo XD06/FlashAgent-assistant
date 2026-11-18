@@ -33,6 +33,7 @@ export const IPC = {
 
   AgentPickWorkingDir: 'agent:pick-working-dir',
   AgentApproveTool: 'agent:approve-tool',
+  AgentAnswerQuestion: 'agent:answer-question',
   AgentRevertTool: 'agent:revert-tool',
 
   ChatExportMarkdown: 'chat:export-markdown',

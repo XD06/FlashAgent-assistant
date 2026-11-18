@@ -120,8 +120,8 @@ export function messagePayloadTokens(m: AiMessageInput): number {
 export function slimMessageForSend(m: AiMessageInput, targetMaxResultChars = 500): AiMessageInput {
   if (!m.toolTrace?.length) return m
   const nextTrace = m.toolTrace.map((t) => {
-    // Keep todo_list progress 100% untouched
-    if (t.name === 'todo_list' || t.result.length <= targetMaxResultChars) return t
+    // Keep todo_list progress and ask_user decisions 100% untouched
+    if (t.name === 'todo_list' || t.name === 'ask_user' || t.result.length <= targetMaxResultChars) return t
     const head = t.result.slice(0, Math.floor(targetMaxResultChars * 0.7))
     const tail = t.result.slice(-Math.floor(targetMaxResultChars * 0.25))
     return {

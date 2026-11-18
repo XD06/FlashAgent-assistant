@@ -6,6 +6,7 @@ import type {
   AiChunkPayload,
   AiStreamRequest,
   AppSettings,
+  AskUserAnswer,
   DictEntry,
   OcrEngineProgress,
   OcrEngineStatusPayload,
@@ -106,6 +107,8 @@ const api = {
     pickWorkingDir: (): Promise<string | null> => ipcRenderer.invoke(IPC.AgentPickWorkingDir),
     approveTool: (callId: string, approved: boolean, alwaysAllow?: boolean): Promise<boolean> =>
       ipcRenderer.invoke(IPC.AgentApproveTool, callId, approved, alwaysAllow),
+    answerQuestion: (callId: string, answer: AskUserAnswer): Promise<boolean> =>
+      ipcRenderer.invoke(IPC.AgentAnswerQuestion, callId, answer),
     revertTool: (callId: string): Promise<boolean> => ipcRenderer.invoke(IPC.AgentRevertTool, callId)
   },
   chat: {

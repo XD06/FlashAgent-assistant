@@ -283,12 +283,39 @@ export interface AiStreamRequest {
   useExtensions?: boolean
 }
 
-export type AgentToolState = 'streaming' | 'pending-approval' | 'running' | 'done' | 'error' | 'rejected' | 'reverted'
+export type AgentToolState =
+  | 'streaming'
+  | 'pending-approval'
+  | 'awaiting-input'
+  | 'running'
+  | 'done'
+  | 'error'
+  | 'rejected'
+  | 'reverted'
 
 export interface TodoItem {
   id?: string
   text: string
   status: 'pending' | 'in_progress' | 'completed'
+}
+
+export interface AskUserOption {
+  label: string
+  description?: string
+}
+
+export interface AskUserPrompt {
+  question: string
+  options: AskUserOption[]
+  multiSelect: boolean
+  allowCustom: boolean
+  placeholder?: string
+}
+
+export interface AskUserAnswer {
+  answered: boolean
+  selectedOptions?: string[]
+  customText?: string
 }
 
 /** A tool invocation surfaced to the renderer as part of the AI stream. */
@@ -310,6 +337,10 @@ export interface AgentToolEvent {
   newText?: string
   /** For todo_list: updated task items to show in the UI checklist pill. */
   todoList?: TodoItem[]
+  /** For ask_user: structured question & options surfaced to the user. */
+  askUser?: AskUserPrompt
+  /** For ask_user: settled answer from the user for transcript display. */
+  askUserAnswer?: AskUserAnswer
   /** For streaming tool calls: number of characters received so far in the stream. */
   streamingCharCount?: number
 }

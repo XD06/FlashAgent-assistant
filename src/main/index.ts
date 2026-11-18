@@ -9,16 +9,16 @@ import { defaultPrimaryColor } from '@shared/defaults'
 import { deriveThemeCssVars, normalizeSystemAccentColor, type ResolvedThemeMode } from '@shared/theme'
 import { IPC } from '@shared/ipc'
 import { APP_ICON_DATA_URL, APP_TRAY_DATA_URL } from '@shared/brand'
-import type { AgentToolEvent, AiStreamRequest, OpenNewWindowOptions, SettingsPatch, TopicMetaPatch } from '@shared/types'
+import type { AgentToolEvent, AiStreamRequest, AskUserAnswer, OpenNewWindowOptions, SettingsPatch, TopicMetaPatch } from '@shared/types'
 import { listModels, streamChatMessages, testModel, type ProviderFetch } from './ai/OpenAICompatibleClient'
 import { extractPartialProperty, parseStreamingToolArgs } from './ai/streamingArgsParser'
 import { formatSearchContext, searchWithFallback, webSearchTool } from './ai/WebSearch'
-import { agentToolDefinitionsForShell, assessCommandRisk, executeAgentTool, findLatestChecklistState, formatChecklistAnchor, isReadOnlyTool, parseTodoTasks, requiresApproval, resolveCommandShell, restoreSnapshot, shellSyntaxLabel, snapshotForMutation, summarizeToolCall } from './agent/AgentTools'
+import { agentToolDefinitionsForShell, assessCommandRisk, executeAgentTool, findLatestChecklistState, formatAskUserResult, formatChecklistAnchor, isReadOnlyTool, parseAskUserArgs, parseTodoTasks, requiresApproval, resolveCommandShell, restoreSnapshot, shellSyntaxLabel, snapshotForMutation, summarizeToolCall } from './agent/AgentTools'
 import { buildAgentSystemPrompt } from './agent/AgentPrompt'
 import { validateAgentToolArgs } from './agent/validateToolArgs'
 import { deleteSnapshot, loadSnapshot, saveSnapshot } from './agent/SnapshotStore'
 import { readToolOutput, saveToolOutput } from './agent/ToolOutputStore'
-import { cancelApprovalsForRequest, resolveApproval, waitForApproval } from './agent/AgentSession'
+import { cancelApprovalsForRequest, cancelUserQuestionsForRequest, resolveApproval, resolveUserAnswer, waitForApproval, waitForUserAnswer } from './agent/AgentSession'
 import { buildMemoryPrompt, ensureGlobalMemoryFile, getGlobalMemoryPath } from './memory'
 import { buildSkillsPrompt, getSkillsDir, readSkillMeta, scanSkills } from './skills'
 import { mcpManager } from './mcp/McpManager'
@@ -1159,7 +1159,9 @@ function registerIpc(): void {
               ? { newText: String(args.content ?? '').slice(0, 4000) }
               : name === 'todo_list'
                 ? { todoList: parseTodoTasks(args.tasks) }
-                : {}
+                : name === 'ask_user'
+                  ? { askUser: parseAskUserArgs(args) }
+                  : {}
         const sendTool = (patch: Partial<AgentToolEvent>): void => {
           sendChunk({ type: 'tool', tool: { callId, toolName: name, summary, argsJson, ...diff, ...patch } })
         }
@@ -1170,6 +1172,24 @@ function registerIpc(): void {
         if (invalid) {
           sendTool({ state: 'error', result: invalid })
           return `[Invalid tool call: ${invalid}]`
+        }
+        if (name === 'ask_user' && diff.askUser) {
+          sendTool({ state: 'awaiting-input', askUser: diff.askUser })
+          const answer = await waitForUserAnswer(callId, request.requestId, controller.signal, event.sender.id)
+          controller.signal.throwIfAborted()
+          if (!answer.answered) {
+            const skippedMsg = formatAskUserResult(diff.askUser, { answered: false })
+            sendTool({ state: 'rejected', askUser: diff.askUser, askUserAnswer: { answered: false }, result: skippedMsg })
+            return skippedMsg
+          }
+          const formatted = formatAskUserResult(diff.askUser, answer)
+          sendTool({
+            state: 'done',
+            askUser: diff.askUser,
+            askUserAnswer: answer,
+            result: capResultForEvent(formatted)
+          })
+          return formatted
         }
         // Risk gate: forbidden commands never run; dangerous ones always
         // pause for approval, even in full-access / always-allow mode.
@@ -1428,6 +1448,7 @@ function registerIpc(): void {
       }
     } finally {
       cancelApprovalsForRequest(request.requestId)
+      cancelUserQuestionsForRequest(request.requestId)
       abortControllers.delete(request.requestId)
       injectionQueues.delete(request.requestId)
       endStream(senderId)
@@ -1476,6 +1497,10 @@ function registerIpc(): void {
     // every window shares the same preload bridge, so callId alone is not
     // authorization.
     return resolveApproval(callId, approved === true, alwaysAllow === true, event.sender.id)
+  })
+  ipcMain.handle(IPC.AgentAnswerQuestion, (event, callId: string, answer: AskUserAnswer) => {
+    if (typeof callId !== 'string') return false
+    return resolveUserAnswer(callId, answer, event.sender.id)
   })
   ipcMain.handle(IPC.AgentRevertTool, async (_event, callId: string) => {
     if (typeof callId !== 'string') return false

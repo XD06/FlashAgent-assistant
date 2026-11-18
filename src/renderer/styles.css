@@ -5273,6 +5273,9 @@ html[data-chat-color='minimal'] .agent-process-trace__badge {
 .agent-tool-row--cat-todo {
   --tool-cat-color: #6d28d9;
 }
+.agent-tool-row--cat-ask {
+  --tool-cat-color: #0284c7;
+}
 .agent-tool-row--cat-mcp {
   --tool-cat-color: #0e7490;
 }
@@ -5288,6 +5291,9 @@ html[data-theme='dark'] .agent-tool-row--cat-command {
 html[data-theme='dark'] .agent-tool-row--cat-todo {
   --tool-cat-color: #a78bfa;
 }
+html[data-theme='dark'] .agent-tool-row--cat-ask {
+  --tool-cat-color: #38bdf8;
+}
 html[data-theme='dark'] .agent-tool-row--cat-mcp {
   --tool-cat-color: #22d3ee;
 }
@@ -5299,6 +5305,9 @@ html[data-chat-color='minimal'] .agent-tool-row {
 }
 .agent-tool-row--needs-approval {
   --tool-cat-color: var(--status-warn);
+}
+.agent-tool-row--needs-input {
+  --tool-cat-color: var(--accent);
 }
 .agent-tool-row--error,
 .agent-tool-row--rejected {
@@ -5399,6 +5408,7 @@ html[data-chat-color='minimal'] .agent-tool-row__name {
 }
 .agent-tool-row--streaming .agent-tool-row__state { color: var(--muted); }
 .agent-tool-row--pending-approval .agent-tool-row__state { color: var(--status-warn); }
+.agent-tool-row--awaiting-input .agent-tool-row__state { color: var(--accent); }
 .agent-tool-row--running .agent-tool-row__state { color: var(--muted); }
 .agent-tool-row--done .agent-tool-row__state { color: var(--muted-soft); }
 .agent-tool-row--reverted .agent-tool-row__state { color: var(--muted); }
@@ -5432,6 +5442,208 @@ html[data-chat-color='minimal'] .agent-tool-row__name {
 }
 .agent-tool-row--pending-approval {
   background: color-mix(in srgb, var(--status-warn) 8%, var(--surface-card));
+}
+.agent-tool-row--needs-input {
+  margin: 4px 0;
+  padding: 4px 6px;
+  border-radius: var(--radius-block);
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--divider));
+  background: color-mix(in srgb, var(--accent) 4%, var(--surface-card));
+  box-shadow: var(--shadow-card);
+}
+.agent-tool-row__ask-badge {
+  flex-shrink: 0;
+  max-width: 190px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--hover);
+  color: var(--text-soft);
+  font-size: 10.5px;
+  font-weight: 520;
+}
+.agent-tool-row__ask-live {
+  padding: 4px 10px 10px 28px;
+}
+.ask-user-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 2px 0;
+}
+.ask-user-question-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+.ask-user-question {
+  font-size: 12.5px;
+  font-weight: 560;
+  line-height: 1.45;
+  color: var(--text);
+}
+.ask-user-mode-badge {
+  flex-shrink: 0;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 580;
+  line-height: 1.6;
+}
+.ask-user-options {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.ask-user-opt {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  min-height: 0;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-inner);
+  background: var(--surface-block);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+.ask-user-opt:hover:not(:disabled) {
+  background: var(--hover);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+}
+.ask-user-opt.is-selected {
+  border-color: color-mix(in srgb, var(--accent) 68%, transparent);
+  background: color-mix(in srgb, var(--accent) 9%, var(--surface-block));
+}
+.ask-user-opt:disabled {
+  cursor: default;
+  opacity: 0.94;
+}
+.ask-user-opt-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  margin-top: 1px;
+  flex-shrink: 0;
+  border-radius: 999px;
+  border: 1.5px solid var(--muted-soft);
+  color: #fff;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.ask-user-opt.is-multi .ask-user-opt-indicator {
+  border-radius: 4px;
+}
+.ask-user-opt.is-selected .ask-user-opt-indicator {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+.ask-user-opt-content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.ask-user-opt-label {
+  font-size: 12px;
+  font-weight: 540;
+  line-height: 1.35;
+  color: var(--text);
+}
+.ask-user-opt-desc {
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--muted);
+}
+.ask-user-input {
+  width: 100%;
+  min-height: 30px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-inner);
+  background: var(--surface-card);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+.ask-user-input:focus {
+  border-color: color-mix(in srgb, var(--accent) 68%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+.ask-user-input::placeholder {
+  color: var(--muted);
+}
+.ask-user-error {
+  font-size: 11px;
+  color: var(--status-err);
+}
+.ask-user-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.ask-user-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 26px;
+  padding: 4px 12px;
+  border-radius: var(--radius-inner);
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 560;
+  cursor: pointer;
+  transition: background 120ms ease, filter 120ms ease, opacity 120ms ease;
+}
+.ask-user-btn--skip {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+}
+.ask-user-btn--skip:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text);
+}
+.ask-user-btn--submit {
+  border: 0;
+  background: var(--accent);
+  color: #fff;
+}
+.ask-user-btn--submit:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+.ask-user-btn:disabled {
+  opacity: 0.42;
+  cursor: default;
+}
+.ask-user-settled {
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+.ask-user-settled-label {
+  color: var(--text-soft);
+}
+.ask-user-settled-value {
+  color: var(--text);
+  font-weight: 540;
+}
+.ask-user-settled-skipped {
+  color: var(--muted);
+  font-style: italic;
 }
 /* Failed / rejected rows keep a light tint only on row head/container without loud full slabs. */
 .agent-tool-row--error,

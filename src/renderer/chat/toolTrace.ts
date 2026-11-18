@@ -12,8 +12,8 @@ export function buildToolTrace(events: AgentToolEvent[], isZh: boolean, withOutp
       const mark = event.state === 'done' ? 'ok' : event.state
       let result = `[tool: ${event.toolName} ${event.summary} → ${mark}]\n[output_id: ${event.callId}]`
       if (event.state === 'done' || event.state === 'error') {
-        // todo_list carries authoritative task progress and is compact; never omit its result.
-        const isAlwaysKept = event.toolName === 'todo_list'
+        // todo_list (task progress) and ask_user (confirmed decisions) are compact and authoritative; never omit their result.
+        const isAlwaysKept = event.toolName === 'todo_list' || event.toolName === 'ask_user'
         if ((withOutput || isAlwaysKept) && event.result) {
           const body = event.result.slice(0, TOOL_TRACE_OUTPUT_PER_CALL)
           const truncated = body.length < event.result.length ? (isZh ? '\n（输出已截断）' : '\n(output truncated)') : ''

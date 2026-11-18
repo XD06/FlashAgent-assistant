@@ -8,10 +8,12 @@ import {
   executeAgentTool,
   findLatestChecklistState,
   findGitBash,
+  formatAskUserResult,
   formatChecklistAnchor,
   isForbiddenCommand,
   isReadOnlyTool,
   isSensitivePath,
+  parseAskUserArgs,
   parseTodoTasks,
   requiresApproval,
   resolveAgentPath,
@@ -747,5 +749,41 @@ describe('mutation size limits', () => {
     ).rejects.toThrow(/Invalid snapshot/)
     expect(existsSync(target)).toBe(true)
     expect(readFileSync(target, 'utf8')).toBe('keep me')
+  })
+
+  it('treats ask_user as sequential interactive tool and normalizes prompt/answer formatting', async () => {
+    expect(isReadOnlyTool('ask_user')).toBe(false)
+    expect(requiresApproval('ask_user', { question: 'Proceed?' }, workDir)).toBe(false)
+    expect(summarizeToolCall('ask_user', { question: '  Choose target runtime?  ' }, workDir)).toBe(
+      'Choose target runtime?'
+    )
+
+    const parsed = parseAskUserArgs({
+      question: 'Pick stack',
+      options: ['Electron', { label: 'Tauri', description: 'Lightweight shell' }, ''],
+      multi_select: true,
+      allow_custom: false
+    })
+    expect(parsed).toEqual({
+      question: 'Pick stack',
+      options: [{ label: 'Electron' }, { label: 'Tauri', description: 'Lightweight shell' }],
+      multiSelect: true,
+      allowCustom: false,
+      placeholder: undefined
+    })
+
+    // Forces allowCustom=true when no options exist so user can always reply
+    const freeform = parseAskUserArgs({ question: 'API endpoint?', allow_custom: false })
+    expect(freeform.options).toEqual([])
+    expect(freeform.allowCustom).toBe(true)
+
+    expect(
+      formatAskUserResult(parsed, { answered: true, selectedOptions: ['Electron'], customText: 'with Vite' })
+    ).toContain('Selected: Electron')
+    expect(formatAskUserResult(parsed, { answered: false })).toMatch(/skipped|did not answer/i)
+
+    await expect(executeAgentTool('ask_user', { question: 'hi' }, workDir)).rejects.toThrow(
+      /interactive Agent session/
+    )
   })
 })
