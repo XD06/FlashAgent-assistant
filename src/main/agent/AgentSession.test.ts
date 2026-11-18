@@ -37,4 +37,22 @@ describe('AgentSession approvals', () => {
     // The call must not become approvable after the stream is gone.
     expect(resolveApproval('c4', true, true, 7)).toBe(false)
   })
+
+  it('unblocks sibling safe approvals in the same stream when alwaysAllow is chosen, leaving dangerous ones paused', async () => {
+    const controller = new AbortController()
+    const safe1 = waitForApproval('s1', 'r-batch', controller.signal, 7, { waivableOnAlwaysAllow: true })
+    const safe2 = waitForApproval('s2', 'r-batch', controller.signal, 7, { waivableOnAlwaysAllow: true })
+    const danger = waitForApproval('d1', 'r-batch', controller.signal, 7, { waivableOnAlwaysAllow: false })
+    const otherStream = waitForApproval('s3', 'r-other', controller.signal, 7, { waivableOnAlwaysAllow: true })
+
+    expect(resolveApproval('s1', true, true, 7)).toBe(true)
+    await expect(safe1).resolves.toEqual({ approved: true, alwaysAllow: true })
+    await expect(safe2).resolves.toEqual({ approved: true, alwaysAllow: true })
+
+    // Dangerous call in the same stream and safe call in another stream must remain pending
+    expect(resolveApproval('d1', true, false, 7)).toBe(true)
+    await expect(danger).resolves.toEqual({ approved: true, alwaysAllow: false })
+    expect(resolveApproval('s3', false, false, 7)).toBe(true)
+    await expect(otherStream).resolves.toEqual({ approved: false, alwaysAllow: false })
+  })
 })

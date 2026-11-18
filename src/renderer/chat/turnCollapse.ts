@@ -25,6 +25,7 @@ export interface ProcessFoldSummary {
 
 const UNSAFE_TO_FOLD_STATES = new Set<AgentToolEvent['state']>([
   'streaming',
+  'queued',
   'pending-approval',
   'awaiting-input',
   'running',

@@ -935,15 +935,133 @@ function todoListTool(args: Record<string, unknown>): string {
   return `Task checklist updated (${completed}/${tasks.length} completed, ${inProgress} in progress, ${pending} pending):\n${formatted}\n(Action required: Checklist updated. Now proceed to execute the real tools for your active step; do not call todo_list again until step progress changes.)`
 }
 
-const READ_ONLY_TOOLS = new Set(['read_file', 'list_dir', 'search_files', 'read_tool_output', 'todo_list'])
+export type ToolConcurrency = 'read' | 'command' | 'serial'
 
-export function isReadOnlyTool(name: string): boolean {
+const READ_ONLY_TOOLS = new Set([
+  'read_file',
+  'list_dir',
+  'search_files',
+  'read_tool_output',
+  'todo_list',
+  'web_search'
+])
+
+const MCP_MUTATING_TOKEN_RE =
+  /(?:^|[_-])(?:write|edit|create|delete|del|remove|rm|rmdir|unlink|drop|truncate|kill|stop|terminate|exec|execute|run|bash|shell|cmd|powershell|post|put|patch|update|upsert|insert|save|upload|send|trigger|deploy|install|mkdir|move|rename|copy|append|modify|set|reset|clear|format|wipe|click|drag|fill|type|press|hover|navigate|close|new|select|submit)(?:[_-]|$)/i
+
+const MCP_READ_TOKEN_RE =
+  /(?:^|[_-])(?:read|get|list|ls|search|fetch|find|show|describe|inspect|view|query|extract|scrape|crawl|map|browse|lookup|resolve|check|status|stat|info|ping|count|verify)(?:[_-]|$)/i
+
+export function isReadOnlyTool(name: string, mcpReadOnlyHint?: boolean): boolean {
   if (READ_ONLY_TOOLS.has(name)) return true
   if (name.startsWith('mcp__')) {
-    const raw = name.replace(/^mcp__[a-zA-Z0-9_-]+__/, '').toLowerCase()
-    return /^(?:read|get|list|search|fetch|find|show|describe|inspect|view)/.test(raw)
+    const secondSep = name.indexOf('__', 5)
+    const raw = secondSep >= 0 ? name.slice(secondSep + 2) : name.slice(5)
+    const normalized = raw.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase()
+    if (MCP_MUTATING_TOKEN_RE.test(normalized)) return false
+    if (mcpReadOnlyHint === false) return false
+    if (mcpReadOnlyHint === true) return true
+    return MCP_READ_TOKEN_RE.test(normalized)
   }
   return false
+}
+
+const FILE_REDIRECT_RE = /(?:^|\s)\d?>>?\s*(?!&\d\b|\/dev\/null\b|\$null\b)\S/i
+
+const MUTATING_OR_LOCKING_CMD_RE: RegExp[] = [
+  /\b(?:tee|out-file|set-content|add-content)\b|-outfile\b/i,
+  /\b(?:npm|pnpm|yarn|bun|pip|pip3|uv|poetry|cargo|composer|gem|apt|apt-get|brew|choco|winget|scoop)\s+(?:install|i|add|remove|rm|uninstall|update|up|upgrade|ci|link|unlink|rebuild|publish|build|dist(?::|\b))\b/i,
+  /\b(?:electron-vite|electron-builder|vite)\s+build\b/i,
+  /\bgit\s+(?:add|commit|push|pull|fetch|merge|rebase|cherry-pick|checkout|switch|restore|reset|stash|clean|tag|worktree|submodule|am|apply|revert|branch\s+-[dDmMfF]|gc|prune|init|clone)\b/i,
+  /(?:^|[;&|(\s])(?:rm|rmdir|rd|del|erase|mv|move|ren|rename|cp|copy|mkdir|md|touch|ln|chmod|chown|icacls|attrib|new-item|remove-item|copy-item|move-item|rename-item|clear-content|taskkill|stop-process|kill)\b/i,
+  /\b(?:curl|wget)\b[^|;&\n]*(?:(?:-o|-O|--output)\b|-X\s*(?:POST|PUT|PATCH|DELETE)\b|--request\s+(?:POST|PUT|PATCH|DELETE)\b|\s-(?:d|F)\b|--data\b)/i,
+  /\bdocker(?:-compose|\s+compose)?\s+(?:build|up|down|rm|stop|kill|start|restart|run|exec)\b/i
+]
+
+const READ_ONLY_SEGMENT_HEAD_RE =
+  /^(?:cd|chdir|set-location|sl|pushd|echo|write-output|write-host|out-null|git\s+(?:status|diff|log|show|branch(?!\s+-[dDmMfF])|rev-parse|describe|remote|ls-files|ls-tree|config\s+--(?:get|list))|ls|dir|cat|head|tail|type|more|less|rg|grep|egrep|fgrep|ag|fd|findstr|find|wc|pwd|which|where|whereis|whoami|hostname|uname|date|ps|tasklist|env|printenv|ping|nslookup|dig|tracert|traceroute|netstat|stat|file|du|df|tree|realpath|readlink|get-content|gc|get-childitem|gci|get-item|gi|get-itemproperty|gp|get-location|gl|get-process|gps|get-service|gsv|get-nettcpconnection|get-date|select-object|select|select-string|sls|where-object|sort-object|sort|measure-object|measure|format-table|ft|format-list|fl|out-string|test-path|resolve-path|split-path|convertfrom-json|convertfrom-csv|curl|invoke-webrequest|iwr|invoke-restmethod|irm|pip3?\s+(?:list|show|freeze)|npm\s+(?:ls|list|view|-v|--version)|pnpm\s+(?:ls|list|-v|--version)|node\s+(?:-v|--version)|python3?\s+(?:-V|--version))\b/i
+
+function stripQuotedStrings(cmd: string): string {
+  return cmd.replace(/'[^']*'|"(?:\\.|[^"\\])*"/g, '""')
+}
+
+function splitShellSegments(cmd: string): string[] {
+  const segments: string[] = []
+  let quote: "'" | '"' | null = null
+  let escape = false
+  let start = 0
+  for (let i = 0; i < cmd.length; i++) {
+    const ch = cmd[i]
+    if (escape) {
+      escape = false
+      continue
+    }
+    if (quote === '"') {
+      if (ch === '\\') escape = true
+      else if (ch === '"') quote = null
+      continue
+    }
+    if (quote === "'") {
+      if (ch === "'") quote = null
+      continue
+    }
+    if (ch === "'" || ch === '"') {
+      quote = ch
+      continue
+    }
+    if (ch === ';' || ch === '|') {
+      segments.push(cmd.slice(start, i))
+      if (ch === '|' && cmd[i + 1] === '|') i++
+      start = i + 1
+      continue
+    }
+    if (ch === '&' && cmd[i + 1] === '&') {
+      segments.push(cmd.slice(start, i))
+      i++
+      start = i + 1
+    }
+  }
+  segments.push(cmd.slice(start))
+  return segments.map((s) => s.trim()).filter(Boolean)
+}
+
+/** True when a shell command appears free of workspace/git/package mutations
+ * so consecutive independent commands from one model turn can run concurrently. */
+export function isParallelSafeCommand(command: string): boolean {
+  const trimmed = command.trim()
+  if (!trimmed) return false
+  if (assessCommandRisk(trimmed) !== 'safe') return false
+  if (FILE_REDIRECT_RE.test(stripQuotedStrings(trimmed))) return false
+  return !MUTATING_OR_LOCKING_CMD_RE.some((re) => re.test(trimmed))
+}
+
+/** True when every chained/piped segment of a shell command is a read-only inspection or harmless cd/echo preamble. */
+export function isReadOnlyCommand(command: string): boolean {
+  const trimmed = command.trim()
+  if (!isParallelSafeCommand(trimmed)) return false
+  if (/[`]|\$\(/.test(trimmed)) return false
+  const segments = splitShellSegments(trimmed)
+  if (!segments.length) return false
+  return segments.every((seg) => {
+    const cleaned = seg.replace(/(?:^|\s)\d?>>?\s*(?:&\d|\/dev\/null|\$null)\s*$/i, '').trim()
+    return cleaned.length > 0 && READ_ONLY_SEGMENT_HEAD_RE.test(cleaned)
+  })
+}
+
+/** Determine whether a tool call may run in parallel with adjacent read/command
+ * calls, or must execute on its own as a sequential barrier. */
+export function classifyToolConcurrency(
+  name: string,
+  args: Record<string, unknown>,
+  mcpReadOnlyHint?: boolean
+): ToolConcurrency {
+  if (isReadOnlyTool(name, mcpReadOnlyHint)) return 'read'
+  if (name === 'run_command') {
+    const cmd = typeof args.command === 'string' ? args.command : ''
+    if (isReadOnlyCommand(cmd)) return 'read'
+    if (isParallelSafeCommand(cmd)) return 'command'
+  }
+  return 'serial'
 }
 
 export interface MutationSnapshot {

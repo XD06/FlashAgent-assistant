@@ -19,6 +19,8 @@ interface ManagedTool {
   exposedName: string
   /** Original tool name on the server. */
   toolName: string
+  /** Server-declared readOnlyHint annotation, when provided. */
+  readOnlyHint?: boolean
   definition: ToolDefinition
 }
 
@@ -230,9 +232,12 @@ export class McpManager {
       entry.tools = listed.tools.map((tool) => {
         const exposedName = dedupeMcpToolName(buildMcpToolName(config.name, tool.name), taken)
         taken.add(exposedName)
+        const annotations = (tool as { annotations?: { readOnlyHint?: boolean } }).annotations
+        const readOnlyHint = typeof annotations?.readOnlyHint === 'boolean' ? annotations.readOnlyHint : undefined
         return {
           exposedName,
           toolName: tool.name,
+          readOnlyHint,
           definition: {
             name: exposedName,
             description: `[MCP:${config.name}] ${tool.description ?? ''}`.slice(0, 800),
@@ -313,6 +318,10 @@ export class McpManager {
 
   ownsTool(exposedName: string): boolean {
     return this.route(exposedName) !== null
+  }
+
+  getReadOnlyHint(exposedName: string): boolean | undefined {
+    return this.route(exposedName)?.tool.readOnlyHint
   }
 
   private route(exposedName: string): { entry: ManagedServer; tool: ManagedTool } | null {

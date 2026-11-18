@@ -285,6 +285,7 @@ export interface AiStreamRequest {
 
 export type AgentToolState =
   | 'streaming'
+  | 'queued'
   | 'pending-approval'
   | 'awaiting-input'
   | 'running'

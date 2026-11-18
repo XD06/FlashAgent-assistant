@@ -8,6 +8,8 @@ interface PendingEntry<T> {
   requestId: string
   /** WebContents id of the window whose stream is paused on this prompt. */
   senderId: number
+  /** True when "Always allow" on another call in the same request may unblock this gate. */
+  waivableOnAlwaysAllow?: boolean
   resolve: (result: T) => void
 }
 
@@ -20,7 +22,13 @@ export interface ApprovalResult {
 function createPendingGate<T>(fallback: () => T) {
   const pending = new Map<string, PendingEntry<T>>()
   return {
-    wait(callId: string, requestId: string, signal: AbortSignal, senderId: number): Promise<T> {
+    wait(
+      callId: string,
+      requestId: string,
+      signal: AbortSignal,
+      senderId: number,
+      waivableOnAlwaysAllow = false
+    ): Promise<T> {
       return new Promise<T>((resolve) => {
         const settle = (result: T): void => {
           if (!pending.delete(callId)) return
@@ -32,7 +40,7 @@ function createPendingGate<T>(fallback: () => T) {
           resolve(fallback())
           return
         }
-        pending.set(callId, { requestId, senderId, resolve: settle })
+        pending.set(callId, { requestId, senderId, waivableOnAlwaysAllow, resolve: settle })
         signal.addEventListener('abort', onAbort, { once: true })
       })
     },
@@ -44,6 +52,17 @@ function createPendingGate<T>(fallback: () => T) {
       if (!entry || entry.senderId !== senderId) return false
       entry.resolve(value)
       return true
+    },
+    getMeta(callId: string): { requestId: string; senderId: number } | null {
+      const entry = pending.get(callId)
+      return entry ? { requestId: entry.requestId, senderId: entry.senderId } : null
+    },
+    resolveWaivableForRequest(requestId: string, senderId: number, value: T): void {
+      for (const [, entry] of [...pending]) {
+        if (entry.requestId === requestId && entry.senderId === senderId && entry.waivableOnAlwaysAllow) {
+          entry.resolve(value)
+        }
+      }
     },
     cancelForRequest(requestId: string): void {
       for (const [, entry] of [...pending]) {
@@ -60,16 +79,24 @@ export function waitForApproval(
   callId: string,
   requestId: string,
   signal: AbortSignal,
-  senderId: number
+  senderId: number,
+  options?: { waivableOnAlwaysAllow?: boolean }
 ): Promise<ApprovalResult> {
-  return approvalGate.wait(callId, requestId, signal, senderId)
+  return approvalGate.wait(callId, requestId, signal, senderId, options?.waivableOnAlwaysAllow ?? true)
 }
 
 export function resolveApproval(callId: string, approved: boolean, alwaysAllow: boolean, senderId: number): boolean {
-  return approvalGate.resolve(callId, senderId, {
+  const meta = approvalGate.getMeta(callId)
+  const resolved = approvalGate.resolve(callId, senderId, {
     approved: approved === true,
     alwaysAllow: alwaysAllow === true
   })
+  // When a user clicks "Always allow" on one card in a parallel batch, unblock
+  // sibling safe calls already waiting on confirmation for the same stream.
+  if (resolved && approved === true && alwaysAllow === true && meta) {
+    approvalGate.resolveWaivableForRequest(meta.requestId, senderId, { approved: true, alwaysAllow: true })
+  }
+  return resolved
 }
 
 /** Reject anything still pending for a finished/aborted stream request. */

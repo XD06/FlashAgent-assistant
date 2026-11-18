@@ -1261,5 +1261,135 @@ describe('stream abort propagation', () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1)
     expect(onToolCall).toHaveBeenCalledTimes(1)
   })
+
+  it('runs concurrent command/read batches in parallel while keeping serial barriers ordered and reporting queued calls', async () => {
+    const encoder = new TextEncoder()
+    const roundBody = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          encoder.encode(
+            'data: {"choices":[{"delta":{"tool_calls":[' +
+              '{"index":0,"id":"e1","function":{"name":"edit_file","arguments":"{\\"path\\":\\"a.ts\\"}"}},' +
+              '{"index":1,"id":"cmd1","function":{"name":"run_command","arguments":"{\\"command\\":\\"sleep 1 && echo a\\"}"}},' +
+              '{"index":2,"id":"cmd2","function":{"name":"run_command","arguments":"{\\"command\\":\\"sleep 1 && echo b\\"}"}}' +
+              ']}}]}\n\n'
+          )
+        )
+        controller.close()
+      }
+    })
+
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(roundBody, { status: 200 }))
+      .mockResolvedValueOnce(streamingTextResponse('finished'))
+
+    const active = new Set<string>()
+    let maxCmdConcurrent = 0
+    let editCompleted = false
+    let cmdSawCompletedEdit = true
+    const queuedNames: string[] = []
+
+    const onToolCall = vi.fn(async (name: string, _args: Record<string, unknown>, meta?: { id?: string }) => {
+      if (name === 'edit_file') {
+        await new Promise((r) => setTimeout(r, 15))
+        editCompleted = true
+        return 'edited'
+      }
+      if (!editCompleted) cmdSawCompletedEdit = false
+      const key = meta?.id ?? name
+      active.add(key)
+      maxCmdConcurrent = Math.max(maxCmdConcurrent, active.size)
+      await new Promise((r) => setTimeout(r, 25))
+      active.delete(key)
+      return `ran ${key}`
+    })
+
+    await streamChatMessages(
+      provider,
+      [{ role: 'user', text: 'edit then run two commands' }],
+      'system',
+      new AbortController().signal,
+      () => {},
+      'off',
+      {
+        tools: [
+          { name: 'edit_file', description: '', parameters: {} },
+          { name: 'run_command', description: '', parameters: {} }
+        ],
+        onToolCall,
+        getToolConcurrency: (name) => (name === 'edit_file' ? 'serial' : 'command'),
+        onToolsQueued: (calls) => queuedNames.push(...calls.map((c) => `${c.name}:${c.id}`)),
+        maxToolRounds: 3
+      }
+    )
+
+    expect(cmdSawCompletedEdit).toBe(true)
+    expect(maxCmdConcurrent).toBe(2)
+    expect(queuedNames).toEqual(['run_command:cmd1', 'run_command:cmd2'])
+    const secondBody = JSON.parse(String(fetchMock.mock.calls[1][1]?.body)) as {
+      messages: Array<{ role: string; tool_call_id?: string }>
+    }
+    expect(secondBody.messages.filter((m) => m.role === 'tool').map((m) => m.tool_call_id)).toEqual([
+      'e1',
+      'cmd1',
+      'cmd2'
+    ])
+  })
+
+  it('runs parallel-safe run_command and read_file concurrently in one batch without queueing read_file', async () => {
+    const encoder = new TextEncoder()
+    const roundBody = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          encoder.encode(
+            'data: {"choices":[{"delta":{"tool_calls":[' +
+              '{"index":0,"id":"cmd1","function":{"name":"run_command","arguments":"{\\"command\\":\\"python check.py\\"}"}},' +
+              '{"index":1,"id":"r1","function":{"name":"read_file","arguments":"{\\"path\\":\\"config.json\\"}"}}' +
+              ']}}]}\n\n'
+          )
+        )
+        controller.close()
+      }
+    })
+
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(roundBody, { status: 200 }))
+      .mockResolvedValueOnce(streamingTextResponse('done'))
+
+    const running = new Set<string>()
+    let maxConcurrent = 0
+    const queued: string[] = []
+
+    const onToolCall = vi.fn(async (name: string) => {
+      running.add(name)
+      maxConcurrent = Math.max(maxConcurrent, running.size)
+      await new Promise((r) => setTimeout(r, 25))
+      running.delete(name)
+      return `ok ${name}`
+    })
+
+    await streamChatMessages(
+      provider,
+      [{ role: 'user', text: 'run command and read file' }],
+      'system',
+      new AbortController().signal,
+      () => {},
+      'off',
+      {
+        tools: [
+          { name: 'run_command', description: '', parameters: {} },
+          { name: 'read_file', description: '', parameters: {} }
+        ],
+        onToolCall,
+        getToolConcurrency: (name) => (name === 'read_file' ? 'read' : 'command'),
+        onToolsQueued: (calls) => queued.push(...calls.map((c) => c.name)),
+        maxToolRounds: 3
+      }
+    )
+
+    expect(maxConcurrent).toBe(2)
+    expect(queued).toEqual([])
+  })
 })
 

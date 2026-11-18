@@ -5407,6 +5407,7 @@ html[data-chat-color='minimal'] .agent-tool-row__name {
   margin-left: 4px;
 }
 .agent-tool-row--streaming .agent-tool-row__state { color: var(--muted); }
+.agent-tool-row--queued .agent-tool-row__state { color: var(--muted); }
 .agent-tool-row--pending-approval .agent-tool-row__state { color: var(--status-warn); }
 .agent-tool-row--awaiting-input .agent-tool-row__state { color: var(--accent); }
 .agent-tool-row--running .agent-tool-row__state { color: var(--muted); }

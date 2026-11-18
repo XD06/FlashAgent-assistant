@@ -554,6 +554,8 @@ interface AccumulatedToolCall {
   arguments: string
 }
 
+export type ToolConcurrency = 'read' | 'command' | 'serial'
+
 export interface ToolCallMeta {
   id?: string
   index?: number
@@ -566,8 +568,12 @@ export interface ToolCallStreamOptions extends ProviderRequestOptions {
   onStatus?: (text: string, toolName?: string) => void
   /** Fired periodically as arguments are being streamed from the model before the tool call completes. */
   onToolStreaming?: (tool: { round: number; index: number; id: string; name: string; rawArguments: string }) => void
+  /** Fired once SSE streaming ends for calls queued behind an earlier sequential barrier batch. */
+  onToolsQueued?: (calls: Array<{ round: number; index: number; id: string; name: string; args: Record<string, unknown> }>) => void
   /** Identify whether a tool is read-only so consecutive read-only calls can be parallelized. */
   isReadOnlyTool?: (name: string) => boolean
+  /** Fine-grained concurrency lane classifier overriding `isReadOnlyTool` when supplied. */
+  getToolConcurrency?: (name: string, args: Record<string, unknown>) => ToolConcurrency
   /** Active edits ledger (paths modified/created in current task) to maintain memory. */
   getActiveEdits?: () => string[]
   /** Returns the active task checklist state to anchor progress across tool rounds. */
@@ -1257,12 +1263,16 @@ export async function streamChatMessages(
       })
     }
 
-    // Execute each tool call and collect the results
-    const toolResults: Array<{ id: string; content: string }> = []
-    const execStart = Date.now()
-
-    const executeOneCall = async (tc: AccumulatedToolCall): Promise<{ id: string; content: string }> => {
-      throwIfAborted(signal)
+    // Parse arguments up front so batching can inspect command/tool safety and
+    // run compatible calls concurrently without losing strict result order.
+    const MAX_PARALLEL_TOOL_CALLS = 8
+    type PreparedCall = {
+      tc: AccumulatedToolCall
+      args: Record<string, unknown>
+      parseError: string | null
+      concurrency: ToolConcurrency
+    }
+    const preparedCalls: PreparedCall[] = toolCalls.map((tc) => {
       let args: Record<string, unknown> = {}
       let parseError: string | null = null
       try {
@@ -1275,6 +1285,26 @@ export async function streamChatMessages(
       } catch (e) {
         parseError = e instanceof Error ? e.message : String(e)
       }
+      const concurrency: ToolConcurrency = parseError
+        ? 'serial'
+        : options.getToolConcurrency
+          ? options.getToolConcurrency(tc.name, args)
+          : options.isReadOnlyTool?.(tc.name)
+            ? 'read'
+            : 'serial'
+      return { tc, args, parseError, concurrency }
+    })
+
+    // Execute each tool call and collect the results
+    const toolResults: Array<{ id: string; content: string }> = []
+    const execStart = Date.now()
+
+    const executeOneCall = async ({
+      tc,
+      args,
+      parseError
+    }: PreparedCall): Promise<{ id: string; content: string }> => {
+      throwIfAborted(signal)
       if (parseError) {
         const raw = (tc.arguments || '').slice(0, 200)
         return {
@@ -1321,29 +1351,60 @@ export async function streamChatMessages(
       }
     }
 
-    // Batch contiguous read-only calls for parallel execution; run others sequentially
-    type ToolBatch = { isParallel: boolean; calls: AccumulatedToolCall[] }
+    // Batch contiguous parallel-safe calls ('read' and non-mutating 'command')
+    // together so read_file never queues behind a non-mutating command; keep
+    // 'serial' tools (edits, writes, prompts, mutating commands) as strict barriers.
+    type ToolBatch = { isParallel: boolean; calls: PreparedCall[] }
     const batches: ToolBatch[] = []
-    for (const tc of toolCalls) {
-      const isReadOnly = options.isReadOnlyTool ? options.isReadOnlyTool(tc.name) : false
+    for (const item of preparedCalls) {
+      const parallel = item.concurrency !== 'serial'
       const lastBatch = batches[batches.length - 1]
-      if (isReadOnly && lastBatch && lastBatch.isParallel) {
-        lastBatch.calls.push(tc)
+      if (parallel && lastBatch && lastBatch.isParallel) {
+        lastBatch.calls.push(item)
       } else {
-        batches.push({ isParallel: isReadOnly, calls: [tc] })
+        batches.push({ isParallel: parallel, calls: [item] })
       }
+    }
+
+    if (options.onToolsQueued && batches.length > 1) {
+      const deferred = batches
+        .slice(1)
+        .flatMap((batch) => batch.calls)
+        .filter((item) => !item.parseError)
+        .map((item) => ({
+          round,
+          index: item.tc.index ?? 0,
+          id: item.tc.id,
+          name: item.tc.name,
+          args: item.args
+        }))
+      if (deferred.length > 0) options.onToolsQueued(deferred)
+    }
+
+    const runBatchParallel = async (calls: PreparedCall[]): Promise<Array<{ id: string; content: string }>> => {
+      const results = new Array<{ id: string; content: string }>(calls.length)
+      let cursor = 0
+      const workers = Array.from({ length: Math.min(MAX_PARALLEL_TOOL_CALLS, calls.length) }, async () => {
+        while (cursor < calls.length) {
+          throwIfAborted(signal)
+          const idx = cursor++
+          results[idx] = await executeOneCall(calls[idx])
+        }
+      })
+      await Promise.all(workers)
+      return results
     }
 
     for (const batch of batches) {
       throwIfAborted(signal)
       if (batch.isParallel && batch.calls.length > 1) {
-        const batchResults = await Promise.all(batch.calls.map((tc) => executeOneCall(tc)))
+        const batchResults = await runBatchParallel(batch.calls)
         throwIfAborted(signal)
         toolResults.push(...batchResults)
       } else {
-        for (const tc of batch.calls) {
+        for (const item of batch.calls) {
           throwIfAborted(signal)
-          toolResults.push(await executeOneCall(tc))
+          toolResults.push(await executeOneCall(item))
         }
       }
     }

@@ -588,6 +588,8 @@ function stateLabel(state: AgentToolEvent['state'], isZh: boolean): string {
   switch (state) {
     case 'streaming':
       return isZh ? '正在生成…' : 'Streaming…'
+    case 'queued':
+      return isZh ? '排队中' : 'Queued'
     case 'pending-approval':
       return isZh ? '等待确认' : 'Needs approval'
     case 'awaiting-input':
@@ -958,6 +960,7 @@ function AgentToolGroup({
     (ev) =>
       ev.state === 'pending-approval' ||
       ev.state === 'awaiting-input' ||
+      ev.state === 'queued' ||
       ev.state === 'running' ||
       ev.state === 'streaming'
   )

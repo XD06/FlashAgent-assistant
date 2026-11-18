@@ -5,12 +5,15 @@ import { afterAll, describe, expect, it } from 'vitest'
 import {
   agentToolDefinitionsForShell,
   assessCommandRisk,
+  classifyToolConcurrency,
   executeAgentTool,
   findLatestChecklistState,
   findGitBash,
   formatAskUserResult,
   formatChecklistAnchor,
   isForbiddenCommand,
+  isParallelSafeCommand,
+  isReadOnlyCommand,
   isReadOnlyTool,
   isSensitivePath,
   parseAskUserArgs,
@@ -670,6 +673,7 @@ describe('isReadOnlyTool classification', () => {
     expect(isReadOnlyTool('search_files')).toBe(true)
     expect(isReadOnlyTool('read_tool_output')).toBe(true)
     expect(isReadOnlyTool('todo_list')).toBe(true)
+    expect(isReadOnlyTool('web_search')).toBe(true)
   })
 
   it('correctly identifies mutating built-in tools as not read-only', () => {
@@ -678,12 +682,64 @@ describe('isReadOnlyTool classification', () => {
     expect(isReadOnlyTool('run_command')).toBe(false)
   })
 
-  it('identifies read-only MCP tools by prefix convention', () => {
+  it('identifies read-only MCP tools by prefix, token boundaries, camelCase, and annotations', () => {
     expect(isReadOnlyTool('mcp__server__read_data')).toBe(true)
     expect(isReadOnlyTool('mcp__server__get_user')).toBe(true)
     expect(isReadOnlyTool('mcp__server__list_repos')).toBe(true)
+    expect(isReadOnlyTool('mcp__tavily_mcp__tavily_search')).toBe(true)
+    expect(isReadOnlyTool('mcp__tavily_mcp__tavily_extract')).toBe(true)
+    expect(isReadOnlyTool('mcp__exa__web_search_exa')).toBe(true)
+    expect(isReadOnlyTool('mcp__github__getIssue')).toBe(true)
+    expect(isReadOnlyTool('mcp__custom__query', true)).toBe(true)
+    expect(isReadOnlyTool('mcp__server__read_data', false)).toBe(false)
     expect(isReadOnlyTool('mcp__server__delete_record')).toBe(false)
     expect(isReadOnlyTool('mcp__server__execute_sql')).toBe(false)
+    expect(isReadOnlyTool('mcp__sqlite__write_query')).toBe(false)
+    expect(isReadOnlyTool('mcp__chrome__click')).toBe(false)
+    // Mutation guard overrides an untrusted readOnlyHint when tool verb is destructive
+    expect(isReadOnlyTool('mcp__server__delete_record', true)).toBe(false)
+  })
+
+  it('classifies command and mixed tool concurrency lanes accurately', () => {
+    expect(isReadOnlyCommand('git status')).toBe(true)
+    expect(
+      isReadOnlyCommand(
+        "cd 'D:\\C盘迁移\\Desktop\\OutlookRegister'; git status --short 2>&1 | Select-Object -First 20"
+      )
+    ).toBe(true)
+    expect(
+      isReadOnlyCommand(
+        'cd \'D:\\proj\'; echo "=== venv; check ==="; Get-ChildItem Results\\logs 2>$null | Select-Object Name'
+      )
+    ).toBe(true)
+    expect(isReadOnlyCommand('curl -s https://example.com')).toBe(true)
+    expect(isReadOnlyCommand('curl -s -o out.html https://example.com')).toBe(false)
+    expect(isReadOnlyCommand('echo hi && ls')).toBe(true)
+    expect(isReadOnlyCommand('echo $(rm -rf /tmp/x)')).toBe(false)
+
+    expect(isParallelSafeCommand('powershell -Command "Start-Sleep 2"')).toBe(true)
+    expect(isParallelSafeCommand('sleep 2 && echo a')).toBe(true)
+    expect(isParallelSafeCommand('echo "a > b"')).toBe(true)
+    expect(isParallelSafeCommand('Get-ChildItem . 2>$null')).toBe(true)
+    expect(isParallelSafeCommand('pnpm test')).toBe(true)
+    expect(isParallelSafeCommand('pnpm typecheck 2>&1')).toBe(true)
+    expect(isParallelSafeCommand('git commit -m "wip"')).toBe(false)
+    expect(isParallelSafeCommand('npm install lodash')).toBe(false)
+    expect(isParallelSafeCommand('echo hi > out.txt')).toBe(false)
+    expect(isParallelSafeCommand("cd 'D:\\dir'; echo hi > out.txt")).toBe(false)
+    expect(isParallelSafeCommand('rm -rf /tmp/x')).toBe(false)
+
+    expect(classifyToolConcurrency('mcp__tavily_mcp__tavily_search', { query: 'test' })).toBe('read')
+    expect(classifyToolConcurrency('run_command', { command: 'git status' })).toBe('read')
+    expect(
+      classifyToolConcurrency('run_command', {
+        command: "cd 'D:\\proj'; Get-ChildItem Results\\logs | Select-Object Name"
+      })
+    ).toBe('read')
+    expect(classifyToolConcurrency('run_command', { command: 'sleep 2 && echo a' })).toBe('command')
+    expect(classifyToolConcurrency('run_command', { command: 'pnpm install' })).toBe('serial')
+    expect(classifyToolConcurrency('edit_file', { path: 'a.ts' })).toBe('serial')
+    expect(classifyToolConcurrency('ask_user', { question: 'Choose?' })).toBe('serial')
   })
 })
 

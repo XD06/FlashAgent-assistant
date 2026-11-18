@@ -13,7 +13,7 @@ import type { AgentToolEvent, AiStreamRequest, AskUserAnswer, OpenNewWindowOptio
 import { listModels, streamChatMessages, testModel, type ProviderFetch } from './ai/OpenAICompatibleClient'
 import { extractPartialProperty, parseStreamingToolArgs } from './ai/streamingArgsParser'
 import { formatSearchContext, searchWithFallback, webSearchTool } from './ai/WebSearch'
-import { agentToolDefinitionsForShell, assessCommandRisk, executeAgentTool, findLatestChecklistState, formatAskUserResult, formatChecklistAnchor, isReadOnlyTool, parseAskUserArgs, parseTodoTasks, requiresApproval, resolveCommandShell, restoreSnapshot, shellSyntaxLabel, snapshotForMutation, summarizeToolCall } from './agent/AgentTools'
+import { agentToolDefinitionsForShell, assessCommandRisk, classifyToolConcurrency, executeAgentTool, findLatestChecklistState, formatAskUserResult, formatChecklistAnchor, isReadOnlyTool, parseAskUserArgs, parseTodoTasks, requiresApproval, resolveCommandShell, restoreSnapshot, shellSyntaxLabel, snapshotForMutation, summarizeToolCall } from './agent/AgentTools'
 import { buildAgentSystemPrompt } from './agent/AgentPrompt'
 import { validateAgentToolArgs } from './agent/validateToolArgs'
 import { deleteSnapshot, loadSnapshot, saveSnapshot } from './agent/SnapshotStore'
@@ -1201,7 +1201,9 @@ function registerIpc(): void {
         const approvalWaived = alwaysAllow || getSettings().agentFullAccess === true
         if (risk === 'dangerous' || (!approvalWaived && requiresApproval(name, args, workingDir))) {
           sendTool({ state: 'pending-approval' })
-          const approval = await waitForApproval(callId, request.requestId, controller.signal, event.sender.id)
+          const approval = await waitForApproval(callId, request.requestId, controller.signal, event.sender.id, {
+            waivableOnAlwaysAllow: risk === 'safe'
+          })
           // waitForApproval resolves {approved:false} on abort (it does not
           // reject), so a stop here must be re-thrown explicitly or the tool
           // loop would treat it as a normal "user rejected" result.
@@ -1304,7 +1306,9 @@ function registerIpc(): void {
         const approvalWaived = alwaysAllow || getSettings().agentFullAccess === true
         if (risk === 'dangerous' || !approvalWaived) {
           sendTool({ state: 'pending-approval' })
-          const approval = await waitForApproval(callId, request.requestId, controller.signal, event.sender.id)
+          const approval = await waitForApproval(callId, request.requestId, controller.signal, event.sender.id, {
+            waivableOnAlwaysAllow: risk === 'safe'
+          })
           // See runAgentTool: abort resolves the approval promise, it does not
           // reject it, so re-throw here before treating it as a rejection.
           controller.signal.throwIfAborted()
@@ -1346,7 +1350,28 @@ function registerIpc(): void {
         {
           fetcher: providerFetch,
           tools: tools.length ? tools : undefined,
-          isReadOnlyTool,
+          isReadOnlyTool: (name) => isReadOnlyTool(name, mcpManager.getReadOnlyHint(name)),
+          getToolConcurrency: (name, args) => classifyToolConcurrency(name, args, mcpManager.getReadOnlyHint(name)),
+          onToolsQueued: (calls) => {
+            for (const c of calls) {
+              if (c.name === webSearchTool.name) continue
+              const callId = resolveCallId(c.round, c.index, c.id)
+              const isMcp = isMcpToolName(c.name) && injectedMcpToolNames.has(c.name) && mcpManager.ownsTool(c.name)
+              const summary = isMcp
+                ? `${mcpManager.describeTool(c.name)} · ${JSON.stringify(c.args).slice(0, 160)}`
+                : summarizeToolCall(c.name, c.args, workingDir)
+              sendChunk({
+                type: 'tool',
+                tool: {
+                  callId,
+                  toolName: c.name,
+                  summary,
+                  argsJson: argsJsonForEvent(c.args),
+                  state: 'queued'
+                }
+              })
+            }
+          },
           getActiveEdits: () => Array.from(activeEdits.entries()).map(([p, a]) => `${p} (${a})`),
           getLatestChecklist: () => latestChecklistState,
           // Agent/MCP runs span many rounds and can pause on user approval.

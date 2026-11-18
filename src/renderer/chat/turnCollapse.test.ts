@@ -100,6 +100,13 @@ describe('getTurnProcessFold', () => {
     ]
     expect(getTurnProcessFold(withAwaitingInput, false, false)).toBeNull()
 
+    const withQueued: TurnBlock[] = [
+      { kind: 'tools', events: [makeTool({ callId: 'c1' })] },
+      { kind: 'tools', events: [makeTool({ callId: 'c2', state: 'queued' })] },
+      { kind: 'text', text: 'Queued.' }
+    ]
+    expect(getTurnProcessFold(withQueued, false, false)).toBeNull()
+
     const withInjected: TurnBlock[] = [
       { kind: 'tools', events: [makeTool({ callId: 'c1' })] },
       { kind: 'injected', text: 'stop and check foo' },
