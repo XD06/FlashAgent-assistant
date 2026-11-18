@@ -77,4 +77,35 @@ describe('topicsGrouping', () => {
     expect(result.generalTasks[0].id).toBe('t5')
     expect(result.generalTasks[1].id).toBe('t4')
   })
+
+  it('sorts projects by newest topic timestamp even when an older topic in the project is pinned', () => {
+    const topics: ChatTopic[] = [
+      {
+        id: 'p1-old-pin',
+        title: 'Old pinned',
+        turns: [],
+        updatedAt: 100,
+        isPinned: true,
+        session: { workingDir: 'C:\\projects\\alpha', agentEnabled: true, searchEnabled: false }
+      },
+      {
+        id: 'p1-new',
+        title: 'Newest in alpha',
+        turns: [],
+        updatedAt: 9000,
+        session: { workingDir: 'C:\\projects\\alpha', agentEnabled: true, searchEnabled: false }
+      },
+      {
+        id: 'p2-mid',
+        title: 'Mid in beta',
+        turns: [],
+        updatedAt: 5000,
+        session: { workingDir: 'C:\\projects\\beta', agentEnabled: true, searchEnabled: false }
+      }
+    ]
+
+    const result = groupTopics(topics)
+    expect(result.projects.map((p) => p.name)).toEqual(['alpha', 'beta'])
+    expect(result.projects[0].topics.map((t) => t.id)).toEqual(['p1-old-pin', 'p1-new'])
+  })
 })

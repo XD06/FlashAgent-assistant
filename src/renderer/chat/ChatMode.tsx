@@ -1513,6 +1513,15 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
   React.useEffect(() => {
     topicsRef.current = topics
   }, [topics])
+  const selectedModelRef = React.useRef(selectedModel)
+  selectedModelRef.current = selectedModel
+  const chatDirtyRef = React.useRef(false)
+  const loadingTopicIdRef = React.useRef<string | null>(null)
+  const loadedSessionBaselineRef = React.useRef<{
+    topicId: string
+    model: string
+    session: TopicSession
+  } | null>(null)
 
   const noteTopicLoaded = React.useCallback((id: string) => {
     loadedTopicIdsRef.current.add(id)
@@ -1550,6 +1559,16 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
       return false
     }
   }, [])
+  const isSameTopicSession = (a: TopicSession | undefined, b: TopicSession): boolean => {
+    const aAgent = Boolean(a?.agentEnabled && a?.workingDir?.trim())
+    const aDir = aAgent ? a!.workingDir!.trim() : null
+    return (
+      aAgent === b.agentEnabled &&
+      aDir === b.workingDir &&
+      Boolean(a?.searchEnabled) === b.searchEnabled
+    )
+  }
+
   // Snapshot of the current session toggles, read by the debounced persist so
   // the saved topic always carries the latest working context.
   const sessionSnapshotRef = React.useRef<TopicSession>({
@@ -1559,31 +1578,43 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
   })
   React.useEffect(() => {
     const effectiveWorkingDir = agentEnabled && workingDir ? workingDir.trim() : null
-    sessionSnapshotRef.current = {
+    const nextSession: TopicSession = {
       agentEnabled: agentEnabled && !!effectiveWorkingDir,
       workingDir: effectiveWorkingDir,
       searchEnabled
     }
-    // Update active topic's session and model immediately so changes are never lost
-    if (activeTopicId) {
-      setTopics((prev) => {
-        const idx = prev.findIndex((tp) => tp.id === activeTopicId)
-        if (idx < 0) return prev
-        const next = [...prev]
-        next[idx] = {
-          ...next[idx],
-          model: selectedModel,
-          session: {
-            agentEnabled: agentEnabled && !!effectiveWorkingDir,
-            workingDir: effectiveWorkingDir,
-            searchEnabled
-          }
-        }
-        saveTopics(next, activeTopicId ? [activeTopicId] : undefined)
-        return next
-      })
+    sessionSnapshotRef.current = nextSession
+    // Never overwrite a topic with the previous topic's session while its
+    // shard is loading, nor write back the exact session we just loaded.
+    if (!activeTopicId || loadingTopicIdRef.current === activeTopicId) return
+    const baseline = loadedSessionBaselineRef.current
+    if (
+      baseline &&
+      baseline.topicId === activeTopicId &&
+      baseline.model === selectedModel &&
+      isSameTopicSession(baseline.session, nextSession)
+    ) {
+      return
     }
-  }, [agentEnabled, workingDir, searchEnabled, activeTopicId, selectedModel, settings.mcpServers])
+    loadedSessionBaselineRef.current = null
+    // Update active topic's session and model immediately so changes are never lost
+    const existing = topicsRef.current.find((tp) => tp.id === activeTopicId)
+    if (!existing) return
+    const modelChanged = (existing.model ?? '') !== selectedModel
+    const sessionChanged = !isSameTopicSession(existing.session, nextSession)
+    if (!sessionChanged && !modelChanged) return
+    const updatedTopic: ChatTopic = {
+      ...existing,
+      model: selectedModel,
+      session: nextSession
+    }
+    const nextSnapshot = topicsRef.current.map((tp) => (tp.id === activeTopicId ? updatedTopic : tp))
+    topicsRef.current = nextSnapshot
+    setTopics((prev) =>
+      prev.map((tp) => (tp.id === activeTopicId ? { ...tp, model: selectedModel, session: nextSession } : tp))
+    )
+    void saveTopics(nextSnapshot, [activeTopicId])
+  }, [agentEnabled, workingDir, searchEnabled, activeTopicId, selectedModel])
 
   // Synchronous persist core. Shared by the debounced auto-save and the
   // unload flush (a timer scheduled during beforeunload would never fire).
@@ -1592,7 +1623,8 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
     // Compute the next list outside the setState updater so the side effects
     // (localStorage write, toast, active-topic switch) run exactly once.
     const prev = topicsRef.current
-    const id = activeTopicId ?? crypto.randomUUID()
+    const currentTopicId = activeTopicIdRef.current
+    const id = currentTopicId ?? crypto.randomUUID()
     const firstUser = turns.find((t) => t.role === 'user')
     const existing = prev.find((tp) => tp.id === id)
     const topic: ChatTopic = {
@@ -1608,7 +1640,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
       ...(existing?.aiTitle ? { aiTitle: true } : {}),
       ...(existing?.isPinned ? { isPinned: true } : {}),
       turns: turns.map((t) => ({ ...t, pending: false })),
-      model: model || existing?.model || selectedModel,
+      model: model || existing?.model || selectedModelRef.current,
       updatedAt: Date.now(),
       compact: compactRef.current ?? undefined,
       // Snapshot the usage indicator with the topic — reopening must not
@@ -1633,10 +1665,14 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
         setToast(isZh ? '对话历史保存失败（存储空间不足）' : 'Failed to save history (storage quota exceeded)')
       }
     })
-    if (!activeTopicId) setActiveTopicId(id)
+    if (!currentTopicId) {
+      activeTopicIdRef.current = id
+      setActiveTopicId(id)
+    }
+    topicsRef.current = next
     setTopics(next)
     evictLoadedTopics()
-  }, [activeTopicId, isZh, selectedModel])
+  }, [isZh])
 
   const persistTopic = React.useCallback((turns: ChatTurn[], model?: string) => {
     if (temporaryChatRef.current || !turns.length) return
@@ -1647,38 +1683,31 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
     }, 500)
   }, [persistNow])
 
-  // Keep the unload-flush closure fresh: persistNow identity follows
-  // activeTopicId/language/model, and the flush must see the latest one.
+  // Keep the unload-flush closure fresh and avoid re-binding activeTopicId /
+  // selectedModel through persistNow identity changes.
   React.useEffect(() => {
     flushPersistRef.current = () => {
       if (persistTimerRef.current) {
         clearTimeout(persistTimerRef.current)
         persistTimerRef.current = null
-        persistNow(chatRef.current, selectedModel)
+        persistNow(chatRef.current, selectedModelRef.current)
       }
     }
-  }, [persistNow, selectedModel])
+  }, [persistNow])
 
   React.useEffect(() => {
     chatRef.current = chat
-    // Persist non-empty chats that are not currently streaming
-    if (chat.length > 0) {
+    // Persist only settled chats after an actual conversation change (never on
+    // read-only history loads or unrelated model/settings switches, which would
+    // reset updatedAt and reorder projects in the sidebar).
+    if (chat.length > 0 && chatDirtyRef.current) {
       const last = chat[chat.length - 1]
       if (!last.pending) {
-        persistTopic(chat, selectedModel)
+        chatDirtyRef.current = false
+        persistTopic(chat, selectedModelRef.current)
       }
     }
-  }, [chat, persistTopic, selectedModel])
-
-  // Also re-save when session toggles change mid-conversation (workspace pick,
-  // agent/search switch, MCP on/off) so reopening the topic restores them even
-  // if no further message was sent.
-  React.useEffect(() => {
-    const turns = chatRef.current
-    if (turns.length > 0 && !turns[turns.length - 1]?.pending) {
-      persistTopic(turns, selectedModel)
-    }
-  }, [agentEnabled, workingDir, searchEnabled, settings.mcpServers, persistTopic, selectedModel])
+  }, [chat, persistTopic])
 
   // ---- Auto topic naming (after the first round) ----
   // Edge-triggered when the first assistant reply of a conversation settles
@@ -2145,6 +2174,9 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
           scheduleFlush()
           return
         }
+        if (chunk.type === 'done' || chunk.type === 'error') {
+          chatDirtyRef.current = true
+        }
         setChat((current) => {
           if (!current.length) return current
           const next = [...current]
@@ -2459,6 +2491,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
         preSendRef.current = null
         clearCompactNotice()
         // Surface on the pending assistant turn like a normal request error.
+        chatDirtyRef.current = true
         setChat((current) => {
           if (!current.length) return current
           const next = [...current]
@@ -2526,8 +2559,9 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
       }
       // Pin the recap head so the hard cap can never silently drop it.
       const messages = truncateForSend(mergedRaw, isZh, !!compact?.summary, settings.contextWindowTokens)
-      const targetTopicId = activeTopicId ?? crypto.randomUUID()
-      if (!activeTopicId) {
+      const targetTopicId = activeTopicIdRef.current ?? crypto.randomUUID()
+      if (!activeTopicIdRef.current) {
+        activeTopicIdRef.current = targetTopicId
         setActiveTopicId(targetTopicId)
       }
       const requestId = crypto.randomUUID()
@@ -2669,6 +2703,9 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
       setQueued([])
       setInput((cur) => [cur.trim(), ...pending].filter(Boolean).join('\n'))
     }
+    if (chatRef.current.length > 0) {
+      chatDirtyRef.current = true
+    }
     setChat((current) => {
       if (!current.length) return current
       const next = [...current]
@@ -2745,11 +2782,16 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
   }
 
   const newChat = (initialSession?: TopicSession, options?: { preserveHistoryOpen?: boolean }) => {
+    flushPersistRef.current()
     if (preSendRef.current) {
       preSendRef.current.cancelled = true
       preSendRef.current = null
     }
     activeRequestId.current = null
+    loadingTopicIdRef.current = null
+    loadedSessionBaselineRef.current = null
+    chatDirtyRef.current = false
+    prevLastPendingRef.current = false
     chatRef.current = []
     compactRef.current = null
     chatSessionRef.current += 1
@@ -2764,6 +2806,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
     queuedRef.current = []
     setQueued([])
     setEditingUser(null)
+    activeTopicIdRef.current = null
     setActiveTopicId(null)
     setChat([])
     setTodoList(null)
@@ -2799,6 +2842,18 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
   }
 
   const loadTopic = async (topic: ChatTopic) => {
+    const isRunning = runningTopicIdsRef.current.has(topic.id)
+    const hasRunningTurns = isRunning && runningTurnsRef.current.has(topic.id)
+    if (
+      !temporaryChatRef.current &&
+      topic.id === activeTopicIdRef.current &&
+      (hasRunningTurns || loadedTopicIdsRef.current.has(topic.id))
+    ) {
+      return
+    }
+    // Commit any pending debounced save for the previous topic before switching
+    // activeTopicId / chatRef to the newly selected topic.
+    flushPersistRef.current()
     setTemporaryChat(false)
     temporaryChatRef.current = false
     if (preSendRef.current) {
@@ -2808,10 +2863,9 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
     setActiveTopicId(topic.id)
     activeTopicIdRef.current = topic.id
 
-    const isRunning = runningTopicIds.has(topic.id)
-    const hasRunningTurns = isRunning && runningTurnsRef.current.has(topic.id)
     let loadedTopic = topic
     if (!hasRunningTurns && !loadedTopicIdsRef.current.has(topic.id)) {
+      loadingTopicIdRef.current = topic.id
       const bridge = window.assistantLite?.chat
       let full: unknown = null
       try {
@@ -2821,8 +2875,12 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
       }
       // The user switched again while the shard was being read.
       if (activeTopicIdRef.current !== topic.id) return
+      if (loadingTopicIdRef.current === topic.id) loadingTopicIdRef.current = null
       if (!full || typeof full !== 'object') {
         setToast(isZh ? '打开话题失败（历史文件不可读）' : 'Could not open topic (history file unreadable)')
+        loadedSessionBaselineRef.current = null
+        chatDirtyRef.current = false
+        prevLastPendingRef.current = false
         chatRef.current = []
         setChat([])
         setActiveTopicId(null)
@@ -2836,11 +2894,15 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
       topicsRef.current = merged
       setTopics(merged)
       evictLoadedTopics()
+    } else if (loadingTopicIdRef.current === topic.id) {
+      loadingTopicIdRef.current = null
     }
 
     const turnsToLoad = hasRunningTurns ? runningTurnsRef.current.get(topic.id)! : loadedTopic.turns
 
     activeRequestId.current = topicToRequestId.current.get(topic.id) ?? null
+    chatDirtyRef.current = false
+    prevLastPendingRef.current = Boolean(turnsToLoad[turnsToLoad.length - 1]?.pending)
     chatRef.current = turnsToLoad
     compactRef.current = loadedTopic.compact ?? null
     chatSessionRef.current += 1
@@ -2874,23 +2936,28 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
     setEditingUser(null)
     setChat(turnsToLoad)
     setTurnMetrics(null)
+    const nextModel = loadedTopic.model || selectedModelRef.current
     if (loadedTopic.model) setSelectedModel(loadedTopic.model)
     // Restore the session context saved with the topic. MCP connection state is
     // global: connected servers are always available to Agent, so changing
     // topics never changes MCP connections behind the user's back.
     const session = loadedTopic.session
-    if (session) {
-      setSearchEnabled(session.searchEnabled)
-      const hasAgentDir = session.agentEnabled && !!session.workingDir
-      setWorkingDir(hasAgentDir ? session.workingDir : null)
-      setAgentEnabled(hasAgentDir)
-    } else {
-      setSearchEnabled(false)
-      setWorkingDir(null)
-      setAgentEnabled(false)
+    const hasAgentDir = Boolean(session?.agentEnabled && session.workingDir?.trim())
+    const restoredSession: TopicSession = {
+      agentEnabled: hasAgentDir,
+      workingDir: hasAgentDir ? session!.workingDir!.trim() : null,
+      searchEnabled: Boolean(session?.searchEnabled)
     }
-    setShowHistory(false)
-    setTimeout(() => inputRef.current?.focus(), 0)
+    loadedSessionBaselineRef.current = {
+      topicId: loadedTopic.id,
+      model: nextModel,
+      session: restoredSession
+    }
+    setSearchEnabled(restoredSession.searchEnabled)
+    setWorkingDir(restoredSession.workingDir)
+    setAgentEnabled(restoredSession.agentEnabled)
+    // Keep the history sidebar open when switching sessions so the user can
+    // inspect and flip across conversations until closing manually.
   }
 
   const togglePinTopic = (id: string) => {
@@ -2927,12 +2994,20 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
       })
     }
     runningTurnsRef.current.delete(id)
+    if (id === activeTopicIdRef.current) {
+      if (persistTimerRef.current) {
+        clearTimeout(persistTimerRef.current)
+        persistTimerRef.current = null
+      }
+      chatDirtyRef.current = false
+    }
     const next = topicsRef.current.filter((tp) => tp.id !== id)
     // Empty change set: nothing to rewrite, the main process still reconciles
     // the shard deletion and the index order.
     saveTopics(next, [])
+    topicsRef.current = next
     setTopics(next)
-    if (activeTopicId === id) {
+    if (activeTopicIdRef.current === id) {
       newChat(undefined, { preserveHistoryOpen: true })
     }
   }
@@ -3002,6 +3077,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
         setToast(isZh ? '回退失败（快照已失效或文件被占用）' : 'Revert failed (snapshot expired or file locked)')
         return
       }
+      chatDirtyRef.current = true
       setChat((current) =>
         current.map((turn) => {
           if (!turn.blocks) return turn

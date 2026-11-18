@@ -107,12 +107,11 @@ export function groupTopics(topics: ChatTopic[]): {
     }
   })
 
-  // Sort projects by the latest updated topic in the project
-  projects.sort((a, b) => {
-    const latestA = a.topics[0]?.updatedAt || 0
-    const latestB = b.topics[0]?.updatedAt || 0
-    return latestB - latestA
-  })
+  // Sort projects by the latest updated topic in the project (not topics[0],
+  // because a pinned older topic sits at index 0 ahead of newer unpinned ones).
+  const latestUpdatedAt = (topicList: ChatTopic[]) =>
+    topicList.reduce((latest, topic) => Math.max(latest, topic.updatedAt || 0), 0)
+  projects.sort((a, b) => latestUpdatedAt(b.topics) - latestUpdatedAt(a.topics))
 
   generalTasks.sort(sortFn)
 
