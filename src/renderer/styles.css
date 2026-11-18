@@ -4526,6 +4526,59 @@ html[data-chat-color='minimal'] .chat-empty__starter:hover .chat-empty__starter-
   padding-bottom: 42px;
 }
 
+/* Floating Scroll-to-Bottom button anchored above the right side of .chat-input */
+.chat-scroll-bottom {
+  position: absolute;
+  right: 10px;
+  bottom: calc(100% + 10px);
+  z-index: 34;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  min-width: 30px;
+  min-height: 30px;
+  max-height: 30px;
+  padding: 0;
+  border: 1px solid var(--floating-border);
+  border-radius: 999px;
+  background: var(--panel-solid);
+  box-shadow: var(--shadow-card);
+  color: var(--text-soft);
+  cursor: pointer;
+  transition:
+    transform 140ms ease,
+    box-shadow 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease,
+    background 140ms ease;
+}
+
+.chat-scroll-bottom:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-float);
+  border-color: var(--divider);
+  color: var(--text);
+  background: color-mix(in srgb, var(--panel-solid) 92%, var(--text));
+}
+
+.chat-scroll-bottom:active {
+  transform: translateY(0);
+  box-shadow: var(--shadow-card);
+}
+
+.chat-scroll-bottom:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.chat-scroll-bottom svg {
+  display: block;
+  margin-top: 1px;
+  pointer-events: none;
+}
+
 /* Centered Floating Task Pill — sits just above .chat-input's top border */
 .todo-dock {
   position: absolute;

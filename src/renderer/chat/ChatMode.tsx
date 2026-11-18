@@ -1355,6 +1355,9 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
   // Bumped on new chat / topic switch so an in-flight summary can detect it.
   const chatSessionRef = React.useRef(0)
   const stickToBottomRef = React.useRef(true)
+  const autoScrollingToBottomRef = React.useRef(false)
+  const prevScrollTopRef = React.useRef(0)
+  const [showScrollBottom, setShowScrollBottom] = React.useState(false)
   const lastUserTextRef = React.useRef('')
   const chatUpdateRef = React.useRef<ChatTurn[] | null>(null)
   const messageHistoryRef = React.useRef<string[]>([])
@@ -2412,19 +2415,58 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
 
     const onScroll = () => {
       const distance = el.scrollHeight - el.scrollTop - el.clientHeight
-      stickToBottomRef.current = distance < 64
+      if (el.scrollTop < prevScrollTopRef.current - 1) {
+        autoScrollingToBottomRef.current = false
+      }
+      prevScrollTopRef.current = el.scrollTop
+      if (distance < 64) {
+        autoScrollingToBottomRef.current = false
+        stickToBottomRef.current = true
+        setShowScrollBottom(false)
+      } else if (!autoScrollingToBottomRef.current) {
+        stickToBottomRef.current = false
+        setShowScrollBottom(chatRef.current.length > 0)
+      }
       updateActiveTurn()
     }
 
+    const ro =
+      typeof ResizeObserver !== 'undefined'
+        ? new ResizeObserver(() => {
+            if (stickToBottomRef.current) {
+              if (el.scrollHeight - el.scrollTop - el.clientHeight > 2) {
+                el.scrollTop = el.scrollHeight
+              }
+              setShowScrollBottom(false)
+            } else {
+              const distance = el.scrollHeight - el.scrollTop - el.clientHeight
+              setShowScrollBottom(chatRef.current.length > 0 && distance >= 64)
+            }
+          })
+        : null
+    ro?.observe(el)
+
     el.addEventListener('scroll', onScroll, { passive: true })
     updateActiveTurn()
-    return () => el.removeEventListener('scroll', onScroll)
+    return () => {
+      el.removeEventListener('scroll', onScroll)
+      ro?.disconnect()
+    }
   }, [userTurns])
 
   React.useEffect(() => {
-    if (!stickToBottomRef.current) return
     const el = contentRef.current
     if (!el) return
+    if (chat.length === 0) {
+      autoScrollingToBottomRef.current = false
+      setShowScrollBottom(false)
+      return
+    }
+    if (!stickToBottomRef.current) {
+      const distance = el.scrollHeight - el.scrollTop - el.clientHeight
+      setShowScrollBottom(distance >= 64)
+      return
+    }
     // Covers both new turns and streaming updates (each delta produces a new
     // chat array). rAF batches the scroll after paint to avoid layout thrash.
     // Early-out when already pinned: the scrollHeight read still costs a
@@ -2433,9 +2475,20 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
       if (el.scrollHeight - el.scrollTop - el.clientHeight > 2) {
         el.scrollTop = el.scrollHeight
       }
+      setShowScrollBottom(false)
     })
     return () => cancelAnimationFrame(raf)
   }, [chat])
+
+  const scrollToBottom = React.useCallback(() => {
+    const el = contentRef.current
+    if (!el) return
+    stickToBottomRef.current = true
+    autoScrollingToBottomRef.current = true
+    prevScrollTopRef.current = el.scrollTop
+    setShowScrollBottom(false)
+    el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+  }, [])
 
   React.useEffect(() => {
     const el = inputRef.current
@@ -2464,6 +2517,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
     const taskRoundId = crypto.randomUUID()
     lastUserTextRef.current = text
     stickToBottomRef.current = true
+    autoScrollingToBottomRef.current = false
     setChat([
       ...history,
       { id: crypto.randomUUID(), taskRoundId, role: 'user', text, ...(images.length ? { images } : {}), ...(files.length ? { files } : {}) },
@@ -2931,6 +2985,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
     setContextUsage(loadedTopic.usage?.tokens ?? null)
     lastUserTextRef.current = [...turnsToLoad].reverse().find((turn) => turn.role === 'user')?.text ?? ''
     stickToBottomRef.current = true
+    autoScrollingToBottomRef.current = false
     queuedRef.current = []
     setQueued([])
     setEditingUser(null)
@@ -3777,6 +3832,17 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
 
       <div className={`chat-input${temporaryChat ? ' chat-input--temporary' : ''}`}>
         {todoList && todoList.length > 0 && <TodoListPill tasks={todoList} isZh={isZh} />}
+        {showScrollBottom && chat.length > 0 && (
+          <button
+            type="button"
+            className="chat-scroll-bottom"
+            title={isZh ? '回到底部' : 'Scroll to bottom'}
+            aria-label={isZh ? '回到底部' : 'Scroll to bottom'}
+            onClick={scrollToBottom}
+          >
+            <Icon name="chevron-down" size={15} />
+          </button>
+        )}
         {queued.length > 0 && (
           <div className="chat-queue">
             {queued.map((q, i) => (
