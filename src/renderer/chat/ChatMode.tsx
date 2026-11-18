@@ -3191,14 +3191,6 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
     <div className="action-window action-window--flex">
       <div className="titlebar titlebar--left titlebar--chat">
         <button
-          className="icon"
-          title={isZh ? '新对话' : 'New chat'}
-          disabled={chat.length === 0 && !loading}
-          onClick={() => newChat()}
-        >
-          <Icon name="new-topic" size={15} />
-        </button>
-        <button
           className={`icon${showHistory ? ' icon--active' : ''}`}
           title={isZh ? '历史对话' : 'History'}
           data-panel-toggle
