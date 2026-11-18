@@ -5,14 +5,18 @@ import type { ParsedMcpServer } from '@shared/mcpJson'
 import { Icon } from '../icons'
 import { StatusChip, type StatusChipTone } from '../ui'
 
+export type ExtensionsPanelTab = 'memory' | 'skills' | 'mcp' | 'other'
+
 interface ExtensionsPanelProps {
   settings: AppSettings
   isZh: boolean
   workingDir: string | null
+  initialTab?: ExtensionsPanelTab
+  tabRequestKey?: number
   onClose: () => void
 }
 
-type PanelTab = 'memory' | 'skills' | 'mcp' | 'other'
+type PanelTab = ExtensionsPanelTab
 
 // Shell picker only makes sense on Windows — macOS/Linux always run bash.
 const IS_WINDOWS_UI = navigator.platform.toLowerCase().includes('win')
@@ -47,8 +51,11 @@ function PillSwitch({
 }
 
 /** Popup panel consolidating chat-mode extensions: memory, skills and MCP. */
-export function ExtensionsPanel({ settings, isZh, workingDir, onClose }: ExtensionsPanelProps): React.JSX.Element {
-  const [tab, setTab] = React.useState<PanelTab>('memory')
+export function ExtensionsPanel({ settings, isZh, workingDir, initialTab, tabRequestKey, onClose }: ExtensionsPanelProps): React.JSX.Element {
+  const [tab, setTab] = React.useState<PanelTab>(initialTab ?? 'memory')
+  React.useEffect(() => {
+    if (initialTab) setTab(initialTab)
+  }, [initialTab, tabRequestKey])
   const [skills, setSkills] = React.useState<SkillInfo[]>([])
   const [mcp, setMcp] = React.useState<McpServerStatus[]>([])
   const [showAdd, setShowAdd] = React.useState(false)

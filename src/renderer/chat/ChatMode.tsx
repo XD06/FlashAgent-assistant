@@ -1,5 +1,15 @@
 import React from 'react'
-import type { AgentToolEvent, AiChunkPayload, AiMessageInput, AppSettings, ReasoningMode, TodoItem, TopicMetaPatch } from '@shared/types'
+import type {
+  AgentToolEvent,
+  AiChunkPayload,
+  AiMessageInput,
+  AppSettings,
+  McpServerStatus,
+  ReasoningMode,
+  SkillInfo,
+  TodoItem,
+  TopicMetaPatch
+} from '@shared/types'
 import type { ContextMeasurement } from '@shared/contextMeter'
 import { MarkdownView } from '../Markdown'
 import { Icon } from '../icons'
@@ -13,8 +23,14 @@ import {
   type TurnBlock
 } from './turnCollapse'
 import { ThinkingBlock } from './ThinkingBlock'
-import { ExtensionsPanel } from './ExtensionsPanel'
+import { ExtensionsPanel, type ExtensionsPanelTab } from './ExtensionsPanel'
 import { AskUserCard } from './AskUserCard'
+import {
+  buildSlashCommands,
+  extractSlashQuery,
+  filterSlashCommands,
+  type SlashCommandItem
+} from './slashCommands'
 import { TodoListPill } from './TodoListPill'
 import { renderTerminalText, highlightLineNumbers } from './ansi'
 import { buildToolTrace, TOOL_TRACE_OUTPUT_PER_CALL } from './toolTrace'
@@ -1254,6 +1270,32 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
   // itself stays clean, actions are behind right-click like other agent UIs.
   const [topicMenu, setTopicMenu] = React.useState<{ id: string; x: number; y: number } | null>(null)
   const [showExtensions, setShowExtensions] = React.useState(false)
+  const [extensionsTab, setExtensionsTab] = React.useState<ExtensionsPanelTab>('memory')
+  const [extTabRequestKey, setExtTabRequestKey] = React.useState(0)
+  const openExtensionsOnTab = React.useCallback((tab: ExtensionsPanelTab) => {
+    setExtensionsTab(tab)
+    setExtTabRequestKey((k) => k + 1)
+    setShowExtensions(true)
+  }, [])
+  const [extSkills, setExtSkills] = React.useState<SkillInfo[]>([])
+  const [extMcp, setExtMcp] = React.useState<McpServerStatus[]>([])
+  const refreshExtStatus = React.useCallback(() => {
+    const extApi = window.assistantLite?.ext
+    if (!extApi?.status) return
+    void extApi
+      .status()
+      .then((res) => {
+        if (Array.isArray(res?.skills)) setExtSkills(res.skills)
+        if (Array.isArray(res?.mcp)) setExtMcp(res.mcp)
+      })
+      .catch(() => {})
+  }, [])
+  React.useEffect(() => {
+    refreshExtStatus()
+  }, [refreshExtStatus])
+  const [slashActiveIndex, setSlashActiveIndex] = React.useState(0)
+  const [slashDismissed, setSlashDismissed] = React.useState(false)
+  const slashItemRefs = React.useRef<Array<HTMLButtonElement | null>>([])
   const [toast, setToast] = React.useState<string | null>(null)
   // Messages typed while a request is streaming: queued, injected into the
   // tool loop at the next round gap, or sent as a new request on completion.
@@ -1294,6 +1336,28 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
     temporaryChatRef.current = temporaryChat
     saveTemporaryMode(temporaryChat)
   }, [temporaryChat])
+
+  const slashQuery = React.useMemo(() => extractSlashQuery(input), [input])
+  const slashMenuOpen = slashQuery !== null && !slashDismissed && editingUser === null
+
+  React.useEffect(() => {
+    setSlashActiveIndex(0)
+  }, [slashQuery])
+
+  React.useEffect(() => {
+    if (slashMenuOpen || !showExtensions) refreshExtStatus()
+  }, [slashMenuOpen, showExtensions, refreshExtStatus])
+
+  React.useEffect(() => {
+    if (!slashMenuOpen) return
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as HTMLElement | null
+      if (target?.closest('.chat-input')) return
+      setSlashDismissed(true)
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    return () => document.removeEventListener('pointerdown', onPointerDown)
+  }, [slashMenuOpen])
 
   // The titlebar <select> is sized to the *selected* model name via a hidden
   // mirror span — otherwise it sizes to the longest option and drifts
@@ -1451,7 +1515,9 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
         return
       }
       if (event.key === 'Escape') {
-        if (showReasoningMenu) {
+        if (slashMenuOpen) {
+          setSlashDismissed(true)
+        } else if (showReasoningMenu) {
           setShowReasoningMenu(false)
         } else if (topicMenu) {
           setTopicMenu(null)
@@ -1467,7 +1533,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [showHistory, showExtensions, modelMenuOpen, topicMenu, showReasoningMenu])
+  }, [slashMenuOpen, showHistory, showExtensions, modelMenuOpen, topicMenu, showReasoningMenu])
 
   // Clicking outside closes the reasoning intensity popover menu
   React.useEffect(() => {
@@ -1489,7 +1555,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
     if (!showHistory && !showExtensions) return
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target as HTMLElement | null
-      if (target?.closest('.chat-history-panel, .ext-panel, [data-panel-toggle]')) return
+      if (target?.closest('.chat-history-panel, .ext-panel, .chat-slash-menu, [data-panel-toggle]')) return
       setShowHistory(false)
       setShowExtensions(false)
     }
@@ -3220,6 +3286,95 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
   const loading = (activeTopicId ? runningTopicIds.has(activeTopicId) : false) || !!lastTurn?.pending || !!preSendRef.current
   const hasResult = chat.some((turn) => turn.role === 'assistant' && turn.text)
 
+  const allSlashItems = React.useMemo(
+    () =>
+      buildSlashCommands({
+        isZh,
+        agentEnabled,
+        workingDir,
+        searchEnabled,
+        temporaryChat,
+        skills: extSkills,
+        mcpServers: extMcp
+      }),
+    [isZh, agentEnabled, workingDir, searchEnabled, temporaryChat, extSkills, extMcp]
+  )
+  const filteredSlashItems = React.useMemo(
+    () => (slashQuery === null ? [] : filterSlashCommands(allSlashItems, slashQuery)),
+    [allSlashItems, slashQuery]
+  )
+  const safeSlashIndex = filteredSlashItems.length
+    ? Math.min(slashActiveIndex, filteredSlashItems.length - 1)
+    : 0
+
+  React.useEffect(() => {
+    if (!slashMenuOpen || !filteredSlashItems.length) return
+    slashItemRefs.current[safeSlashIndex]?.scrollIntoView({ block: 'nearest' })
+  }, [slashMenuOpen, filteredSlashItems.length, safeSlashIndex])
+
+  const focusComposer = () => {
+    setTimeout(() => inputRef.current?.focus(), 0)
+  }
+
+  const runSlashCommand = (item: SlashCommandItem) => {
+    setSlashDismissed(false)
+    const { action } = item
+    if (action.type === 'use-skill') {
+      const prefix = isZh ? `请使用「${action.skill.name}」技能：` : `Use skill "${action.skill.name}": `
+      setInput(prefix)
+      setTimeout(() => {
+        const el = inputRef.current
+        if (el) {
+          el.focus()
+          el.setSelectionRange(prefix.length, prefix.length)
+        }
+      }, 0)
+      return
+    }
+
+    setInput('')
+    switch (action.type) {
+      case 'compact':
+        if (isCompacting || loading || preSendRef.current) {
+          setToast(isZh ? '当前正在生成或压缩中，请稍后再试' : 'Wait for generation or compaction to finish')
+        } else {
+          void handleManualCompact()
+        }
+        focusComposer()
+        break
+      case 'open-ext':
+        openExtensionsOnTab(action.tab)
+        break
+      case 'toggle-agent':
+        void toggleAgent().finally(focusComposer)
+        break
+      case 'pick-workspace':
+        void window.assistantLite.agent.pickWorkingDir().then((dir) => {
+          if (dir) {
+            setWorkingDir(dir)
+            setAgentEnabled(true)
+          }
+          focusComposer()
+        })
+        break
+      case 'toggle-search':
+        setSearchEnabled((v) => !v)
+        focusComposer()
+        break
+      case 'new-chat':
+        newChat()
+        focusComposer()
+        break
+      case 'toggle-temp':
+        toggleTemporaryChat()
+        focusComposer()
+        break
+      case 'toggle-history':
+        setShowHistory((v) => !v)
+        break
+    }
+  }
+
   const { projects, generalTasks } = React.useMemo(() => groupTopics(topics), [topics])
 
   const renderTopicItem = (topic: ChatTopic) => {
@@ -3890,11 +4045,54 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
           settings={settings}
           isZh={isZh}
           workingDir={workingDir}
+          initialTab={extensionsTab}
+          tabRequestKey={extTabRequestKey}
           onClose={() => setShowExtensions(false)}
         />
       )}
 
       <div className={`chat-input${temporaryChat ? ' chat-input--temporary' : ''}`}>
+        {slashMenuOpen && (
+          <div
+            className="chat-slash-menu"
+            role="listbox"
+            aria-label={isZh ? '快捷命令' : 'Slash commands'}
+          >
+            {filteredSlashItems.length > 0 ? (
+              filteredSlashItems.map((item, idx) => {
+                const active = idx === safeSlashIndex
+                return (
+                  <button
+                    key={item.id}
+                    ref={(el) => {
+                      slashItemRefs.current[idx] = el
+                    }}
+                    type="button"
+                    role="option"
+                    aria-selected={active}
+                    className={`chat-slash-item${active ? ' chat-slash-item--active' : ''}`}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onMouseEnter={() => setSlashActiveIndex(idx)}
+                    onClick={() => runSlashCommand(item)}
+                  >
+                    <span className="chat-slash-item__icon" aria-hidden="true">
+                      <Icon name={item.icon} size={14} />
+                    </span>
+                    <span className="chat-slash-item__cmd">/{item.command}</span>
+                    <span className="chat-slash-item__desc">{item.description}</span>
+                    {item.badge && (
+                      <span className="chat-slash-item__badge">{item.badge}</span>
+                    )}
+                  </button>
+                )
+              })
+            ) : (
+              <div className="chat-slash-menu__empty">
+                {isZh ? '没有匹配的命令或技能' : 'No matching commands or skills'}
+              </div>
+            )}
+          </div>
+        )}
         {todoList && todoList.length > 0 && <TodoListPill tasks={todoList} isZh={isZh} />}
         {showScrollBottom && chat.length > 0 && (
           <button
@@ -3963,11 +4161,39 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
               ? (isZh ? '排队发送…(不打断请求送达)' : 'Queue a message… (delivered at the next gap, no interrupt)')
               : temporaryChat
                 ? (isZh ? '临时会话中（不保存记录，关闭即清空）…' : 'Temporary chat (not saved, cleared on close)…')
-                : (isZh ? 'Enter 发送，Shift+Enter 换行' : 'Message… (Enter to send, Shift+Enter for newline)')
+                : (isZh ? 'Enter 发送，Shift+Enter 换行 · 输入 / 快捷指令' : 'Message… (Enter to send, / for commands)')
           }
-          onChange={(e) => setInput(e.target.value)}
+          onChange={(e) => {
+            setSlashDismissed(false)
+            setInput(e.target.value)
+          }}
           onPaste={handlePaste}
           onKeyDown={(e) => {
+            if (slashMenuOpen && !e.nativeEvent.isComposing) {
+              if (e.key === 'Escape') {
+                e.preventDefault()
+                e.stopPropagation()
+                setSlashDismissed(true)
+                return
+              }
+              if (filteredSlashItems.length > 0) {
+                if (e.key === 'ArrowDown') {
+                  e.preventDefault()
+                  setSlashActiveIndex((i) => (i + 1) % filteredSlashItems.length)
+                  return
+                }
+                if (e.key === 'ArrowUp') {
+                  e.preventDefault()
+                  setSlashActiveIndex((i) => (i - 1 + filteredSlashItems.length) % filteredSlashItems.length)
+                  return
+                }
+                if ((e.key === 'Enter' && !e.shiftKey) || (e.key === 'Tab' && !e.shiftKey)) {
+                  e.preventDefault()
+                  runSlashCommand(filteredSlashItems[safeSlashIndex])
+                  return
+                }
+              }
+            }
             if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault()
               // Mid-stream Enter queues instead of stopping — interrupting is
