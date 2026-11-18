@@ -36,6 +36,7 @@ describe('Markdown Code Block & Syntax Highlighting', () => {
     expect(doc).toContain('::-webkit-scrollbar')
     expect(doc).toContain(snippet)
     expect(doc).toContain("postMessage({ type: 'preview-height'")
+    expect(doc).toContain("postMessage({ type: 'preview-escape'")
   })
 
   it('preserves complete HTML documents and appends the height reporter', () => {
@@ -43,6 +44,7 @@ describe('Markdown Code Block & Syntax Highlighting', () => {
     const doc = buildHtmlPreviewDoc(fullDoc)
     expect(doc.startsWith(fullDoc)).toBe(true)
     expect(doc).toContain("postMessage({ type: 'preview-height'")
+    expect(doc).toContain("postMessage({ type: 'preview-escape'")
   })
 
   it('clamps the height a preview document may request', () => {
@@ -53,12 +55,14 @@ describe('Markdown Code Block & Syntax Highlighting', () => {
     expect(clampPreviewHeight(5000)).toBe(600)
   })
 
-  it('wraps SVG snippets with checkerboard background and responsive SVG styling', () => {
+  it('wraps SVG snippets with checkerboard background, fullscreen scaling and Escape forwarding', () => {
     const svg = '<svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="40" /></svg>'
     const doc = buildSvgPreviewDoc(svg)
     expect(doc).toContain('<!DOCTYPE html>')
     expect(doc).toContain('repeating-conic-gradient')
     expect(doc).toContain('max-width: 100%')
+    expect(doc).toContain('body.is-fullscreen svg[viewBox]')
+    expect(doc).toContain("postMessage({ type: 'preview-escape'")
     expect(doc).toContain('::-webkit-scrollbar')
     expect(doc).toContain(svg)
   })

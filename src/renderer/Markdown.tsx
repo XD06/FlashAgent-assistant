@@ -25,21 +25,35 @@ export function highlightCode(code: string, lang?: string): string {
 }
 
 /** Appended to every HTML preview document: reports the content height to the
- * parent (see onPreviewHeightMessage). Degrades silently when the model's
- * document carries its own CSP or stops parsing — the frame then keeps its
- * default height. A trailing script still runs after `</html>` (the parser
- * reprocesses it in body). */
+ * parent (see onPreviewHeightMessage) and forwards Escape to exit fullscreen.
+ * Degrades silently when the model's document carries its own CSP or stops
+ * parsing — the frame then keeps its default height. A trailing script still
+ * runs after `</html>` (the parser reprocesses it in body). */
 const PREVIEW_HEIGHT_SCRIPT = `<script>
 (function () {
   var last = 0;
+  var lastInner = window.innerHeight || 0;
   function report() {
     var root = document.documentElement;
-    var h = Math.ceil(Math.max(root ? root.scrollHeight : 0, document.body ? document.body.scrollHeight : 0));
+    var bh = document.body ? document.body.scrollHeight : 0;
+    var rh = root ? root.scrollHeight : 0;
+    var h = Math.ceil(Math.max(rh, bh));
+    var inner = window.innerHeight || 0;
     if (!h || Math.abs(h - last) < 2) return;
+    // Break 100vh / height:100% feedback loops where growing the iframe
+    // immediately pushes scrollHeight up by the exact viewport delta.
+    if (last > 0 && h > last && inner > lastInner && Math.abs((inner - lastInner) - (h - last)) <= 2) {
+      lastInner = inner;
+      return;
+    }
     last = h;
+    lastInner = inner;
     parent.postMessage({ type: 'preview-height', height: h }, '*');
   }
   window.addEventListener('load', report);
+  window.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') parent.postMessage({ type: 'preview-escape' }, '*');
+  });
   if (window.ResizeObserver && document.body) new ResizeObserver(report).observe(document.body);
   setTimeout(report, 60);
 })();
@@ -119,12 +133,20 @@ export function buildSvgPreviewDoc(code: string): string {
       box-sizing: border-box;
       background: repeating-conic-gradient(#80808022 0% 25%, transparent 0% 50%) 50% / 20px 20px;
     }
+    body.is-fullscreen {
+      padding: 24px;
+    }
     svg {
       max-width: 100%;
       max-height: 100%;
       width: auto;
       height: auto;
       display: block;
+    }
+    body.is-fullscreen svg[viewBox],
+    body.is-fullscreen svg[viewbox] {
+      width: 100%;
+      height: 100%;
     }
     ::-webkit-scrollbar {
       width: 5px;
@@ -148,6 +170,18 @@ export function buildSvgPreviewDoc(code: string): string {
 </head>
 <body>
 ${clean}
+<script>
+(function () {
+  window.addEventListener('message', function (e) {
+    if (e.data && e.data.type === 'preview-fullscreen') {
+      document.body.classList.toggle('is-fullscreen', !!e.data.fullscreen);
+    }
+  });
+  window.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') parent.postMessage({ type: 'preview-escape' }, '*');
+  });
+})();
+</script>
 </body>
 </html>`
 }
@@ -467,9 +501,20 @@ export const PREVIEW_IFRAME_SANDBOX = 'allow-scripts allow-forms allow-modals al
 const PREVIEW_MIN_HEIGHT = 180
 const PREVIEW_MAX_HEIGHT = 600
 const PREVIEW_HEIGHT_MESSAGE = 'preview-height'
+const PREVIEW_FULLSCREEN_MESSAGE = 'preview-fullscreen'
+const PREVIEW_ESCAPE_MESSAGE = 'preview-escape'
 
 /** Last height a document asked for, so leaving fullscreen can restore it. */
 const previewHeights = new WeakMap<HTMLIFrameElement, number>()
+/** Last height written programmatically, used to detect manual drag-resize. */
+const lastAppliedHeights = new WeakMap<HTMLIFrameElement, number>()
+/** User-dragged height preserved across fullscreen toggles. */
+const manualPreviewHeights = new WeakMap<HTMLIFrameElement, number>()
+/** Flow spacer + saved scrollTop while a preview block is fixed fullscreen. */
+const fullscreenStates = new WeakMap<
+  HTMLElement,
+  { spacer: HTMLElement; scrollEl: HTMLElement | null; scrollTop: number }
+>()
 /** Frame lookup by `MessageEvent.source` — a WeakMap so removed frames and
  * their WindowProxies are collectable without any cleanup pass. */
 const previewFrameByWindow = new WeakMap<WindowProxy, HTMLIFrameElement>()
@@ -479,18 +524,120 @@ export function clampPreviewHeight(height: number): number {
   return Math.min(PREVIEW_MAX_HEIGHT, Math.max(PREVIEW_MIN_HEIGHT, Math.round(height)))
 }
 
-function onPreviewHeightMessage(event: MessageEvent): void {
+function notifyPreviewFullscreen(iframe: HTMLIFrameElement | null, fullscreen: boolean): void {
+  try {
+    iframe?.contentWindow?.postMessage({ type: PREVIEW_FULLSCREEN_MESSAGE, fullscreen }, '*')
+  } catch {
+    // ignore cross-context errors on detached frames
+  }
+}
+
+function exitPreviewFullscreen(codeBlock: HTMLElement): void {
+  if (!codeBlock.classList.contains('is-fullscreen')) return
+  const state = fullscreenStates.get(codeBlock)
+  fullscreenStates.delete(codeBlock)
+
+  codeBlock.classList.remove('is-fullscreen')
+  state?.spacer.remove()
+
+  const frame = codeBlock.querySelector<HTMLIFrameElement>('.html-preview-frame')
+  if (frame) {
+    const manualHeight = manualPreviewHeights.get(frame)
+    const autoHeight = previewHeights.get(frame)
+    if (manualHeight) {
+      frame.style.height = `${manualHeight}px`
+    } else if (autoHeight) {
+      lastAppliedHeights.set(frame, autoHeight)
+      frame.style.height = `${autoHeight}px`
+    } else {
+      frame.style.height = ''
+    }
+    notifyPreviewFullscreen(frame, false)
+  }
+
+  const fsBtn = codeBlock.querySelector<HTMLButtonElement>('[data-action="toggle-fullscreen"]')
+  if (fsBtn) {
+    fsBtn.innerHTML = FULLSCREEN_ENTER_ICON_SVG
+    fsBtn.title = '全屏预览'
+    fsBtn.setAttribute('aria-label', '全屏预览')
+  }
+
+  if (state?.scrollEl) {
+    state.scrollEl.scrollTop = state.scrollTop
+  }
+}
+
+function enterPreviewFullscreen(codeBlock: HTMLElement): void {
+  if (codeBlock.classList.contains('is-fullscreen')) return
+  const frame = codeBlock.querySelector<HTMLIFrameElement>('.html-preview-frame')
+  const scrollEl = codeBlock.closest<HTMLElement>('.content')
+  const scrollTop = scrollEl?.scrollTop ?? 0
+
+  if (frame && frame.style.height) {
+    const applied = lastAppliedHeights.get(frame)
+    if (applied === undefined || Math.abs(frame.offsetHeight - applied) > 4) {
+      manualPreviewHeights.set(frame, frame.offsetHeight)
+    }
+  }
+
+  const rect = codeBlock.getBoundingClientRect()
+  const cs = window.getComputedStyle(codeBlock)
+  const spacer = document.createElement('div')
+  spacer.className = 'code-fullscreen-spacer'
+  spacer.style.height = `${Math.max(0, rect.height)}px`
+  spacer.style.marginTop = cs.marginTop
+  spacer.style.marginBottom = cs.marginBottom
+  codeBlock.parentNode?.insertBefore(spacer, codeBlock)
+  fullscreenStates.set(codeBlock, { spacer, scrollEl, scrollTop })
+
+  codeBlock.classList.add('is-fullscreen')
+  // Fullscreen sizes the frame through flex; an inline content height
+  // would pin it to the message box size.
+  if (frame) {
+    frame.style.height = ''
+    notifyPreviewFullscreen(frame, true)
+  }
+  const fsBtn = codeBlock.querySelector<HTMLButtonElement>('[data-action="toggle-fullscreen"]')
+  if (fsBtn) {
+    fsBtn.innerHTML = FULLSCREEN_EXIT_ICON_SVG
+    fsBtn.title = '退出全屏 (Esc)'
+    fsBtn.setAttribute('aria-label', '退出全屏')
+  }
+  if (scrollEl) {
+    scrollEl.scrollTop = scrollTop
+  }
+}
+
+function onPreviewMessage(event: MessageEvent): void {
   const data = event.data as { type?: unknown; height?: unknown } | null
-  if (!data || data.type !== PREVIEW_HEIGHT_MESSAGE || typeof data.height !== 'number') return
-  if (!Number.isFinite(data.height)) return
+  if (!data || typeof data.type !== 'string') return
   const iframe = previewFrameByWindow.get(event.source as WindowProxy)
   if (!iframe || !iframe.isConnected) return
+  if (data.type === PREVIEW_ESCAPE_MESSAGE) {
+    const codeBlock = iframe.closest<HTMLElement>('.code-block.is-fullscreen')
+    if (codeBlock) exitPreviewFullscreen(codeBlock)
+    return
+  }
+  if (data.type !== PREVIEW_HEIGHT_MESSAGE || typeof data.height !== 'number') return
+  if (!Number.isFinite(data.height)) return
   // Fullscreen drives the frame height through flex; an inline height would
   // pin it back to the message-sized box.
   if (iframe.closest('.code-block')?.classList.contains('is-fullscreen')) return
+  // Respect manual vertical resize by the user instead of snapping back.
+  if (iframe.style.height) {
+    const lastApplied = lastAppliedHeights.get(iframe)
+    if (lastApplied !== undefined && Math.abs(iframe.offsetHeight - lastApplied) > 4) {
+      manualPreviewHeights.set(iframe, iframe.offsetHeight)
+      return
+    }
+  }
   const height = clampPreviewHeight(data.height)
   previewHeights.set(iframe, height)
-  if (Math.abs(height - iframe.offsetHeight) < 2) return
+  if (Math.abs(height - iframe.offsetHeight) < 2) {
+    lastAppliedHeights.set(iframe, height)
+    return
+  }
+  lastAppliedHeights.set(iframe, height)
   iframe.style.height = `${height}px`
 }
 
@@ -499,7 +646,7 @@ function trackPreviewFrame(iframe: HTMLIFrameElement): void {
   if (frameWindow) previewFrameByWindow.set(frameWindow, iframe)
   if (previewHeightListenerInstalled) return
   previewHeightListenerInstalled = true
-  window.addEventListener('message', onPreviewHeightMessage)
+  window.addEventListener('message', onPreviewMessage)
 }
 
 function ensurePreviewFrame(codeBlock: HTMLElement): HTMLIFrameElement | null {
@@ -510,6 +657,11 @@ function ensurePreviewFrame(codeBlock: HTMLElement): HTMLIFrameElement | null {
     iframe = document.createElement('iframe')
     iframe.className = 'html-preview-frame'
     iframe.setAttribute('sandbox', PREVIEW_IFRAME_SANDBOX)
+    iframe.addEventListener('load', () => {
+      if (!iframe?.isConnected) return
+      const isFs = !!iframe.closest('.code-block')?.classList.contains('is-fullscreen')
+      if (isFs) notifyPreviewFullscreen(iframe, true)
+    })
     panel.appendChild(iframe)
     trackPreviewFrame(iframe)
   }
@@ -637,6 +789,8 @@ export const MarkdownView = React.memo(function MarkdownView({
               // starts from the default and the new report can shrink it too.
               iframe.style.height = ''
               previewHeights.delete(iframe)
+              lastAppliedHeights.delete(iframe)
+              manualPreviewHeights.delete(iframe)
               // Let the active tab paint before Chromium parses/loads the
               // sandbox document. This keeps rapid tab clicks responsive.
               requestAnimationFrame(() => {
@@ -646,14 +800,8 @@ export const MarkdownView = React.memo(function MarkdownView({
           }
         } else {
           if (!codeBlock.classList.contains('is-previewing')) return
+          exitPreviewFullscreen(codeBlock)
           codeBlock.classList.remove('is-previewing')
-          codeBlock.classList.remove('is-fullscreen')
-          const fsBtn = codeBlock.querySelector<HTMLButtonElement>('[data-action="toggle-fullscreen"]')
-          if (fsBtn) {
-            fsBtn.innerHTML = FULLSCREEN_ENTER_ICON_SVG
-            fsBtn.title = '全屏预览'
-            fsBtn.setAttribute('aria-label', '全屏预览')
-          }
           previewTab?.classList.remove('active')
           codeTab?.classList.add('active')
           // Destroying a browsing context can synchronously spend several
@@ -678,16 +826,21 @@ export const MarkdownView = React.memo(function MarkdownView({
       }
 
       // 2. Reload preview
-        const reloadBtn = target.closest<HTMLButtonElement>('[data-action="reload-preview"]')
-        if (reloadBtn && container.contains(reloadBtn)) {
-          e.preventDefault()
-          e.stopPropagation()
-          const codeBlock = reloadBtn.closest<HTMLElement>('.code-block')
+      const reloadBtn = target.closest<HTMLButtonElement>('[data-action="reload-preview"]')
+      if (reloadBtn && container.contains(reloadBtn)) {
+        e.preventDefault()
+        e.stopPropagation()
+        const codeBlock = reloadBtn.closest<HTMLElement>('.code-block')
         if (codeBlock) {
           const iframe = ensurePreviewFrame(codeBlock)
           if (iframe) {
             const doc = buildPreviewDoc(codeBlock)
             loadedPreviewDocs.set(iframe, doc)
+            previewHeights.delete(iframe)
+            lastAppliedHeights.delete(iframe)
+            if (!codeBlock.classList.contains('is-fullscreen') && !manualPreviewHeights.has(iframe)) {
+              iframe.style.height = ''
+            }
             iframe.srcdoc = ''
             requestAnimationFrame(() => {
               if (iframe?.isConnected && codeBlock.classList.contains('is-previewing')) iframe.srcdoc = doc
@@ -702,28 +855,12 @@ export const MarkdownView = React.memo(function MarkdownView({
       if (fsBtn && container.contains(fsBtn)) {
         e.preventDefault()
         e.stopPropagation()
-        const codeBlock = fsBtn.closest('.code-block')
+        const codeBlock = fsBtn.closest<HTMLElement>('.code-block')
         if (!codeBlock) return
-        const isFs = codeBlock.classList.contains('is-fullscreen')
-        const frame = codeBlock.querySelector<HTMLIFrameElement>('.html-preview-frame')
-        if (isFs) {
-          codeBlock.classList.remove('is-fullscreen')
-          // Restore the content height the frame had before fullscreen.
-          if (frame) {
-            const height = previewHeights.get(frame)
-            if (height) frame.style.height = `${height}px`
-          }
-          fsBtn.innerHTML = FULLSCREEN_ENTER_ICON_SVG
-          fsBtn.title = '全屏预览'
-          fsBtn.setAttribute('aria-label', '全屏预览')
+        if (codeBlock.classList.contains('is-fullscreen')) {
+          exitPreviewFullscreen(codeBlock)
         } else {
-          codeBlock.classList.add('is-fullscreen')
-          // Fullscreen sizes the frame through flex; an inline content height
-          // would pin it to the message box size.
-          if (frame) frame.style.height = ''
-          fsBtn.innerHTML = FULLSCREEN_EXIT_ICON_SVG
-          fsBtn.title = '退出全屏 (Esc)'
-          fsBtn.setAttribute('aria-label', '退出全屏')
+          enterPreviewFullscreen(codeBlock)
         }
         return
       }
@@ -775,28 +912,22 @@ export const MarkdownView = React.memo(function MarkdownView({
 
     container.addEventListener('click', onContainerClick)
 
-    // Escape key exits fullscreen preview
+    // Escape key exits fullscreen preview before parent window Esc handlers run.
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        const fsBlock = container.querySelector('.code-block.is-fullscreen')
+        const fsBlock = container.querySelector<HTMLElement>('.code-block.is-fullscreen')
         if (fsBlock) {
-          fsBlock.classList.remove('is-fullscreen')
-          const frame = fsBlock.querySelector<HTMLIFrameElement>('.html-preview-frame')
-          const height = frame ? previewHeights.get(frame) : undefined
-          if (frame && height) frame.style.height = `${height}px`
-          const fsBtn = fsBlock.querySelector<HTMLButtonElement>('[data-action="toggle-fullscreen"]')
-          if (fsBtn) {
-            fsBtn.innerHTML = FULLSCREEN_ENTER_ICON_SVG
-            fsBtn.title = '全屏预览'
-            fsBtn.setAttribute('aria-label', '全屏预览')
-          }
+          e.preventDefault()
+          e.stopPropagation()
+          e.stopImmediatePropagation()
+          exitPreviewFullscreen(fsBlock)
         }
       }
     }
-    window.addEventListener('keydown', onKeyDown)
+    window.addEventListener('keydown', onKeyDown, true)
     return () => {
       container.removeEventListener('click', onContainerClick)
-      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('keydown', onKeyDown, true)
     }
   }, [])
 
@@ -806,7 +937,7 @@ export const MarkdownView = React.memo(function MarkdownView({
   React.useEffect(() => {
     const container = containerRef.current
     return () => {
-      container?.querySelectorAll('.code-block.is-fullscreen').forEach((el) => el.classList.remove('is-fullscreen'))
+      container?.querySelectorAll<HTMLElement>('.code-block.is-fullscreen').forEach((el) => exitPreviewFullscreen(el))
       container?.querySelectorAll<HTMLIFrameElement>('.html-preview-frame').forEach((iframe) => {
         iframe.remove()
       })
