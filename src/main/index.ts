@@ -382,6 +382,8 @@ function createSettingsWindow(): BrowserWindow {
     icon: appIcon,
     title: 'FlashAgent-assistant',
     autoHideMenuBar: true,
+    show: false,
+    paintWhenInitiallyHidden: true,
     backgroundColor: surfaceChrome,
     titleBarStyle: 'hidden',
     ...(isWin
@@ -403,22 +405,30 @@ function createSettingsWindow(): BrowserWindow {
       backgroundThrottling: true
     }
   })
-  settingsWindow.on('close', (event) => {
+  const win = settingsWindow
+  win.on('close', (event) => {
     if (isQuitting) return
     event.preventDefault()
-    settingsWindow?.hide()
+    win.hide()
     app.dock?.hide()
     scheduleSettingsIdleDestroy()
   })
-  settingsWindow.on('show', () => {
+  win.on('show', () => {
     app.dock?.show()
     cancelSettingsIdleDestroy()
   })
-  settingsWindow.on('closed', () => {
-    settingsWindow = null
+  win.on('closed', () => {
+    if (settingsWindow === win) settingsWindow = null
   })
-  loadRenderer(settingsWindow, 'settings.html')
-  return settingsWindow
+  win.once('ready-to-show', () => {
+    if (win.isDestroyed()) return
+    app.dock?.show()
+    applySettingsWindowTheme(win)
+    win.show()
+    win.focus()
+  })
+  loadRenderer(win, 'settings.html')
+  return win
 }
 
 function toggleSettingsWindow(): void {
@@ -864,6 +874,9 @@ function registerIpc(): void {
   let mcpProxyReconnectTimer: NodeJS.Timeout | null = null
 
   ipcMain.handle(IPC.SettingsGet, () => getSettings())
+  ipcMain.on(IPC.SettingsGetSync, (event) => {
+    event.returnValue = getSettings()
+  })
   ipcMain.handle(IPC.SettingsUpdate, async (event, patch: SettingsPatch) => {
     const prev = getSettings()
     const settings = updateSettings(await confirmDangerousSettings(prev, patch, event.sender))
@@ -897,6 +910,9 @@ function registerIpc(): void {
   ipcMain.handle(IPC.ProxyTest, (_event, proxyUrl: string) => testProxy(typeof proxyUrl === 'string' ? proxyUrl : ''))
 
   ipcMain.handle(IPC.AppSystemAccentGet, () => readSystemAccentColor())
+  ipcMain.on(IPC.AppSystemAccentGetSync, (event) => {
+    event.returnValue = readSystemAccentColor()
+  })
 
   // Only allow protocols that make sense to hand to the OS shell. Selected
   // text can be an arbitrary URI, so never forward schemes like javascript: —

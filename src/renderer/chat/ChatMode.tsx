@@ -1216,7 +1216,8 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
   const [pendingFiles, setPendingFiles] = React.useState<FileAttachment[]>([])
 
   // ---- Model selection ----
-  const [models, setModels] = React.useState<string[]>([])
+  const providerKey = `${settings.activeProviderTemplateId}|${settings.provider.baseUrl}`
+  const [models, setModels] = React.useState<string[]>(() => loadCachedModels(providerKey) ?? [])
   const [selectedModel, setSelectedModel] = React.useState<string>(settings.provider.model)
   const [modelsLoading, setModelsLoading] = React.useState(false)
   const [searchEnabled, setSearchEnabled] = React.useState(false)
@@ -1309,9 +1310,11 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
     setModelMenuOpen(false)
     setModelQuery('')
   }
-  const modelLabel = modelsLoading
-    ? (isZh ? '加载模型…' : 'Loading…')
-    : selectedModel || (isZh ? '手动输入' : 'Manual')
+  const modelLabel = selectedModel
+    ? selectedModel
+    : modelsLoading
+      ? (isZh ? '加载模型…' : 'Loading…')
+      : (isZh ? '手动输入' : 'Manual')
   React.useLayoutEffect(() => {
     const el = modelMeasureRef.current
     if (!el) return
@@ -1477,7 +1480,6 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
   }, [settings.provider.model])
 
   // ---- Fetch models from /v1/models (cached, 5min TTL, per provider) ----
-  const providerKey = `${settings.activeProviderTemplateId}|${settings.provider.baseUrl}`
   const fetchModels = React.useCallback(async () => {
     // Try cache first
     const cached = loadCachedModels(providerKey)

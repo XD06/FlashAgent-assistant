@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useState } from 'react'
 import { defaultPrimaryColor } from '@shared/defaults'
 import { deriveThemeCssVars, type ResolvedThemeMode } from '@shared/theme'
 import type { ChatColorMode, ColorStyle, ThemeMode } from '@shared/types'
@@ -19,18 +19,27 @@ function resolveTheme(theme: ThemeMode): ResolvedThemeMode {
 }
 
 export function useSystemAccentColor(): string {
-  const [systemAccent, setSystemAccent] = useState(defaultPrimaryColor)
+  const [initialAccent] = useState<string | null>(() => {
+    try {
+      return window.assistantLite?.app?.getSystemAccentColorSync?.() || null
+    } catch {
+      return null
+    }
+  })
+  const [systemAccent, setSystemAccent] = useState(initialAccent ?? defaultPrimaryColor)
 
   useEffect(() => {
     const appApi = window.assistantLite?.app
     if (!appApi?.getSystemAccentColor) return
     let active = true
-    void appApi
-      .getSystemAccentColor()
-      .then((color) => {
-        if (active && color) setSystemAccent(color)
-      })
-      .catch(() => {})
+    if (!initialAccent) {
+      void appApi
+        .getSystemAccentColor()
+        .then((color) => {
+          if (active && color) setSystemAccent(color)
+        })
+        .catch(() => {})
+    }
     const off = appApi.onSystemAccentColorChanged?.((color) => {
       if (color) setSystemAccent(color)
     })
@@ -38,7 +47,7 @@ export function useSystemAccentColor(): string {
       active = false
       off?.()
     }
-  }, [])
+  }, [initialAccent])
 
   return systemAccent
 }
@@ -52,7 +61,7 @@ export function useThemeMode(input: ThemeModeInput) {
 
   const systemAccent = useSystemAccentColor()
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const media = window.matchMedia('(prefers-color-scheme: dark)')
     const root = document.documentElement
 

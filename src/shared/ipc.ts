@@ -1,8 +1,10 @@
 export const IPC = {
   SettingsGet: 'settings:get',
+  SettingsGetSync: 'settings:get-sync',
   SettingsUpdate: 'settings:update',
   SettingsChanged: 'settings:changed',
   AppSystemAccentGet: 'app:system-accent-get',
+  AppSystemAccentGetSync: 'app:system-accent-get-sync',
   AppSystemAccentChanged: 'app:system-accent-changed',
 
   SelectionStart: 'selection:start',

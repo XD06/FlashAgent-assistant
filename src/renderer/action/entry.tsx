@@ -13,10 +13,21 @@ import { ThinkingBlock } from '../chat/ThinkingBlock'
 
 // ChatMode pulls in Agent UI, extensions, topic history (~1.2k lines + panel).
 // Keep it out of the selection-result bundle: only the chat window path loads it.
-const ChatMode = React.lazy(async () => {
-  const mod = await import('../chat/ChatMode')
-  return { default: mod.ChatMode }
-})
+const initialActionPayload = window.assistantLite.selection.getInitialAction()
+let ResolvedChatMode: React.ComponentType<{ settings: AppSettings }> | null = null
+let chatModePromise: Promise<{ default: React.ComponentType<{ settings: AppSettings }> }> | null = null
+
+function loadChatMode() {
+  if (!chatModePromise) {
+    chatModePromise = import('../chat/ChatMode').then((mod) => {
+      ResolvedChatMode = mod.ChatMode
+      return { default: mod.ChatMode }
+    })
+  }
+  return chatModePromise
+}
+
+const ChatMode = React.lazy(loadChatMode)
 
 interface ChatTurn {
   role: 'user' | 'assistant'
@@ -606,21 +617,17 @@ function SelectionResult({ payload, settings, settingsLoaded, t, pinned, toggleP
     setShowImage(false)
     setSpeaking(false)
     stick.current = true
-    setTimeout(
-      () =>
-        send({
-          sendText: prompt,
-          hidden: true,
-          reset: true,
-          images: isVision ? payload.images : undefined,
-          model: isVision ? visionModelRef.current.trim() || undefined : undefined
-        }),
-      0
-    )
+    send({
+      sendText: prompt,
+      hidden: true,
+      reset: true,
+      images: isVision ? payload.images : undefined,
+      model: isVision ? visionModelRef.current.trim() || undefined : undefined
+    })
   }, [payload, liveAction, t, send, stick, isVision, isZh])
 
   const startedPayloadRef = React.useRef<ActionPayload | null>(null)
-  React.useEffect(() => {
+  React.useLayoutEffect(() => {
     if (!settingsLoaded) return
     if (startedPayloadRef.current === payload) return
     startedPayloadRef.current = payload
@@ -941,10 +948,9 @@ function ActionApp() {
   // already has content; the main process shows the window on its first paint.
   // Later opens arrive via onAction, and hide-on-close triggers onReset so a
   // pooled window unmounts its stale session before next open.
-  const [viewState, setViewState] = React.useState<ActionViewState>(() => {
-    const initial = window.assistantLite.selection.getInitialAction()
-    return initial ? { kind: 'action', payload: initial } : { kind: 'chat' }
-  })
+  const [viewState, setViewState] = React.useState<ActionViewState>(() =>
+    initialActionPayload ? { kind: 'action', payload: initialActionPayload } : { kind: 'chat' }
+  )
   const [pinned, setPinned] = React.useState(settings.autoPin)
   const t = getTranslator(settings.language)
   useThemeMode(settings)
@@ -957,13 +963,15 @@ function ActionApp() {
   React.useEffect(() => {
     if (!settingsLoaded) return
     const firstLoad = prevAutoPinRef.current === null
-    const autoPinChanged = prevAutoPinRef.current !== settings.autoPin
-    const newSession = !!payload?.sessionId && prevSessionIdRef.current !== payload.sessionId
+    const autoPinChanged = !firstLoad && prevAutoPinRef.current !== settings.autoPin
+    const newSession = !firstLoad && !!payload?.sessionId && prevSessionIdRef.current !== payload.sessionId
     if (firstLoad || autoPinChanged || newSession) {
       prevAutoPinRef.current = settings.autoPin
       prevSessionIdRef.current = payload?.sessionId
       setPinned(settings.autoPin)
-      if (payload) void window.assistantLite.windowControls.pin(settings.autoPin)
+      if (payload && (autoPinChanged || newSession)) {
+        void window.assistantLite.windowControls.pin(settings.autoPin)
+      }
     }
   }, [settingsLoaded, settings.autoPin, payload])
 
@@ -978,7 +986,7 @@ function ActionApp() {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  React.useEffect(() => {
+  React.useLayoutEffect(() => {
     document.documentElement.classList.add('action-page-root')
     document.body.classList.add('action-page')
     return () => {
@@ -1018,6 +1026,9 @@ function ActionApp() {
   // No initial payload ⇒ independent chat window. Suspense only wraps this
   // branch so selection/input paths never wait on (or download) ChatMode.
   if (viewState.kind === 'chat') {
+    if (ResolvedChatMode) {
+      return <ResolvedChatMode settings={settings} />
+    }
     return (
       <React.Suspense fallback={<ChatModeFallback t={t} />}>
         <ChatMode settings={settings} />
@@ -1067,4 +1078,11 @@ function ChatModeFallback({ t }: { t: Translator }) {
   )
 }
 
-createRoot(document.getElementById('root')!).render(<ActionApp />)
+const root = createRoot(document.getElementById('root')!)
+if (initialActionPayload === null) {
+  void loadChatMode().finally(() => {
+    root.render(<ActionApp />)
+  })
+} else {
+  root.render(<ActionApp />)
+}

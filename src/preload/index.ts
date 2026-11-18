@@ -25,6 +25,7 @@ import type {
 const api = {
   settings: {
     get: (): Promise<AppSettings> => ipcRenderer.invoke(IPC.SettingsGet),
+    getSync: (): AppSettings | null => ipcRenderer.sendSync(IPC.SettingsGetSync) ?? null,
     update: (patch: SettingsPatch): Promise<AppSettings> => ipcRenderer.invoke(IPC.SettingsUpdate, patch),
     onChanged: (callback: (settings: AppSettings) => void) => {
       const listener = (_event: Electron.IpcRendererEvent, settings: AppSettings) => callback(settings)
@@ -213,6 +214,7 @@ const api = {
   app: {
     openExternal: (url: string): Promise<void> => ipcRenderer.invoke(IPC.OpenExternal, url),
     getSystemAccentColor: (): Promise<string> => ipcRenderer.invoke(IPC.AppSystemAccentGet),
+    getSystemAccentColorSync: (): string | null => ipcRenderer.sendSync(IPC.AppSystemAccentGetSync) ?? null,
     onSystemAccentColorChanged: (callback: (color: string) => void) => {
       const listener = (_event: Electron.IpcRendererEvent, color: string) => callback(color)
       ipcRenderer.on(IPC.AppSystemAccentChanged, listener)

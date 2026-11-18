@@ -869,7 +869,6 @@ export class SelectionService {
       width: this.getActionWindowWidth(width),
       height: this.getActionWindowHeight(height)
     })
-    win.setAlwaysOnTop(!!settings.autoPin)
   }
 
   private startHideListeners(): void {

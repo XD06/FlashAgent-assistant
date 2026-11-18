@@ -1,13 +1,13 @@
 :root {
   color-scheme: light;
-  /* 4-level FlClash surface hierarchy (Light: alternating white paper & cool neutral gray) */
-  --surface-page: #f1f2f5;
-  --surface-chrome: #e7e9ef;
-  --surface-card: #fcfcfd;
-  --surface-block: #f1f2f5;
-  --surface-inset: #e4e6ec;
-  --segment-track: #e4e6ec;
-  --segment-thumb: #fcfcfd;
+  /* 4-level FlClash surface hierarchy (Light: matches deriveThemeCssVars for #007aff vivid) */
+  --surface-page: #eef0f2;
+  --surface-chrome: #e5e7ea;
+  --surface-card: #fbfcfe;
+  --surface-block: #eef0f2;
+  --surface-inset: #e2e4e8;
+  --segment-track: #e2e4e8;
+  --segment-thumb: #fbfcfe;
 
   --bg: var(--surface-page);
   --panel: var(--surface-card);
@@ -297,6 +297,9 @@ label {
   display: flex;
   flex-direction: column;
   padding: 0;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  isolation: isolate;
 }
 
 .settings-titlebar {
@@ -2828,6 +2831,9 @@ html[data-theme='dark'] .toolbar-button:hover {
     inset 0 0 0 1px var(--divider-hairline);
   overflow: hidden;
   opacity: 1;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  isolation: isolate;
 }
 
 .titlebar {
@@ -2912,6 +2918,7 @@ html[data-theme='dark'] .titlebar > button:hover {
   align-content: start;
   gap: 12px;
   box-sizing: border-box;
+  transform: translateZ(0);
 }
 
 .thinking-indicator {
@@ -2919,26 +2926,18 @@ html[data-theme='dark'] .titlebar > button:hover {
   font-size: 13px;
   font-weight: 620;
   letter-spacing: 0.01em;
-  color: transparent;
-  background-image: linear-gradient(
-    90deg,
-    color-mix(in srgb, var(--muted) 82%, transparent) 0%,
-    color-mix(in srgb, var(--text) 94%, transparent) 45%,
-    color-mix(in srgb, var(--muted) 82%, transparent) 100%
-  );
-  background-size: 220% 100%;
-  background-position: 100% 50%;
-  -webkit-background-clip: text;
-  background-clip: text;
-  animation: thinking-shimmer 1.8s linear infinite;
+  color: var(--muted);
+  will-change: opacity;
+  animation: thinking-shimmer 1.6s ease-in-out infinite;
 }
 
 @keyframes thinking-shimmer {
-  0% {
-    background-position: 100% 50%;
-  }
+  0%,
   100% {
-    background-position: -100% 50%;
+    opacity: 0.48;
+  }
+  50% {
+    opacity: 0.96;
   }
 }
 

@@ -1017,7 +1017,7 @@ function SettingsApp() {
   useThemeMode(settings)
   useAppearance(settings)
 
-  React.useEffect(() => {
+  React.useLayoutEffect(() => {
     document.documentElement.classList.add('settings-page-root')
     document.body.classList.add('settings-body')
     return () => {
@@ -1105,7 +1105,7 @@ function SettingsApp() {
     return null
   })()
 
-  if (!loaded) return <main className="page">{t('loading')}</main>
+  if (!loaded) return <main className="page settings-page" />
 
   const updateTemplate = (id: string, patch: Partial<ProviderTemplate>) => {
     void update({
