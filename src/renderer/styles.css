@@ -7575,6 +7575,7 @@ html[data-theme='light'] .chat-toast {
 .translate-window {
   /* Override .action-window's fixed 100vh grid height — grow with content. */
   height: auto;
+  box-shadow: inset 0 0 0 1px var(--divider-hairline);
 }
 
 .tr-loading {
@@ -7887,6 +7888,11 @@ html[data-theme='dark'] .tr-lang select {
   color: var(--text);
   font-size: var(--app-font-size, 13.5px);
   line-height: 1.55;
+}
+
+.tr-card__body .thinking-indicator {
+  font-size: inherit;
+  line-height: inherit;
 }
 
 .tr-dict {

@@ -516,7 +516,31 @@ function openChatWindow(): void {
 }
 
 const TRANSLATE_DEFAULT_WIDTH = 420
-const TRANSLATE_DEFAULT_HEIGHT = 480
+const TRANSLATE_DEFAULT_HEIGHT = 320
+const TRANSLATE_IDLE_DESTROY_MS = 60_000
+const translateIdleTimers = new Map<BrowserWindow, NodeJS.Timeout>()
+
+function cancelTranslateIdleDestroy(win: BrowserWindow): void {
+  const timer = translateIdleTimers.get(win)
+  if (timer) {
+    clearTimeout(timer)
+    translateIdleTimers.delete(win)
+  }
+}
+
+function scheduleTranslateIdleDestroy(win: BrowserWindow): void {
+  cancelTranslateIdleDestroy(win)
+  const timer = setTimeout(() => {
+    translateIdleTimers.delete(win)
+    if (win.isDestroyed() || win.isVisible()) return
+    if (hasActiveStream(win.webContents.id)) {
+      scheduleTranslateIdleDestroy(win)
+      return
+    }
+    win.destroy()
+  }, TRANSLATE_IDLE_DESTROY_MS)
+  translateIdleTimers.set(win, timer)
+}
 
 function openTranslateWindow(forceNew = false): void {
   const candidates = Array.from(translateWindows)
@@ -528,18 +552,22 @@ function openTranslateWindow(forceNew = false): void {
     }))
   const existing = pickReusableSubWindow(candidates, forceNew)
   if (existing) {
+    cancelTranslateIdleDestroy(existing)
     if (existing.isMinimized()) existing.restore()
+    if (!existing.isVisible()) {
+      existing.setAlwaysOnTop(!!getSettings().autoPin)
+    }
     existing.show()
     existing.focus()
     return
   }
   const settings = getSettings()
   // 560×560 was the pre-polish default; treat it as "never resized" so the
-  // compact default takes effect for existing installs too.
+  // compact default takes effect for existing installs too. Height is purely
+  // content-driven via WindowAdjustHeight.
   const storedWidth = settings.translateWindowWidth
-  const storedHeight = settings.translateWindowHeight
   const width = storedWidth && storedWidth !== 560 ? storedWidth : TRANSLATE_DEFAULT_WIDTH
-  const height = storedHeight && storedHeight !== 560 ? storedHeight : TRANSLATE_DEFAULT_HEIGHT
+  const height = TRANSLATE_DEFAULT_HEIGHT
   const siblingCount = candidates.filter((c) => c.visible).length
   const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
   const area = display.workArea
@@ -555,7 +583,7 @@ function openTranslateWindow(forceNew = false): void {
     width: width + CHAT_SHADOW_PADDING * 2,
     height: height + CHAT_SHADOW_PADDING * 2,
     minWidth: 360 + CHAT_SHADOW_PADDING * 2,
-    minHeight: 320 + CHAT_SHADOW_PADDING * 2,
+    minHeight: 200 + CHAT_SHADOW_PADDING * 2,
     icon: appIcon,
     title: 'FlashAgent-assistant',
     autoHideMenuBar: true,
@@ -571,7 +599,7 @@ function openTranslateWindow(forceNew = false): void {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      backgroundThrottling: true
+      backgroundThrottling: false
     }
   })
   translateWindows.add(win)
@@ -584,8 +612,26 @@ function openTranslateWindow(forceNew = false): void {
       translateWindowWidth: Math.max(360, bounds.width - CHAT_SHADOW_PADDING * 2)
     })
   }
-  win.on('close', saveBounds)
+  win.on('close', (event) => {
+    saveBounds()
+    if (isQuitting) return
+    const hasOtherHidden = Array.from(translateWindows).some(
+      (other) => other !== win && !other.isDestroyed() && !other.isVisible()
+    )
+    if (hasOtherHidden) return
+    event.preventDefault()
+    if (!win.isDestroyed()) {
+      win.setAlwaysOnTop(false)
+      win.webContents.send(IPC.SelectionReset)
+      if (win.isVisible()) win.hide()
+      scheduleTranslateIdleDestroy(win)
+    }
+  })
+  win.on('show', () => {
+    cancelTranslateIdleDestroy(win)
+  })
   win.on('closed', () => {
+    cancelTranslateIdleDestroy(win)
     translateWindows.delete(win)
   })
   let resizeTimer: ReturnType<typeof setTimeout> | null = null
@@ -849,16 +895,23 @@ function registerIpc(): void {
   registerVocabularyIpc()
 
   // Height-to-content resizing (quick-translate window): the renderer reports
-  // its document height; clamp to the display work area so tall results
+  // its card height; clamp to the display work area so tall results
   // scroll instead of overflowing the screen. Top edge stays put.
-  ipcMain.handle(IPC.WindowAdjustHeight, (event, contentHeight: number) => {
-    const win = BrowserWindow.fromWebContents(event.sender)
+  const adjustWindowHeight = (sender: Electron.WebContents, contentHeight: number): void => {
+    const win = BrowserWindow.fromWebContents(sender)
     if (!win || win.isDestroyed() || !Number.isFinite(contentHeight)) return
     const bounds = win.getBounds()
     const workArea = screen.getDisplayMatching(bounds).workArea
-    const outer = Math.round(Math.min(Math.max(contentHeight, 380), workArea.height - 40))
+    const outer = Math.round(Math.min(Math.max(contentHeight, 200), workArea.height - 40))
     if (outer === bounds.height) return
     win.setBounds({ x: bounds.x, y: bounds.y, width: bounds.width, height: outer })
+  }
+  ipcMain.handle(IPC.WindowAdjustHeight, (event, contentHeight: number) => {
+    adjustWindowHeight(event.sender, contentHeight)
+  })
+  ipcMain.on(IPC.WindowAdjustHeight, (event, contentHeight: number) => {
+    adjustWindowHeight(event.sender, contentHeight)
+    event.returnValue = undefined
   })
 
   ipcMain.handle(IPC.WindowOpenNew, (_event, options?: OpenNewWindowOptions) => {

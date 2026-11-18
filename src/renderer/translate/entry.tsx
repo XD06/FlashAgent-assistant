@@ -335,13 +335,21 @@ function TranslateWindow() {
   const playingKeyRef = React.useRef<string | null>(null)
   const audioRef = React.useRef<HTMLAudioElement | null>(null)
   const noticeTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
+  const windowRef = React.useRef<HTMLDivElement>(null)
   const inputRef = React.useRef<HTMLTextAreaElement>(null)
   const isComposingRef = React.useRef(false)
   const prevAutoPinRef = React.useRef<boolean | null>(null)
+  const autoPinRef = React.useRef(settings.autoPin)
+  autoPinRef.current = settings.autoPin
 
   React.useEffect(() => {
     if (!loaded) return
-    if (prevAutoPinRef.current === null || prevAutoPinRef.current !== settings.autoPin) {
+    if (prevAutoPinRef.current === null) {
+      prevAutoPinRef.current = settings.autoPin
+      setPinned(settings.autoPin)
+      return
+    }
+    if (prevAutoPinRef.current !== settings.autoPin) {
       prevAutoPinRef.current = settings.autoPin
       setPinned(settings.autoPin)
       void window.assistantLite.windowControls.pin(settings.autoPin)
@@ -352,7 +360,7 @@ function TranslateWindow() {
     playingKeyRef.current = playingKey
   }, [playingKey])
 
-  React.useEffect(() => {
+  React.useLayoutEffect(() => {
     document.documentElement.classList.add('translate-page-root')
     document.body.classList.add('translate-page')
     document.documentElement.lang = settings.language
@@ -362,21 +370,25 @@ function TranslateWindow() {
     }
   }, [settings.language])
 
-  // Height-to-content: report the natural document height to main whenever the
-  // content changes (stub list, results, dict card…). The window has no fixed
-  // height; main clamps to the work area.
+  // Height-to-content: report the natural card height to main whenever the
+  // content changes (stub list, results, dict card…). Measure the card element
+  // itself (not documentElement.scrollHeight, which never shrinks below
+  // window.innerHeight).
   const lastReportedHeightRef = React.useRef(0)
-  React.useEffect(() => {
+  React.useLayoutEffect(() => {
+    const rootEl = windowRef.current ?? document.getElementById('root')
+    if (!rootEl) return
     const report = (): void => {
-      const height = Math.round(document.documentElement.scrollHeight)
-      if (height > 0 && Math.abs(height - lastReportedHeightRef.current) > 1) {
+      const target = windowRef.current ?? rootEl
+      const height = Math.ceil(target.getBoundingClientRect().height)
+      if (height > 0 && Math.abs(height - lastReportedHeightRef.current) >= 1) {
         lastReportedHeightRef.current = height
         void window.assistantLite.windowControls.adjustHeight(height)
       }
     }
     report()
     const observer = new ResizeObserver(report)
-    observer.observe(document.getElementById('root')!)
+    observer.observe(rootEl)
     return () => observer.disconnect()
   }, [])
 
@@ -408,7 +420,8 @@ function TranslateWindow() {
     toastTimerRef.current = setTimeout(() => setToast(null), 2000)
   }, [])
 
-  // Abort any in-flight translate or nuance AI runs when the window closes/reloads.
+  // Abort any in-flight translate or nuance AI runs when the window closes/reloads
+  // or resets for pooled reuse.
   React.useEffect(() => {
     const abortAll = () => {
       if (requestIdRef.current) {
@@ -419,6 +432,7 @@ function TranslateWindow() {
         void window.assistantLite.ai.abort(nuanceRequestIdRef.current)
         nuanceRequestIdRef.current = null
       }
+      nuanceDeltaRef.current = ''
       if (nuanceFlushTimerRef.current) {
         clearTimeout(nuanceFlushTimerRef.current)
         nuanceFlushTimerRef.current = null
@@ -427,13 +441,35 @@ function TranslateWindow() {
         clearTimeout(copiedTimerRef.current)
         copiedTimerRef.current = null
       }
+      if (noticeTimerRef.current) {
+        clearTimeout(noticeTimerRef.current)
+        noticeTimerRef.current = null
+      }
+      if (toastTimerRef.current) {
+        clearTimeout(toastTimerRef.current)
+        toastTimerRef.current = null
+      }
     }
     window.addEventListener('beforeunload', abortAll)
+    const offReset = window.assistantLite.selection.onReset(() => {
+      abortAll()
+      stopAudio()
+      setInput('')
+      setCards({})
+      setDetected(null)
+      setNuanceInput('')
+      setNuanceNote(null)
+      setNotice(null)
+      setToast(null)
+      setPinned(autoPinRef.current)
+      setTimeout(() => inputRef.current?.focus(), 0)
+    })
     return () => {
       window.removeEventListener('beforeunload', abortAll)
+      offReset()
       abortAll()
     }
-  }, [])
+  }, [stopAudio])
 
   // Streaming listener for the optional AI nuance/rewrite card (separate requestId).
   React.useEffect(() => {
@@ -721,7 +757,7 @@ function TranslateWindow() {
 
   if (!loaded) {
     return (
-      <div className="action-window action-window--flex">
+      <div className="action-window action-window--flex translate-window">
         <div className="tr-loading">{t('loading')}</div>
       </div>
     )
@@ -736,7 +772,7 @@ function TranslateWindow() {
     ))
 
   return (
-    <div className="action-window action-window--flex translate-window">
+    <div ref={windowRef} className="action-window action-window--flex translate-window">
       <div className="titlebar titlebar--left fa-tr-titlebar">
         <Icon name="languages" />
         <strong>{t('trTitle')}</strong>
