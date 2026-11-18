@@ -69,7 +69,7 @@ graph TD
 
 ## 4. 核心抽象与设计模式
 
-- **IPC 契约三件套**：`shared/ipc.ts` 通道名常量 + `shared/types.ts` 载荷类型 + preload 的类型化封装。新增通道必须三处同步（如系统主题强调色 `IPC.AppSystemAccentGet` / `IPC.AppSystemAccentChanged`、划词工具栏同步拉取 `IPC.SelectionGetInitialSelection`、隐藏清场 `IPC.SelectionReset`、多开子窗 `IPC.WindowOpenNew`）。
+- **IPC 契约三件套**：`shared/ipc.ts` 通道名常量 + `shared/types.ts` 载荷类型 + preload 的类型化封装。新增通道必须三处同步（如系统主题强调色 `IPC.AppSystemAccentGet` / `IPC.AppSystemAccentGetSync` / `IPC.AppSystemAccentChanged`、设置同步初始化 `IPC.SettingsGetSync`、划词工具栏同步拉取 `IPC.SelectionGetInitialSelection`、隐藏清场 `IPC.SelectionReset`、多开子窗 `IPC.WindowOpenNew`）。
 - **设置归一化**：`shared/actions.ts` 的 `normalizeSettings` 是所有设置读取的唯一入口（mergeSettings + 字段级白名单），损坏的 settings.json 不应导致崩溃；`settingsStore` 缓存归一化结果，仅在写回时失效；动作快捷键按 `action.id` 运行时读取最新设置。
 - **Seeded 多主题派生与分级图标**：`shared/theme.ts` 的 `deriveThemeCssVars` 按 `theme` / `pureBlack` / `primaryColor`（含系统强调色回退）/ `colorStyle`（`vivid` / `tinted` / `soft` / `monochrome`）实时计算四级明度表面与独立语义状态 CSS 变量，由 React 窗口经 `useThemeMode` 注入并结合 `chatColorMode`（`semantic` / `theme` / `minimal`，`monochrome` 下收敛为 `minimal`）设置 `data-chat-color`，同时同步至零 React 的 `selectionToolbar.html`（`app.resolveThemeVars`）；`main/iconTiers.ts` 为不同 Windows DPI 托盘与窗口尺寸提供精确匹配的矢量栅格化 PNG 档位。
 - **词典数据快照**：`DictEntry` 是生词本保存的最小完整快照（音标/释义/词形，有道额外含短语与例句）；显示层裁剪（如释义取前 3 条）只发生在渲染层，快照保存完整数据。
@@ -91,7 +91,7 @@ graph TD
 - **主进程依赖散装进 asar**（`externalizeDepsPlugin`，约 3,500 文件）：改为捆绑可再减体积并小幅加快冷启动，但 MCP/undici/conf→ajv 打包有坑，已决定推迟。
 - **ChatMode 单文件约 2,400 行**：已做消息体级 memo 化，完整按域拆分等新功能页面需求明确后进行。
 - **darwin 引擎包路径未实机验证**：引擎包 manifest 支持 macOS，但没有 macOS 机器跑过完整下载→加载→识别链路。
-- **速度 vs 内存取舍**：设置窗口、划词结果窗口、聊天窗口关闭均为隐藏 + 60s 闲置后销毁（工具栏为 30s；保留秒开体验，不再常驻渲染进程；彻底禁用/退出走 destroy 直接释放）；销毁前检查该窗口是否还有活跃 AI 请求，有则顺延一个周期，避免长任务被静默中断。划词工具栏与动作窗口隐藏复用时启用 `backgroundThrottling: false` 并监听 `render-process-gone` 自愈销毁，同时在动作窗隐藏前发送 `IPC.SelectionReset` 中止旧流并复位表单，兼顾瞬时开启、进程唤醒稳定与干净会话隔离。托盘常驻依赖 `window-all-closed` 处理器，勿删。
+- **速度 vs 内存取舍**：设置窗口、划词结果窗口、聊天窗口、快速翻译主窗口关闭均为隐藏 + 60s 闲置后销毁（工具栏为 30s；保留秒开体验，不再常驻渲染进程；彻底禁用/退出走 destroy 直接释放）；销毁前检查该窗口是否还有活跃 AI 请求，有则顺延一个周期，避免长任务被静默中断。划词工具栏、动作窗口与翻译窗口隐藏复用时启用 `backgroundThrottling: false` 并监听 `render-process-gone` 自愈销毁，同时在隐藏前发送 `IPC.SelectionReset` 中止旧流并复位表单，兼顾瞬时开启、进程唤醒稳定与干净会话隔离。托盘常驻依赖 `window-all-closed` 处理器，勿删。
 - **审批门禁：sender 校验 + 主进程原生确认（纵深防御，未根治）**：`agent.approveTool` 校验审批必须来自发起流的窗口（callId 随工具事件广播，全窗口共用 preload，仅凭 callId 不构成授权）；`settings.update` 对两条静默能力升级弹主进程原生确认——开启 `agentFullAccess`、新增/变更 MCP stdio 命令（拒绝只剥除补丁对应部分）；`proxyUrl` 因输入框每键一存无法弹窗，仅做无效 URI 容错。残留面：聊天窗口自身被 XSS 时 sender 校验同样通过（根治需把确认移出渲染进程之外的可信通道），渲染器靠 CSP（六入口已加）+ 转义压低注入概率。
 - **MCP 工具名空间**：server 名清洗后可能同名（如 "a b" 与 "a_b"），工具注册/改名时对已占用名加 `__N` 后缀保证模型侧唯一，调用不再误路由到先连接者。Windows 上 stdio 命令仍经 `cmd /c` 重组（`.cmd` 脚本必须如此），token 内的 cmd 元字符理论上可被二次解析——连接前的原生确认弹窗即针对此面的缓解。
 - **`--max-old-space-size=512`**：为 4K 截图 dataUrl 预留的有意上限，非泄漏症状。

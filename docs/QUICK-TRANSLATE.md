@@ -21,7 +21,7 @@
 | `src/main/translate/tts.ts` | TTS 合成：`POST {tts.endpoint}`，body `{ input, voice, speed(数字), pitch(必须字符串!), style }` → MP3 → data URL |
 | `src/main/translate/index.ts` | `registerTranslateIpc`：并行跑所有启用服务（每服务 15s 超时、独立 AbortController，重跑自动中止旧请求），按服务回传 chunk；**生词本自动记录钩子**在 icibaDict / youdaoDict 成功分支内 |
 | `src/main/vocabulary.ts` | 生词本存储（`userData/vocabulary.json`，内存索引去重）、Markdown 导出构建、IPC 注册（list/add/remove/clear/export） |
-| `src/renderer/translate/entry.tsx` | 翻译窗口 UI：回车翻译、语言选择/交换（localStorage 记忆）、服务卡片（占位条→加载→结果）、词典卡（含生词本按钮 + toast）、`ResizeObserver` 上报内容高度 |
+| `src/renderer/translate/entry.tsx` | 翻译窗口 UI：回车翻译、语言选择/交换（localStorage 记忆）、服务卡片（占位条→加载→结果）、词典卡（含生词本按钮 + toast）、`ResizeObserver` 同步上报 `.translate-window` 卡片高度、响应 `SelectionReset` 复位 |
 | `src/renderer/settings/entry.tsx` | 设置「翻译」分区（服务开关/排序、DeepLX 端点、TTS、自动记录开关、快捷键）与「生词本」子页（网格 chips、搜索、详情弹层、导出/清空） |
 | `electron.vite.config.ts` | `translate` 渲染入口注册 |
 
@@ -35,7 +35,7 @@
 | `translate:youdao-audio` | R→M | 有道 dictvoice 音频代理：校验 URL 白名单 → 主进程带 UA/Referer 拉取 → base64 data URL（例句原音与单词发音共用） |
 | `tts:synthesize` | R→M | 文本 → audio/mpeg data URL（渲染层 `<audio>` 播放；主进程请求以继承代理链） |
 | `vocab:list/add/remove/clear/export` | R→M | 生词本 CRUD；export 弹保存对话框写 Markdown 并在资源管理器定位 |
-| `window:adjust-height` | R→M | 翻译窗口高度自适应：渲染层上报文档高度，主进程夹取 [380, 工作区-40] 后 `setBounds`（顶边固定） |
+| `window:adjust-height` | R→M | 翻译窗口高度自适应：渲染层同步（`sendSync`）上报 `.translate-window` 卡片高度，主进程夹取 [200, 工作区-40] 后 `setBounds`（顶边固定） |
 
 Preload 暴露：`window.assistantLite.translate.*`、`tts.*`、`vocabulary.*`、`windowControls.adjustHeight`。
 
@@ -44,7 +44,7 @@ Preload 暴露：`window.assistantLite.translate.*`、`tts.*`、`vocabulary.*`�
 1. **翻译一次的生命周期**：输入 → 回车 → `translate.run(requestId)` → 主进程并行发起启用服务（互不阻塞）→ 每个服务完成即回 chunk → 渲染层按 `serviceId` 更新对应卡片。重新发送会先 abort 旧 requestId。
 2. **自动记录生词**：icibaDict 服务成功且 `isEnglishWord(text)` 且 `settings.vocabulary.autoRecord` → `addVocabulary(dict)`（内部大小写去重）→ chunk 带 `vocabSaved`（当前是否已收录）与 `vocabJustSaved`（**本次**新收录，渲染层据此弹 toast；重复查询已收录的词不弹）。
 3. **手动记录**：词典卡片 ＋/✓ 按钮 → `vocabulary.add/remove(dict)`（乐观更新 + toast）。`vocabSaved` 由主进程随 chunk 下发，保证按钮初始状态准确。
-4. **高度自适应**：渲染层 ResizeObserver 监听 `#root` → `documentElement.scrollHeight` 变化超过 1px 即上报 → 主进程调整外层窗口高度（内容高度含 18px 阴影边距，正好等于窗口外框高度）。宽度仍由用户调整并持久化；高度不持久化。
+4. **高度自适应与窗口复用**：渲染层 `useLayoutEffect` + `ResizeObserver` 监听 `.translate-window` 卡片自身实际高度（避免 `documentElement.scrollHeight` 无法回缩的问题），变化 ≥ 1px 即同步（`sendSync`）上报 → 主进程在首帧绘制前调整外层窗口高度并精确贴合卡片底边。宽度仍由用户调整并持久化；高度不持久化。单个主翻译窗口关闭时经 `IPC.SelectionReset` 清场隐藏并保活 60s（多开副本或已有隐藏窗时直接关闭）。
 
 ## 设置项（`AppSettings`）
 
