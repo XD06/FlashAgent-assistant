@@ -48,8 +48,21 @@ const SENSITIVE_PATH_PATTERNS: RegExp[] = [
   /(^|[\\/])\.config[\\/]gcloud([\\/]|$)/i
 ]
 
+const FORBIDDEN_HEAD_RE = /^(?:rm|del|erase|rd|rmdir|remove-item|ri|reg(?:\.exe)?|mkfs|format(?:\.com)?|shutdown|reboot|dd|:\(\))/i
+
 export function isForbiddenCommand(command: string): boolean {
-  return FORBIDDEN_COMMAND_PATTERNS.some((pattern) => pattern.test(command))
+  const segments = splitShellSegments(command)
+  if (!segments.length) return FORBIDDEN_COMMAND_PATTERNS.some((pattern) => pattern.test(command))
+  return (
+    segments.some((seg) => {
+      if (isShellWrapperSegment(seg) || FORBIDDEN_HEAD_RE.test(seg)) {
+        return FORBIDDEN_COMMAND_PATTERNS.some(
+          (pattern) => pattern.test(seg) || pattern.test(unwrapShellQuotes(seg))
+        )
+      }
+      return FORBIDDEN_COMMAND_PATTERNS.some((pattern) => pattern.test(stripQuotedStrings(seg)))
+    }) || FORBIDDEN_COMMAND_PATTERNS.some((pattern) => pattern.test(stripQuotedStrings(command)))
+  )
 }
 
 export function isSensitivePath(filePath: string): boolean {
@@ -755,34 +768,231 @@ function isOutsideDir(dir: string, target: string): boolean {
 
 export type CommandRisk = 'safe' | 'dangerous' | 'forbidden'
 
-// Destructive-but-legitimate commands: always require explicit approval,
-// even in full-access mode or after "always allow".
-const DANGEROUS_COMMANDS: RegExp[] = [
-  /\brm\b/,
-  /(?:^|[;&|(\s])(?:rd|rmdir|del|erase)\b/,
-  /remove-item\b|(?:^|[;&|(\s])ri\s/,
-  /\bgit\s+(?:reset\s+--hard|clean\b|push\b.*(?:--force\b|\s-f\b)|branch\s+-d\b|checkout\s+--\s)/,
-  /\btaskkill\b/,
-  /\bstop-process\b/,
-  /(?:^|[;&|(\s])kill(?:all)?\s/,
-  /\b(re)?start-computer\b|\bstop-computer\b/,
-  /\bchmod\s+(?:-r\b|.*777)/,
-  /\bchown\s+-r\b/,
-  /\bicacls\b/,
-  /\bdiskpart\b/,
-  /\bdrop\s+(?:database|table)\b/,
-  /\bformat\b/,
-  /\bformat-volume\b|\bclear-disk\b|\bvssadmin\b|\bcipher\s+\/w\b/
+export interface AssessCommandRiskOptions {
+  /** True when the user explicitly enabled Agent Full Access mode. */
+  fullAccess?: boolean
+  /** Workspace root used to decide whether local deletions stay in bounds. */
+  workingDir?: string
+}
+
+function stripQuotedStrings(cmd: string): string {
+  return cmd.replace(/'[^']*'|"(?:\\.|[^"\\])*"/g, '""')
+}
+
+function unwrapShellQuotes(cmd: string): string {
+  return cmd.replace(/['"]/g, ' ')
+}
+
+function splitShellSegments(cmd: string): string[] {
+  const segments: string[] = []
+  let quote: "'" | '"' | null = null
+  let escape = false
+  let start = 0
+  for (let i = 0; i < cmd.length; i++) {
+    const ch = cmd[i]
+    if (escape) {
+      escape = false
+      continue
+    }
+    if (quote === '"') {
+      if (ch === '\\') escape = true
+      else if (ch === '"') quote = null
+      continue
+    }
+    if (quote === "'") {
+      if (ch === "'") quote = null
+      continue
+    }
+    if (ch === "'" || ch === '"') {
+      quote = ch
+      continue
+    }
+    if (ch === ';' || ch === '|') {
+      segments.push(cmd.slice(start, i))
+      if (ch === '|' && cmd[i + 1] === '|') i++
+      start = i + 1
+      continue
+    }
+    if (ch === '&' && cmd[i + 1] === '&') {
+      segments.push(cmd.slice(start, i))
+      i++
+      start = i + 1
+    }
+  }
+  segments.push(cmd.slice(start))
+  return segments.map((s) => s.trim()).filter(Boolean)
+}
+
+function tokenizeSegmentArgs(seg: string): string[] {
+  const tokens: string[] = []
+  const re = /"([^"]*)"|'([^']*)'|(\S+)/g
+  let match: RegExpExecArray | null
+  while ((match = re.exec(seg)) !== null) {
+    tokens.push(match[1] ?? match[2] ?? match[3])
+  }
+  return tokens
+}
+
+const SHELL_WRAPPER_RE =
+  /^\s*(?:sudo\s+|eval\s+|iex\b|invoke-expression\b|xargs\b|cmd(?:\.exe)?\s+\/[ck]\b|(?:pwsh|powershell)(?:\.exe)?\s+(?:[^\n]*?\s)?-(?:c|command)\b|(?:ba|z|da|a)?sh\s+-c\b)/i
+
+function isShellWrapperSegment(seg: string): boolean {
+  return SHELL_WRAPPER_RE.test(seg) || /\bfind\b[^\n]*-exec\b/i.test(seg)
+}
+
+const CD_HEAD_RE = /^(?:cd|chdir|set-location|sl|pushd)\b/i
+const DELETE_HEAD_RE = /^(?:rm|del|erase|rd|rmdir|remove-item|ri|clear-content|clc)\b/i
+const PS_VALUE_FLAGS = new Set([
+  '-erroraction',
+  '-ea',
+  '-warningaction',
+  '-informationaction',
+  '-include',
+  '-exclude',
+  '-filter'
+])
+
+// Destructive-but-legitimate commands: require explicit user confirmation even
+// when normal approvals are waived, unless a narrower rule marks a safe workspace case.
+const DANGEROUS_COMMAND_PATTERNS: RegExp[] = [
+  /\bgit\s+(?:reset\s+--hard|checkout\b[^\n]*\s--\s)/i,
+  /\bgit\s+clean\b(?![^\n]*(?:\s-(?:[a-zA-Z]*n|--dry-run)(?:\s|$)))/i,
+  /\bgit\s+push\b[^\n]*(?:(?<![\w-])--force(?![\w-])|(?:\s|^)-[a-zA-Z]*f(?:\s|$))/i,
+  // Case-sensitive for git branch -D (force delete); lowercase -d only deletes merged branches.
+  /\bgit\s+branch\b[^\n]*(?:\s-[a-zA-Z]*D\b|\s--delete\s+--force\b)/,
+  /(?:^|[;&|()])\s*(?:taskkill|stop-process|spps|kill(?:all)?)\b/i,
+  /\b(?:re)?start-computer\b|\bstop-computer\b/i,
+  /\bchmod\s+(?:-[a-z]*r|\S*777)\b/i,
+  /\bchown\s+-[a-z]*r\b/i,
+  /\bicacls\b[^\n]*\/(?:grant|deny|remove|setowner|reset|restore|inheritance)\b/i,
+  /\b(?:diskpart|format(?:\.com)?\s+[a-z]:|format-volume|clear-disk|vssadmin|cipher\s+\/w|clear-recyclebin)\b/i,
+  /\b(?:drop\s+(?:database|table|schema)|truncate\s+table)\b/i,
+  /\bdd\b[^\n]*\bof=/i
 ]
+
+function isDangerousDeleteSegment(
+  seg: string,
+  options: AssessCommandRiskOptions,
+  effectiveCwd: string,
+  escapedWorkingDir: boolean
+): boolean {
+  const tokens = tokenizeSegmentArgs(seg)
+  if (!tokens.length) return true
+  const head = tokens[0].toLowerCase()
+  const rest = tokens.slice(1)
+
+  const flags: string[] = []
+  const targets: string[] = []
+  let afterDoubleDash = false
+  for (let i = 0; i < rest.length; i++) {
+    const tok = rest[i]
+    if (!afterDoubleDash && tok === '--') {
+      afterDoubleDash = true
+      continue
+    }
+    const colonPathMatch = !afterDoubleDash ? /^-(?:literal)?path:(.+)$/i.exec(tok) : null
+    if (colonPathMatch) {
+      targets.push(colonPathMatch[1])
+      continue
+    }
+    if (!afterDoubleDash && (tok.startsWith('-') || (head === 'del' || head === 'erase' || head === 'rd' || head === 'rmdir' ? tok.startsWith('/') : false))) {
+      const lowerFlag = tok.toLowerCase()
+      flags.push(lowerFlag)
+      // Consume PowerShell value arguments like `-ErrorAction SilentlyContinue`
+      if (PS_VALUE_FLAGS.has(lowerFlag) && i + 1 < rest.length) {
+        i++
+      }
+      continue
+    }
+    targets.push(tok)
+  }
+
+  // Dry-run deletions never remove files
+  if (flags.some((f) => f === '-n' || f === '--dry-run' || f === '-whatif')) return false
+
+  // Directory removal tools or recursive / forced / wildcard flags always confirm
+  if (head === 'rd' || head === 'rmdir') return true
+  const hasRecursiveOrForceFlag = flags.some((f) =>
+    /^(?:--(?:recursive|force)|-[a-z]*(?:r|f)[a-z]*|-recurse|-force|\/(?:s|f|q))$/i.test(f)
+  )
+  if (hasRecursiveOrForceFlag) return true
+  if (targets.some((t) => /[*?]/.test(t))) return true
+
+  // Without Full Access enabled, any explicit deletion pauses for approval
+  if (!options.fullAccess) return true
+
+  // Pipelined deletion without explicit filename (`... | Remove-Item`) stays guarded
+  if (targets.length === 0 || escapedWorkingDir) return true
+
+  const rootDir = options.workingDir
+  return targets.some((target) => {
+    if (isSensitivePath(target)) return true
+    if (rootDir) {
+      try {
+        const resolved = resolveAgentPath(effectiveCwd || rootDir, target)
+        return isOutsideDir(rootDir, resolved) || isSensitivePath(resolved)
+      } catch {
+        return true
+      }
+    }
+    return isAbsolute(target) || target.startsWith('~') || /(?:^|[\\/])\.\.(?:[\\/]|$)/.test(target)
+  })
+}
 
 /** Classify a shell command. 'forbidden' is never executed; 'dangerous'
  * always pauses for user approval even when approvals are otherwise waived;
  * 'safe' follows the normal approval rules. */
-export function assessCommandRisk(command: string): CommandRisk {
-  const text = command.toLowerCase().replace(/\s+/g, ' ').trim()
-  if (!text) return 'safe'
-  if (isForbiddenCommand(text)) return 'forbidden'
-  if (DANGEROUS_COMMANDS.some((pattern) => pattern.test(text))) return 'dangerous'
+export function assessCommandRisk(command: string, options: AssessCommandRiskOptions = {}): CommandRisk {
+  const normalized = command.replace(/\s+/g, ' ').trim()
+  if (!normalized) return 'safe'
+  if (isForbiddenCommand(normalized)) return 'forbidden'
+
+  const segments = splitShellSegments(normalized)
+  let effectiveCwd = options.workingDir ?? ''
+  let escapedWorkingDir = false
+
+  for (const seg of segments) {
+    if (isShellWrapperSegment(seg)) {
+      const unwrapped = unwrapShellQuotes(seg)
+      if (/[`]|\$\(/.test(unwrapped)) return 'dangerous'
+      if (DELETE_HEAD_RE.test(unwrapped.replace(/^\s*(?:cmd(?:\.exe)?\s+\/[ck]|(?:pwsh|powershell)(?:\.exe)?\s+[^\n]*?-(?:c|command)|(?:ba|z|da|a)?sh\s+-c)\s+/i, ''))) {
+        const inner = unwrapped.replace(/^\s*(?:cmd(?:\.exe)?\s+\/[ck]|(?:pwsh|powershell)(?:\.exe)?\s+[^\n]*?-(?:c|command)|(?:ba|z|da|a)?sh\s+-c)\s+/i, '')
+        if (isDangerousDeleteSegment(inner, options, effectiveCwd, escapedWorkingDir)) return 'dangerous'
+      } else if (/\b(?:rm|del|erase|rd|rmdir|remove-item|ri|clear-content)\b/i.test(unwrapped)) {
+        return 'dangerous'
+      }
+      if (DANGEROUS_COMMAND_PATTERNS.some((pattern) => pattern.test(unwrapped))) return 'dangerous'
+      continue
+    }
+
+    if (CD_HEAD_RE.test(seg)) {
+      const args = tokenizeSegmentArgs(seg).slice(1)
+      const dest = args.find((tok) => !tok.startsWith('-') && tok.toLowerCase() !== '/d')
+      if (dest && options.workingDir) {
+        try {
+          const nextDir = resolveAgentPath(effectiveCwd || options.workingDir, dest)
+          if (isOutsideDir(options.workingDir, nextDir)) escapedWorkingDir = true
+          else effectiveCwd = nextDir
+        } catch {
+          escapedWorkingDir = true
+        }
+      } else if (dest) {
+        if (isAbsolute(dest) || dest.startsWith('~') || /(?:^|[\\/])\.\.(?:[\\/]|$)/.test(dest)) {
+          escapedWorkingDir = true
+        }
+      }
+      continue
+    }
+
+    if (DELETE_HEAD_RE.test(seg)) {
+      if (isDangerousDeleteSegment(seg, options, effectiveCwd, escapedWorkingDir)) return 'dangerous'
+      continue
+    }
+
+    const unquoted = stripQuotedStrings(seg)
+    if (DANGEROUS_COMMAND_PATTERNS.some((pattern) => pattern.test(unquoted))) return 'dangerous'
+  }
+
   return 'safe'
 }
 
@@ -980,50 +1190,6 @@ const MUTATING_OR_LOCKING_CMD_RE: RegExp[] = [
 
 const READ_ONLY_SEGMENT_HEAD_RE =
   /^(?:cd|chdir|set-location|sl|pushd|echo|write-output|write-host|out-null|git\s+(?:status|diff|log|show|branch(?!\s+-[dDmMfF])|rev-parse|describe|remote|ls-files|ls-tree|config\s+--(?:get|list))|ls|dir|cat|head|tail|type|more|less|rg|grep|egrep|fgrep|ag|fd|findstr|find|wc|pwd|which|where|whereis|whoami|hostname|uname|date|ps|tasklist|env|printenv|ping|nslookup|dig|tracert|traceroute|netstat|stat|file|du|df|tree|realpath|readlink|get-content|gc|get-childitem|gci|get-item|gi|get-itemproperty|gp|get-location|gl|get-process|gps|get-service|gsv|get-nettcpconnection|get-date|select-object|select|select-string|sls|where-object|sort-object|sort|measure-object|measure|format-table|ft|format-list|fl|out-string|test-path|resolve-path|split-path|convertfrom-json|convertfrom-csv|curl|invoke-webrequest|iwr|invoke-restmethod|irm|pip3?\s+(?:list|show|freeze)|npm\s+(?:ls|list|view|-v|--version)|pnpm\s+(?:ls|list|-v|--version)|node\s+(?:-v|--version)|python3?\s+(?:-V|--version))\b/i
-
-function stripQuotedStrings(cmd: string): string {
-  return cmd.replace(/'[^']*'|"(?:\\.|[^"\\])*"/g, '""')
-}
-
-function splitShellSegments(cmd: string): string[] {
-  const segments: string[] = []
-  let quote: "'" | '"' | null = null
-  let escape = false
-  let start = 0
-  for (let i = 0; i < cmd.length; i++) {
-    const ch = cmd[i]
-    if (escape) {
-      escape = false
-      continue
-    }
-    if (quote === '"') {
-      if (ch === '\\') escape = true
-      else if (ch === '"') quote = null
-      continue
-    }
-    if (quote === "'") {
-      if (ch === "'") quote = null
-      continue
-    }
-    if (ch === "'" || ch === '"') {
-      quote = ch
-      continue
-    }
-    if (ch === ';' || ch === '|') {
-      segments.push(cmd.slice(start, i))
-      if (ch === '|' && cmd[i + 1] === '|') i++
-      start = i + 1
-      continue
-    }
-    if (ch === '&' && cmd[i + 1] === '&') {
-      segments.push(cmd.slice(start, i))
-      i++
-      start = i + 1
-    }
-  }
-  segments.push(cmd.slice(start))
-  return segments.map((s) => s.trim()).filter(Boolean)
-}
 
 /** True when a shell command appears free of workspace/git/package mutations
  * so consecutive independent commands from one model turn can run concurrently. */

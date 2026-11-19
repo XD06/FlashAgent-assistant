@@ -164,13 +164,50 @@ describe('assessCommandRisk', () => {
   it.each([
     'git status',
     'npm run build',
+    'npm run format',
     'ls -la',
     'echo hello > out.txt',
     'python format_check.py',
     'pnpm install',
-    'git push origin main'
+    'git push origin main',
+    'git log --format="%h %s"',
+    'Get-ChildItem | Format-Table Name, Length',
+    'Get-Process | Format-List *',
+    'git branch -d merged-branch',
+    'git clean -n',
+    'git push origin feat --force-with-lease',
+    'Remove-Item dist -Recurse -WhatIf',
+    'rg "rm -rf /" src/',
+    'git commit -m "del old format logic"',
+    'echo "kill process and format c:"',
+    'icacls .'
   ])('classifies ordinary command as safe: %s', (command) => {
     expect(assessCommandRisk(command)).toBe('safe')
+  })
+
+  it('catches wrapped shell dangerous commands while relaxing safe workspace single-file cleanups under fullAccess', () => {
+    // Non-shell searches with dangerous words stay safe, while shell wrappers still inspect inner commands
+    expect(assessCommandRisk('powershell -Command "Remove-Item -Recurse dist"')).toBe('dangerous')
+    expect(assessCommandRisk('bash -c "rm -rf /"')).toBe('forbidden')
+    expect(assessCommandRisk('git branch -D unmerged-branch')).toBe('dangerous')
+    expect(assessCommandRisk('icacls . /grant Everyone:F')).toBe('dangerous')
+
+    // Single non-sensitive workspace file deletions relax under fullAccess: true
+    expect(assessCommandRisk('del build\\output.txt', { fullAccess: true, workingDir: workDir })).toBe('safe')
+    expect(assessCommandRisk('Remove-Item tmp.log', { fullAccess: true, workingDir: workDir })).toBe('safe')
+    expect(assessCommandRisk('rm tmp.txt', { fullAccess: true, workingDir: workDir })).toBe('safe')
+    expect(assessCommandRisk("cd 'sub'; rm tmp.txt", { fullAccess: true, workingDir: workDir })).toBe('safe')
+
+    // Recursive, force, wildcard, piped, sensitive, or out-of-workspace deletions ALWAYS confirm even under fullAccess
+    expect(assessCommandRisk('rm -rf node_modules', { fullAccess: true, workingDir: workDir })).toBe('dangerous')
+    expect(assessCommandRisk('del *.log', { fullAccess: true, workingDir: workDir })).toBe('dangerous')
+    expect(assessCommandRisk('Get-ChildItem | Remove-Item', { fullAccess: true, workingDir: workDir })).toBe('dangerous')
+    expect(assessCommandRisk('rm .env', { fullAccess: true, workingDir: workDir })).toBe('dangerous')
+    expect(assessCommandRisk('rm ..\\outside.txt', { fullAccess: true, workingDir: workDir })).toBe('dangerous')
+    expect(assessCommandRisk('cd ..; rm outside.txt', { fullAccess: true, workingDir: workDir })).toBe('dangerous')
+    expect(assessCommandRisk('cd /d C:\\Windows; del system.ini', { fullAccess: true, workingDir: workDir })).toBe(
+      'dangerous'
+    )
   })
 })
 

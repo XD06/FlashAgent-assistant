@@ -1,5 +1,5 @@
 import type { McpServerConfig } from '@shared/types'
-import { assessCommandRisk, isForbiddenCommand, type CommandRisk } from '../agent/AgentTools'
+import { assessCommandRisk, isForbiddenCommand, type AssessCommandRiskOptions, type CommandRisk } from '../agent/AgentTools'
 
 // Pure helpers for the MCP manager, kept SDK-free so they are unit-testable.
 
@@ -29,18 +29,21 @@ function collectStringValues(obj: unknown, maxDepth = 3): string[] {
   return []
 }
 
-/** Extract command-like string arguments from an MCP tool call payload. */
+/** Extract command/SQL/script string arguments from command/database MCP tools.
+ * Web/doc search tools also accept `query`, so only inspect `query` on SQL/DB/eval tools. */
 export function extractMcpCommandStrings(toolName: string, args: Record<string, unknown>): string[] {
   const commands: string[] = []
   const isCommandTool = /(?:^|[_-])(?:run|exec|execute|bash|sh|shell|terminal|cmd|powershell)(?:[_-]|$)/i.test(toolName)
+  const isDbOrCodeTool = /(?:^|[_-])(?:sql|db|sqlite|postgres|postgresql|mysql|mariadb|mssql|mongo|eval|repl|python|node|code|database)(?:[_-]|$)/i.test(toolName)
 
   const scan = (record: Record<string, unknown>, depth: number): void => {
     if (depth > 2) return
     for (const [key, value] of Object.entries(record)) {
       if (typeof value === 'string') {
         if (
-          /^(?:command|cmd|script|exec|shell|code|sql|query)$/i.test(key) ||
+          /^(?:command|cmd|script|exec|shell|sql)$/i.test(key) ||
           /(?:command|script)$/i.test(key) ||
+          (isDbOrCodeTool && /^(?:code|query)$/i.test(key)) ||
           (isCommandTool && /^(?:input|args|line)$/i.test(key))
         ) {
           commands.push(value)
@@ -60,28 +63,36 @@ export function extractMcpCommandStrings(toolName: string, args: Record<string, 
 
 /** Assess the risk level of an MCP tool call.
  * - 'forbidden': Destructive/catastrophic commands or tool names (e.g. format c:, rm -rf /) -> blocked outright.
- * - 'dangerous': Risky operations (e.g. file deletions, rm, git reset --hard, kill, drop table) -> pauses for approval even in full access mode.
+ * - 'dangerous': Risky operations (e.g. file deletions, rm -rf, git reset --hard, kill, drop table) -> pauses for approval even in full access mode.
  * - 'safe': Normal operations (e.g. search, read, write/edit, status queries) -> runs automatically in full access mode.
  */
-export function assessMcpRisk(toolName: string, args: Record<string, unknown>): CommandRisk {
+export function assessMcpRisk(
+  toolName: string,
+  args: Record<string, unknown>,
+  options: AssessCommandRiskOptions = {}
+): CommandRisk {
   // Check if tool name itself is forbidden
   if (FORBIDDEN_MCP_TOOL_PATTERNS.some((pattern) => pattern.test(toolName))) {
     return 'forbidden'
   }
 
-  // Check if any string argument contains an outright forbidden command
-  const allStrings = collectStringValues(args)
+  // Extract command strings and evaluate command/forbidden risk
+  const commands = extractMcpCommandStrings(toolName, args)
+  for (const cmd of commands) {
+    const risk = assessCommandRisk(cmd, options)
+    if (risk !== 'safe') return risk
+  }
+
+  // Inspect nested non-search string payloads for outright catastrophic shell snippets
+  const scanArgs = { ...args }
+  if (!/(?:^|[_-])(?:run|exec|execute|bash|sh|shell|terminal|cmd|powershell|sql|db|sqlite|postgres|postgresql|mysql|mariadb|mssql|mongo|eval|repl|python|node|code|database)(?:[_-]|$)/i.test(toolName)) {
+    delete scanArgs.query
+  }
+  const allStrings = collectStringValues(scanArgs)
   for (const value of allStrings) {
     if (isForbiddenCommand(value)) {
       return 'forbidden'
     }
-  }
-
-  // Extract command strings and evaluate command risk
-  const commands = extractMcpCommandStrings(toolName, args)
-  for (const cmd of commands) {
-    const risk = assessCommandRisk(cmd)
-    if (risk !== 'safe') return risk
   }
 
   // Check if tool name itself is dangerous

@@ -113,13 +113,22 @@ describe('assessMcpRisk', () => {
     expect(assessMcpRisk('mcp__fs__read_file', { path: 'foo.txt' })).toBe('safe')
     expect(assessMcpRisk('mcp__fs__write_file', { path: 'foo.txt', content: 'hello' })).toBe('safe')
     expect(assessMcpRisk('mcp__search__web', { query: 'vitest tutorial' })).toBe('safe')
+    expect(
+      assessMcpRisk('mcp__tavily_mcp__tavily_search', {
+        query: 'powershell Format-Table vs rm -rf / and shutdown command'
+      })
+    ).toBe('safe')
     expect(assessMcpRisk('mcp__terminal__run_command', { command: 'git status' })).toBe('safe')
     expect(assessMcpRisk('mcp__terminal__run_command', { command: 'pnpm test' })).toBe('safe')
     expect(assessMcpRisk('mcp__sqlite__query', { query: 'SELECT * FROM users' })).toBe('safe')
+    expect(assessMcpRisk('mcp__terminal__run_command', { command: 'rm tmp.txt' }, { fullAccess: true })).toBe('safe')
   })
 
   it('marks destructive commands as dangerous', () => {
     expect(assessMcpRisk('mcp__terminal__run_command', { command: 'rm file.txt' })).toBe('dangerous')
+    expect(assessMcpRisk('mcp__terminal__run_command', { command: 'rm -rf dir' }, { fullAccess: true })).toBe(
+      'dangerous'
+    )
     expect(assessMcpRisk('mcp__terminal__run_command', { command: 'git reset --hard' })).toBe('dangerous')
     expect(assessMcpRisk('mcp__terminal__run_command', { command: 'git push -f' })).toBe('dangerous')
     expect(assessMcpRisk('mcp__terminal__run_command', { command: 'taskkill /im node.exe' })).toBe('dangerous')

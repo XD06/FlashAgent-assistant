@@ -1191,14 +1191,15 @@ function registerIpc(): void {
           })
           return formatted
         }
+        const fullAccess = getSettings().agentFullAccess === true
         // Risk gate: forbidden commands never run; dangerous ones always
         // pause for approval, even in full-access / always-allow mode.
-        const risk = name === 'run_command' ? assessCommandRisk(String(args.command ?? '')) : 'safe'
+        const risk = name === 'run_command' ? assessCommandRisk(String(args.command ?? ''), { fullAccess, workingDir }) : 'safe'
         if (risk === 'forbidden') {
           sendTool({ state: 'error', result: 'Blocked: destructive command' })
           return '[Blocked: this command is classified as destructive and will never be executed. Do not retry it.]'
         }
-        const approvalWaived = alwaysAllow || getSettings().agentFullAccess === true
+        const approvalWaived = alwaysAllow || fullAccess
         if (risk === 'dangerous' || (!approvalWaived && requiresApproval(name, args, workingDir))) {
           sendTool({ state: 'pending-approval' })
           const approval = await waitForApproval(callId, request.requestId, controller.signal, event.sender.id, {
@@ -1298,12 +1299,13 @@ function registerIpc(): void {
         const sendTool = (patch: Partial<AgentToolEvent>): void => {
           sendChunk({ type: 'tool', tool: { callId, toolName: name, summary, argsJson, ...patch } })
         }
-        const risk = assessMcpRisk(name, args)
+        const fullAccess = getSettings().agentFullAccess === true
+        const risk = assessMcpRisk(name, args, { fullAccess })
         if (risk === 'forbidden') {
           sendTool({ state: 'error', result: 'Blocked: destructive command' })
           return '[Blocked: this MCP tool call is classified as destructive and will never be executed. Do not retry it.]'
         }
-        const approvalWaived = alwaysAllow || getSettings().agentFullAccess === true
+        const approvalWaived = alwaysAllow || fullAccess
         if (risk === 'dangerous' || !approvalWaived) {
           sendTool({ state: 'pending-approval' })
           const approval = await waitForApproval(callId, request.requestId, controller.signal, event.sender.id, {
