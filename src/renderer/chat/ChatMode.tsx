@@ -2052,7 +2052,9 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
           )
           const digests = staleRounds.slice(-12).map((r, idx) => {
             const roundTurns = staleSlice.slice(r.start, r.end)
-            const u = roundTurns.find((t) => t.role === 'user' && !t.injected)?.text.replace(/\s+/g, ' ').trim().slice(0, 90) ?? ''
+            const userTurn = roundTurns.find((t) => t.role === 'user' && !t.injected)
+            const filesNote = userTurn?.files?.length ? `[files: ${userTurn.files.map((f) => f.name).join(', ')}]` : ''
+            const u = (userTurn?.text.replace(/\s+/g, ' ').trim() || filesNote).slice(0, 90)
             const toolCount = roundTurns.reduce((sum, t) => sum + settledToolEvents(t).length, 0)
             const a = [...roundTurns].reverse().find((t) => t.role === 'assistant')?.text.replace(/\s+/g, ' ').trim().slice(0, 100) ?? ''
             return {
@@ -2126,7 +2128,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
         const turn = stale[idx]
         const absIndex = covered + idx
         const isJudgePinned = pinnedStaleTurnIndexes.has(absIndex)
-        const body = (turn.role === 'assistant' ? stripForgedRecap(turn.text ?? '') : (turn.text ?? '')).trim()
+        const body = (turn.role === 'assistant' ? stripForgedRecap(turn.text ?? '') : buildSendText(turn)).trim()
         // Keep the tool record in the recap too — "what was actually done"
         // must survive compression, not just the assistant's prose.
         const recap = toolRecap(turn, isZh)
