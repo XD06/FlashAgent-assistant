@@ -135,6 +135,14 @@ const MODELS_CACHE_TTL = 5 * 60 * 1000 // 5 minutes
 // Send-payload fallback caps and truncateForSend live in ./compaction. The
 // configured attention budget, not a fixed transport number, drives recap.
 
+function formatCompactError(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err ?? '')
+  const cleaned = raw
+    .replace(/^Error invoking remote method '[^']+':\s*(?:Error:\s*)?/i, '')
+    .trim()
+  return cleaned.length > 160 ? `${cleaned.slice(0, 160)}…` : cleaned
+}
+
 // Compact display for the real context size reported by the provider.
 function formatTokens(n: number): string {
   return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n)
@@ -1474,7 +1482,17 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
   const usageTurnsRef = React.useRef(0)
   // In-flight pre-send phase (compaction + dispatch), before the real request
   // exists. stop() / new chat / topic switch cancel it via the gate object.
-  const preSendRef = React.useRef<{ cancelled: boolean } | null>(null)
+  const preSendRef = React.useRef<{ cancelled: boolean; summarizeRequestId: string | null } | null>(null)
+  const cancelPreSend = React.useCallback(() => {
+    const gate = preSendRef.current
+    if (!gate) return
+    gate.cancelled = true
+    if (gate.summarizeRequestId) {
+      void window.assistantLite.ai.abort(gate.summarizeRequestId)
+      gate.summarizeRequestId = null
+    }
+    preSendRef.current = null
+  }, [])
   const compactNoticeTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
   const clearCompactNotice = React.useCallback(() => {
     if (compactNoticeTimerRef.current) {
@@ -1598,6 +1616,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
 
   React.useEffect(() => {
     const onBeforeUnload = () => {
+      cancelPreSend()
       if (activeRequestId.current) {
         void window.assistantLite.ai.abort(activeRequestId.current)
         activeRequestId.current = null
@@ -1608,7 +1627,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
     }
     window.addEventListener('beforeunload', onBeforeUnload)
     return () => window.removeEventListener('beforeunload', onBeforeUnload)
-  }, [])
+  }, [cancelPreSend])
 
   // ---- Sync selectedModel when settings change ----
   React.useEffect(() => {
@@ -1910,7 +1929,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
     async (
       turns: ChatTurn[],
       session: number,
-      gate: { cancelled: boolean },
+      gate: { cancelled: boolean; summarizeRequestId: string | null },
       pendingText: string,
       options?: { force?: boolean }
     ): Promise<void> => {
@@ -2035,6 +2054,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
       // after *all* batches succeed — a mid-way failure or cancel leaves
       // the last good state untouched (atomic).
       let summary = compactRef.current?.summary ?? null
+      let fallbackModel: string | null = null
       for (const part of batches) {
         // Stopped / topic switched — abandon the whole run (compression is
         // cancelled together with the request it precedes).
@@ -2043,9 +2063,20 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
           ...(summary ? [`<previous-summary>\n${summary}\n</previous-summary>`] : []),
           `<conversation>\n${part.join('\n\n')}\n</conversation>`
         ].join('\n\n')
-        // Main process: prefer compressModel, retry, fall back to the chat
-        // model; the returned delta is already stripped + structure-checked.
-        const delta = await window.assistantLite.ai.summarize(payload, selectedModel || undefined)
+        const reqId = crypto.randomUUID()
+        gate.summarizeRequestId = reqId
+        let result: Awaited<ReturnType<typeof window.assistantLite.ai.summarize>> | string
+        try {
+          // Main process: prefer compressModel (fast fail-over), fall back to the chat
+          // model; the returned delta is already stripped + structure-checked.
+          result = await window.assistantLite.ai.summarize(payload, selectedModel || undefined, undefined, reqId)
+        } finally {
+          if (gate.summarizeRequestId === reqId) gate.summarizeRequestId = null
+        }
+        const delta = typeof result === 'string' ? result : result?.doc
+        if (result && typeof result === 'object' && result.fellBack && result.usedModel) {
+          fallbackModel = result.usedModel
+        }
         if (!delta?.trim()) {
           throw new Error(isZh ? '压缩结果为空' : 'Empty compression result')
         }
@@ -2072,9 +2103,13 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
 
       persistTopic(turns, selectedModel)
       setCompactNotice(
-        isZh
-          ? `已将较早的 ${staleCount} 条消息压缩为前情摘要`
-          : `Compressed ${staleCount} earlier messages into a recap`
+        fallbackModel
+          ? isZh
+            ? `压缩模型不可用，已自动用当前模型（${fallbackModel}）将较早的 ${staleCount} 条消息压缩为前情摘要`
+            : `Compression model unavailable — fell back to ${fallbackModel} and compressed ${staleCount} earlier messages`
+          : isZh
+            ? `已将较早的 ${staleCount} 条消息压缩为前情摘要`
+            : `Compressed ${staleCount} earlier messages into a recap`
       )
       compactNoticeTimerRef.current = setTimeout(() => {
         compactNoticeTimerRef.current = null
@@ -2098,16 +2133,25 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
     }
 
     const session = chatSessionRef.current
-    const gate = { cancelled: false }
+    const gate = { cancelled: false, summarizeRequestId: null as string | null }
     preSendRef.current = gate
     setIsCompacting(true)
     try {
       await compactIfNeeded(history, session, gate, '', { force: true })
-    } catch {
+    } catch (err) {
       if (!gate.cancelled && chatSessionRef.current === session) {
-        setCompactNotice(isZh ? '上下文压缩失败，请重试' : 'Context compression failed — please retry')
+        const detail = formatCompactError(err)
+        setCompactNotice(
+          detail
+            ? isZh
+              ? `上下文压缩失败：${detail}`
+              : `Context compression failed: ${detail}`
+            : isZh
+              ? '上下文压缩失败，请重试'
+              : 'Context compression failed — please retry'
+        )
         if (compactNoticeTimerRef.current) clearTimeout(compactNoticeTimerRef.current)
-        compactNoticeTimerRef.current = setTimeout(() => setCompactNotice(null), 4000)
+        compactNoticeTimerRef.current = setTimeout(() => setCompactNotice(null), 5000)
       }
     } finally {
       if (preSendRef.current === gate) preSendRef.current = null
@@ -2668,15 +2712,16 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
       firstTokenLatencySec: null,
       durationStr: null
     })
-    const gate = { cancelled: false }
+    const gate = { cancelled: false, summarizeRequestId: null as string | null }
     preSendRef.current = gate
     void (async () => {
       try {
         await compactIfNeeded(history, session, gate, buildSendText({ text, files }))
-      } catch {
+      } catch (err) {
         if (gate.cancelled || chatSessionRef.current !== session) return
         preSendRef.current = null
         clearCompactNotice()
+        const detail = formatCompactError(err)
         // Surface on the pending assistant turn like a normal request error.
         chatDirtyRef.current = true
         setChat((current) => {
@@ -2684,7 +2729,13 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
           const next = [...current]
           const last = { ...next[next.length - 1] }
           last.pending = false
-          last.error = isZh ? '上下文压缩失败，请重试' : 'Context compression failed — please retry'
+          last.error = detail
+            ? isZh
+              ? `上下文压缩失败：${detail}`
+              : `Context compression failed: ${detail}`
+            : isZh
+              ? '上下文压缩失败，请重试'
+              : 'Context compression failed — please retry'
           next[next.length - 1] = last
           return next
         })
@@ -2848,8 +2899,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
   const stop = () => {
     // Cancel an in-flight pre-send phase (compaction running, no request yet).
     if (preSendRef.current) {
-      preSendRef.current.cancelled = true
-      preSendRef.current = null
+      cancelPreSend()
       clearCompactNotice()
     }
     const curTopicId = activeTopicIdRef.current
@@ -2970,10 +3020,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
 
   const newChat = (initialSession?: TopicSession, options?: { preserveHistoryOpen?: boolean }) => {
     flushPersistRef.current()
-    if (preSendRef.current) {
-      preSendRef.current.cancelled = true
-      preSendRef.current = null
-    }
+    cancelPreSend()
     activeRequestId.current = null
     loadingTopicIdRef.current = null
     loadedSessionBaselineRef.current = null
@@ -3043,10 +3090,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
     flushPersistRef.current()
     setTemporaryChat(false)
     temporaryChatRef.current = false
-    if (preSendRef.current) {
-      preSendRef.current.cancelled = true
-      preSendRef.current = null
-    }
+    cancelPreSend()
     setActiveTopicId(topic.id)
     activeTopicIdRef.current = topic.id
 

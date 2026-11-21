@@ -505,3 +505,18 @@ export interface TopicMetaPatch {
   aiTitle?: boolean
   isPinned?: boolean
 }
+
+export interface AiSummarizeRequest {
+  /** Optional request id so `ai.abort(requestId)` cancels an in-flight summarization. */
+  requestId?: string
+  text: string
+  model?: string
+  providerTemplateId?: string
+}
+
+export interface AiSummarizeResult {
+  doc: string
+  usedModel: string
+  fellBack: boolean
+  fallbackReason?: string
+}

@@ -9,6 +9,8 @@ export type ProviderFetch = (input: string, init?: RequestInit) => Promise<Respo
 
 export interface ProviderRequestOptions {
   readonly fetcher?: ProviderFetch
+  /** Override HTTP/network retry count (clamped to [0, RETRY_BACKOFF_MS.length]). */
+  readonly maxRetries?: number
 }
 
 export function normalizeBaseUrl(baseUrl: string): string {
@@ -138,6 +140,7 @@ async function fetchProviderWithRetry(
   onRetryWait?: (waitMs: number, attempt: number, maxAttempts: number) => void
 ): Promise<Response> {
   const signal = init.signal as AbortSignal | null | undefined
+  const maxRetries = Math.max(0, Math.min(options.maxRetries ?? RETRY_BACKOFF_MS.length, RETRY_BACKOFF_MS.length))
   for (let attempt = 0; ; attempt++) {
     let failure: string
     let retryAfterMs: number | null = null
@@ -153,9 +156,9 @@ async function fetchProviderWithRetry(
       if (isUserAbort) throw error
       failure = error instanceof Error ? error.message : String(error)
     }
-    if (attempt >= RETRY_BACKOFF_MS.length) throw new Error(failure)
+    if (attempt >= maxRetries) throw new Error(failure)
     const waitMs = retryAfterMs ?? RETRY_BACKOFF_MS[attempt]
-    onRetryWait?.(waitMs, attempt + 1, RETRY_BACKOFF_MS.length)
+    onRetryWait?.(waitMs, attempt + 1, maxRetries)
     await sleepUnlessAborted(waitMs, signal)
   }
 }

@@ -1391,5 +1391,23 @@ describe('stream abort propagation', () => {
     expect(maxConcurrent).toBe(2)
     expect(queued).toEqual([])
   })
+
+  it('respects maxRetries: 0 and fails after a single attempt on transient HTTP errors', async () => {
+    const fetcher = vi.fn(async () => new Response('upstream overloaded', { status: 503 }))
+
+    await expect(
+      streamChatMessages(
+        provider,
+        [{ role: 'user', text: 'hi' }],
+        'system',
+        new AbortController().signal,
+        () => {},
+        'off',
+        { fetcher, maxRetries: 0 }
+      )
+    ).rejects.toThrow('(503)')
+
+    expect(fetcher).toHaveBeenCalledTimes(1)
+  })
 })
 
