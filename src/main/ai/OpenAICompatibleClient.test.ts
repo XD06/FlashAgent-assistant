@@ -1409,5 +1409,404 @@ describe('stream abort propagation', () => {
 
     expect(fetcher).toHaveBeenCalledTimes(1)
   })
+
+  it('masks outdated reads of the same file (Closed-Window) without touching disjoint paginated slices', async () => {
+    const mkToolRes = (id: string, name: string, args: Record<string, unknown>) => {
+      const encoder = new TextEncoder()
+      const body = new ReadableStream({
+        start(c) {
+          c.enqueue(
+            encoder.encode(
+              `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"${id}","function":{"name":"${name}","arguments":${JSON.stringify(JSON.stringify(args))}}}]}}]}\n\n`
+            )
+          )
+          c.close()
+        }
+      })
+      return new Response(body, { status: 200 })
+    }
+
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(mkToolRes('r0', 'read_file', { path: 'src/a.ts', offset: 1, limit: 100 }))
+      .mockResolvedValueOnce(mkToolRes('r1', 'read_file', { path: 'src/a.ts', offset: 101, limit: 100 }))
+      .mockResolvedValueOnce(mkToolRes('r2', 'read_file', { path: './src/a.ts', offset: 1, limit: 100 }))
+      .mockResolvedValueOnce(mkToolRes('e1', 'edit_file', { path: './src/a.ts', old_text: 'x', new_text: 'y' }))
+      .mockResolvedValueOnce(streamingTextResponse('done'))
+      // Verification nudge triggers after edit_file without a command tool
+      .mockResolvedValueOnce(streamingTextResponse('no tests needed'))
+
+    await streamChatMessages(
+      provider,
+      [{ role: 'user', text: 'inspect and edit a.ts' }],
+      'system',
+      new AbortController().signal,
+      () => {},
+      'off',
+      {
+        tools: [
+          { name: 'read_file', description: '', parameters: {} },
+          { name: 'edit_file', description: '', parameters: {} }
+        ],
+        onToolCall: async (name) => (name === 'read_file' ? 'line1\nline2\nline3\n' + 'z'.repeat(500) : 'Edited src/a.ts'),
+        maxToolRounds: 7
+      }
+    )
+
+    // Before round 2 (after disjoint slice r1), round 0 read must STILL be intact
+    const bodyBeforeOverlap = JSON.parse(String(fetchMock.mock.calls[2][1]?.body)) as {
+      messages: Array<{ role: string; tool_call_id?: string; content: string }>
+    }
+    const r0BeforeOverlap = bodyBeforeOverlap.messages.find((m) => m.tool_call_id === 'r0')!
+    const r1BeforeOverlap = bodyBeforeOverlap.messages.find((m) => m.tool_call_id === 'r1')!
+    expect(r0BeforeOverlap.content).toContain('z'.repeat(500))
+    expect(r1BeforeOverlap.content).toContain('z'.repeat(500))
+
+    // After overlapping read r2 on ./src/a.ts [1..100], r0 is masked while disjoint r1 [101..200] stays intact
+    const bodyAfterOverlap = JSON.parse(String(fetchMock.mock.calls[3][1]?.body)) as {
+      messages: Array<{ role: string; tool_call_id?: string; content: string }>
+    }
+    const r0AfterOverlap = bodyAfterOverlap.messages.find((m) => m.tool_call_id === 'r0')!
+    const r1AfterOverlap = bodyAfterOverlap.messages.find((m) => m.tool_call_id === 'r1')!
+    const r2AfterOverlap = bodyAfterOverlap.messages.find((m) => m.tool_call_id === 'r2')!
+    expect(r0AfterOverlap.content).toContain('[tool: read_file')
+    expect(r0AfterOverlap.content).toContain('Outdated file read')
+    expect(r1AfterOverlap.content).toContain('z'.repeat(500))
+    expect(r2AfterOverlap.content).toContain('z'.repeat(500))
+
+    // After edit_file on ./src/a.ts in round 3, ALL earlier read slices of src/a.ts (r1 & r2) are masked too
+    const bodyAfterEdit = JSON.parse(String(fetchMock.mock.calls[4][1]?.body)) as {
+      messages: Array<{ role: string; tool_call_id?: string; content: string }>
+    }
+    const r1AfterEdit = bodyAfterEdit.messages.find((m) => m.tool_call_id === 'r1')!
+    const r2AfterEdit = bodyAfterEdit.messages.find((m) => m.tool_call_id === 'r2')!
+    expect(r1AfterEdit.content).toContain('Outdated file read')
+    expect(r2AfterEdit.content).toContain('Outdated file read')
+  })
+
+  it('ages out old tool outputs in polling batches while preserving todo_list and ask_user verbatim', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+    const mkToolRes = (id: string, name: string, args: Record<string, unknown>) => {
+      const encoder = new TextEncoder()
+      const body = new ReadableStream({
+        start(c) {
+          c.enqueue(
+            encoder.encode(
+              `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"${id}","function":{"name":"${name}","arguments":${JSON.stringify(JSON.stringify(args))}}}]}}]}\n\n`
+            )
+          )
+          c.close()
+        }
+      })
+      return new Response(body, { status: 200 })
+    }
+
+    fetchMock.mockResolvedValueOnce(mkToolRes('todo_0', 'todo_list', { tasks: [{ text: 'step 1', status: 'in_progress' }] }))
+    for (let i = 1; i <= 20; i++) {
+      fetchMock.mockResolvedValueOnce(mkToolRes(`call_${i}`, 'read_file', { path: `file_${i}.ts` }))
+    }
+    fetchMock.mockResolvedValueOnce(streamingTextResponse('finished'))
+
+    await streamChatMessages(
+      provider,
+      [{ role: 'user', text: 'long loop' }],
+      'system',
+      new AbortController().signal,
+      () => {},
+      'off',
+      {
+        tools: [
+          { name: 'todo_list', description: '', parameters: {} },
+          { name: 'read_file', description: '', parameters: {} }
+        ],
+        onToolCall: async (name) => (name === 'todo_list' ? `Checklist: ${'item '.repeat(100)}` : 'v'.repeat(1_000)),
+        maxToolRounds: 25
+      }
+    )
+
+    // At round 16..19: polling batch 0 (rounds < 4) is masked, rounds 4..15 stay verbatim across rounds 16,17,18,19
+    const bodyAtRound17 = JSON.parse(String(fetchMock.mock.calls[17][1]?.body)) as {
+      messages: Array<{ role: string; tool_call_id?: string; content: string }>
+    }
+    const bodyAtRound19 = JSON.parse(String(fetchMock.mock.calls[19][1]?.body)) as {
+      messages: Array<{ role: string; tool_call_id?: string; content: string }>
+    }
+    const c4At17 = bodyAtRound17.messages.find((m) => m.tool_call_id === 'call_4')!
+    const c4At19 = bodyAtRound19.messages.find((m) => m.tool_call_id === 'call_4')!
+    expect(c4At17.content).toContain('v'.repeat(1_000))
+    expect(c4At19.content).toBe(c4At17.content)
+
+    // At round 20: batch 1 (rounds 4..7) masks together, while round 0 todo_list remains intact
+    const bodyAtRound20 = JSON.parse(String(fetchMock.mock.calls[20][1]?.body)) as {
+      messages: Array<{ role: string; tool_call_id?: string; content: string }>
+    }
+    const todoAt20 = bodyAtRound20.messages.find((m) => m.tool_call_id === 'todo_0')!
+    const c4At20 = bodyAtRound20.messages.find((m) => m.tool_call_id === 'call_4')!
+    const c7At20 = bodyAtRound20.messages.find((m) => m.tool_call_id === 'call_7')!
+    const c8At20 = bodyAtRound20.messages.find((m) => m.tool_call_id === 'call_8')!
+    expect(todoAt20.content).toContain('item '.repeat(100))
+    expect(c4At20.content).toContain('trimmed')
+    expect(c7At20.content).toContain('trimmed')
+    expect(c8At20.content).toContain('v'.repeat(1_000))
+  })
+
+  it('triggers in-loop compaction on OpenAI turns at 85% budget and keeps latest 3 rounds intact', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+    const mkToolRes = (id: string, path: string) => {
+      const encoder = new TextEncoder()
+      const body = new ReadableStream({
+        start(c) {
+          c.enqueue(
+            encoder.encode(
+              `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"${id}","function":{"name":"read_file","arguments":${JSON.stringify(JSON.stringify({ path }))}}}]}}]}\n\n`
+            )
+          )
+          c.close()
+        }
+      })
+      return new Response(body, { status: 200 })
+    }
+
+    // Rounds 0..4 call read_file; each output is 4500 chars (~1125 tokens).
+    // With shadowBudget=5000 (85% = 4250), at start of round 4 (rounds 0..3 executed),
+    // total tokens exceed 4250 and trigger in-loop compaction, keeping rounds 1..3 verbatim!
+    for (let i = 0; i < 5; i++) {
+      fetchMock.mockResolvedValueOnce(mkToolRes(`loop_${i}`, `f${i}.ts`))
+    }
+    fetchMock.mockResolvedValueOnce(streamingTextResponse('all done'))
+
+    const onInLoopCompact = vi.fn(async ({ conversationText }) => {
+      expect(conversationText).toContain('f0.ts')
+      return {
+        doc: '# 复工文档\n## 1. 原始任务\nfix bug\n## 2. 事实台账\n- read f0.ts\n## 3. 涉及文件与当前状态\n`f0.ts` — 已读\n## 4. 失败路径台账\n无\n## 5. 当前任务与下一步\n继续检查',
+        usedModel: 'gpt-4o',
+        fellBack: false
+      }
+    })
+    const onInLoopCompacted = vi.fn()
+
+    await streamChatMessages(
+      provider,
+      [{ role: 'user', text: 'fix the authentication bug across files' }],
+      'system',
+      new AbortController().signal,
+      () => {},
+      'off',
+      {
+        tools: [{ name: 'read_file', description: '', parameters: {} }],
+        onToolCall: async (_n, args) => `${String(args.path)}:${'a'.repeat(4_500)}`,
+        shadowBudget: { contextWindowTokens: 5_000 },
+        onInLoopCompact,
+        onInLoopCompacted,
+        maxToolRounds: 10
+      }
+    )
+
+    expect(onInLoopCompact).toHaveBeenCalledTimes(1)
+    expect(onInLoopCompacted).toHaveBeenCalledWith({ count: 1, usedModel: 'gpt-4o', fellBack: false })
+
+    // Inspect the round-4 request body right after in-loop compaction:
+    // [system, user(Initial Task Anchor + checkpoint + RESUME GATE), asst(r1), tool(r1), asst(r2), tool(r2), asst(r3), tool(r3)]
+    const round4Body = JSON.parse(String(fetchMock.mock.calls[4][1]?.body)) as {
+      messages: Array<{ role: string; content: string; tool_call_id?: string }>
+    }
+    expect(round4Body.messages[0].role).toBe('system')
+    expect(round4Body.messages[1].role).toBe('user')
+    expect(round4Body.messages[1].content).toContain('[Initial Task Anchor (immutable)]')
+    expect(round4Body.messages[1].content).toContain('fix the authentication bug across files')
+    expect(round4Body.messages[1].content).toContain('# 复工文档')
+    expect(round4Body.messages[1].content).toContain('[SYSTEM RESUME GATE]')
+
+    const keptToolIds = round4Body.messages.filter((m) => m.role === 'tool').map((m) => m.tool_call_id)
+    expect(keptToolIds).toEqual(['loop_1', 'loop_2', 'loop_3'])
+  })
+
+  it('triggers in-loop compaction on Anthropic while maintaining strict user/assistant alternation', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+    const mkAnthropicToolRes = (id: string, path: string) => {
+      const encoder = new TextEncoder()
+      const body = new ReadableStream({
+        start(c) {
+          c.enqueue(
+            encoder.encode(
+              `data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"${id}","name":"read_file"}}\n\n` +
+                `data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":${JSON.stringify(JSON.stringify({ path }))}}}\n\n` +
+                `event: message_stop\ndata: {"type":"message_stop"}\n\n`
+            )
+          )
+          c.close()
+        }
+      })
+      return new Response(body, { status: 200 })
+    }
+    const mkAnthropicTextRes = (text: string) => {
+      const encoder = new TextEncoder()
+      const body = new ReadableStream({
+        start(c) {
+          c.enqueue(
+            encoder.encode(
+              `data: {"type":"content_block_start","index":0,"content_block":{"type":"text"}}\n\n` +
+                `data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":${JSON.stringify(text)}}}\n\n` +
+                `event: message_stop\ndata: {"type":"message_stop"}\n\n`
+            )
+          )
+          c.close()
+        }
+      })
+      return new Response(body, { status: 200 })
+    }
+
+    for (let i = 0; i < 5; i++) {
+      fetchMock.mockResolvedValueOnce(mkAnthropicToolRes(`ant_${i}`, `file_${i}.ts`))
+    }
+    fetchMock.mockResolvedValueOnce(mkAnthropicTextRes('done anthropic'))
+
+    const onInLoopCompact = vi.fn(async () => ({
+      doc: '# 复工文档\n## 1. 原始任务\ntask\n## 2. 事实台账\n- ok\n## 3. 涉及文件与当前状态\n`file_0.ts` — 已读\n## 4. 失败路径台账\n无\n## 5. 当前任务与下一步\n继续',
+      usedModel: 'claude-3-5-sonnet-latest',
+      fellBack: false
+    }))
+
+    await streamChatMessages(
+      anthropicProvider,
+      [{ role: 'user', text: 'inspect anthropic files' }],
+      'system',
+      new AbortController().signal,
+      () => {},
+      'off',
+      {
+        tools: [{ name: 'read_file', description: '', parameters: {} }],
+        onToolCall: async (_n, args) => `${String(args.path)}:${'b'.repeat(4_500)}`,
+        shadowBudget: { contextWindowTokens: 5_000 },
+        onInLoopCompact,
+        maxToolRounds: 10
+      }
+    )
+
+    expect(onInLoopCompact).toHaveBeenCalledTimes(1)
+    const round4Body = JSON.parse(String(fetchMock.mock.calls[4][1]?.body)) as {
+      messages: Array<{ role: string; content: Array<{ type: string; text?: string; tool_use_id?: string }> }>
+    }
+    // Roles must strictly alternate user -> assistant -> user -> ...
+    expect(round4Body.messages.map((m) => m.role)).toEqual([
+      'user',
+      'assistant',
+      'user',
+      'assistant',
+      'user',
+      'assistant',
+      'user'
+    ])
+    expect(round4Body.messages[0].content[0].text).toContain('[SYSTEM RESUME GATE]')
+  })
+
+  it('degrades gracefully to tool-output masking when onInLoopCompact fails without aborting the task', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+    const mkToolRes = (id: string, path: string) => {
+      const encoder = new TextEncoder()
+      const body = new ReadableStream({
+        start(c) {
+          c.enqueue(
+            encoder.encode(
+              `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"${id}","function":{"name":"read_file","arguments":${JSON.stringify(JSON.stringify({ path }))}}}]}}]}\n\n`
+            )
+          )
+          c.close()
+        }
+      })
+      return new Response(body, { status: 200 })
+    }
+
+    for (let i = 0; i < 5; i++) {
+      fetchMock.mockResolvedValueOnce(mkToolRes(`deg_${i}`, `d${i}.ts`))
+    }
+    fetchMock.mockResolvedValueOnce(streamingTextResponse('completed after fallback masking'))
+
+    const deltas: string[] = []
+    const onInLoopCompacted = vi.fn()
+
+    await streamChatMessages(
+      provider,
+      [{ role: 'user', text: 'run despite compact error' }],
+      'system',
+      new AbortController().signal,
+      (d) => {
+        if (d.content) deltas.push(d.content)
+      },
+      'off',
+      {
+        tools: [{ name: 'read_file', description: '', parameters: {} }],
+        onToolCall: async (_n, args) => `${String(args.path)}:${'c'.repeat(4_500)}`,
+        shadowBudget: { contextWindowTokens: 5_000 },
+        onInLoopCompact: async () => {
+          throw new Error('Provider down')
+        },
+        onInLoopCompacted,
+        maxToolRounds: 10
+      }
+    )
+
+    expect(deltas.join('')).toBe('completed after fallback masking')
+    expect(onInLoopCompacted).toHaveBeenCalledWith({ count: 0, degraded: true })
+
+    // Older round 0 tool result was shrunk as graceful degradation while recent round 3 stayed intact
+    const round4Body = JSON.parse(String(fetchMock.mock.calls[4][1]?.body)) as {
+      messages: Array<{ role: string; content: string; tool_call_id?: string }>
+    }
+    const oldest = round4Body.messages.find((m) => m.tool_call_id === 'deg_0')!
+    const recent = round4Body.messages.find((m) => m.tool_call_id === 'deg_3')!
+    expect(oldest.content).toContain('trimmed')
+    expect(recent.content).toContain('c'.repeat(4_500))
+  })
+
+  it('aborts immediately if caller AbortSignal fires during in-loop compaction instead of degrading', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+    const mkToolRes = (id: string, path: string) => {
+      const encoder = new TextEncoder()
+      const body = new ReadableStream({
+        start(c) {
+          c.enqueue(
+            encoder.encode(
+              `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"${id}","function":{"name":"read_file","arguments":${JSON.stringify(JSON.stringify({ path }))}}}]}}]}\n\n`
+            )
+          )
+          c.close()
+        }
+      })
+      return new Response(body, { status: 200 })
+    }
+
+    for (let i = 0; i < 4; i++) {
+      fetchMock.mockResolvedValueOnce(mkToolRes(`ab_${i}`, `a${i}.ts`))
+    }
+
+    const controller = new AbortController()
+    const onInLoopCompacted = vi.fn()
+
+    await expect(
+      streamChatMessages(
+        provider,
+        [{ role: 'user', text: 'abort during in-loop compact' }],
+        'system',
+        controller.signal,
+        () => {},
+        'off',
+        {
+          tools: [{ name: 'read_file', description: '', parameters: {} }],
+          onToolCall: async (_n, args) => `${String(args.path)}:${'d'.repeat(4_500)}`,
+          shadowBudget: { contextWindowTokens: 5_000 },
+          onInLoopCompact: async ({ signal }) => {
+            controller.abort()
+            throw signal.reason ?? new DOMException('Aborted', 'AbortError')
+          },
+          onInLoopCompacted,
+          maxToolRounds: 10
+        }
+      )
+    ).rejects.toMatchObject({ name: 'AbortError' })
+
+    expect(onInLoopCompacted).not.toHaveBeenCalled()
+    expect(fetchMock).toHaveBeenCalledTimes(4)
+  })
 })
 

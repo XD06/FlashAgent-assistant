@@ -1,6 +1,8 @@
+import { resolve } from 'node:path'
 import type { AiMessageInput, ProviderApiType, ProviderSettings, ReasoningMode } from '@shared/types'
 import { measureContext, type ContextMeasurement } from '@shared/contextMeter'
-import { evaluateContextBudget } from '@shared/contextBudget'
+import { CONTEXT_SHADOW_COMPACT_RATIO, evaluateContextBudget } from '@shared/contextBudget'
+import { mergeRecapDoc } from '@shared/recapDoc'
 
 export class AiConfigurationError extends Error {}
 const ANTHROPIC_VERSION = '2023-06-01'
@@ -608,19 +610,166 @@ export interface ToolCallStreamOptions extends ProviderRequestOptions {
   onContextMeasured?: (measurement: ContextMeasurement & { modelRequestIndex: number }) => void
   /** Optional shadow-only budget configuration. It never blocks or edits a request. */
   shadowBudget?: { contextWindowTokens: number; safetyMarginTokens?: number }
+  /** Working directory used to normalize file paths for Closed-Window Masking. */
+  workingDir?: string
+  /** Optional in-loop compaction hook triggered when a long multi-round run hits 85% of shadowBudget. */
+  onInLoopCompact?: (input: {
+    previousSummary: string | null
+    conversationText: string
+    signal: AbortSignal
+  }) => Promise<{ doc: string; usedModel?: string; fellBack?: boolean }>
+  /** Notified after an in-loop compaction succeeds or degrades gracefully. */
+  onInLoopCompacted?: (info: { count: number; usedModel?: string; fellBack?: boolean; degraded?: boolean }) => void
 }
 
-// In-loop context control, mirroring the renderer's "keep the last ~5 rounds
-// verbatim" policy: every result is capped, and results older than the recent
-// window get stubbed out (the model can always re-run the tool if needed).
+// In-loop context control: every result is capped, stale reads of the same
+// file/range are superseded immediately (Closed-Window Masking), and older
+// results fade out in cache-friendly polling batches rather than mutating the
+// prefix on every single round.
 /** Hard cap on a single tool result sent to the model (chars). */
 const TOOL_RESULT_MAX_CHARS = 12_000
-/** Rounds whose tool results are kept verbatim; older ones become stubs.
- * Too small forgets files the model just read, forcing re-reads that burn
- * extra rounds — the re-read loop costs more than the retained context. */
-const TOOL_KEEP_RECENT_ROUNDS = 25
+/** Recent rounds whose tool outputs stay verbatim (unless superseded by Closed-Window Masking). */
+export const TOOL_KEEP_RECENT_ROUNDS = 12
+/** Batch cadence for aging out older rounds so the prompt prefix stays cache-stable between polls. */
+export const TOOL_MASK_POLLING_INTERVAL = 4
+/** Tool outputs that carry authoritative progress/user decisions and are never masked. */
+const NEVER_MASK_TOOLS = new Set(['todo_list', 'ask_user'])
 /** Length a stubbed-out old result is trimmed down to. */
 const TOOL_STUB_CHARS = 300
+
+export const IN_LOOP_COMPACT_MIN_ROUND = 4
+export const IN_LOOP_COMPACT_KEEP_ROUNDS = 3
+export const IN_LOOP_COMPACT_MIN_INTERVAL = 6
+export const IN_LOOP_COMPACT_MAX_COUNT = 3
+const IN_LOOP_COMPACT_ENTRY_CAP = 2_500
+const IN_LOOP_COMPACT_PAYLOAD_CAP = 48_000
+
+function clipForInLoopCompact(text: string, max = IN_LOOP_COMPACT_ENTRY_CAP): string {
+  if (text.length <= max) return text
+  const head = text.slice(0, Math.floor(max * 0.7))
+  const tail = text.slice(-Math.floor(max * 0.25))
+  return `${head}\n[... truncated ...]\n${tail}`
+}
+
+function serializeSliceForInLoopCompact(slice: unknown[]): string {
+  const parts: string[] = []
+  let total = 0
+  const pushPart = (line: string): boolean => {
+    if (!line.trim()) return true
+    if (total + line.length > IN_LOOP_COMPACT_PAYLOAD_CAP) return false
+    parts.push(line)
+    total += line.length + 2
+    return true
+  }
+
+  for (const msg of slice) {
+    if (!msg || typeof msg !== 'object') continue
+    const m = msg as Record<string, unknown>
+    if (m.role === 'system') continue
+
+    if (m.role === 'tool') {
+      const content = typeof m.content === 'string' ? clipForInLoopCompact(m.content) : ''
+      if (!pushPart(`Tool result: ${content}`)) break
+      continue
+    }
+
+    if (Array.isArray(m.content)) {
+      const textParts: string[] = []
+      for (const block of m.content) {
+        if (!block || typeof block !== 'object') continue
+        const b = block as Record<string, unknown>
+        if (b.type === 'text' && typeof b.text === 'string') {
+          textParts.push(clipForInLoopCompact(b.text, 4_000))
+        } else if (b.type === 'tool_use') {
+          textParts.push(`[call ${String(b.name ?? 'tool')}: ${JSON.stringify(b.input ?? {}).slice(0, 300)}]`)
+        } else if (b.type === 'tool_result') {
+          const content = typeof b.content === 'string' ? clipForInLoopCompact(b.content) : ''
+          textParts.push(`Tool result: ${content}`)
+        }
+      }
+      const label = m.role === 'assistant' ? 'Assistant' : 'User'
+      if (!pushPart(`${label}: ${textParts.join('\n')}`)) break
+      continue
+    }
+
+    const text = typeof m.content === 'string' ? clipForInLoopCompact(m.content, 4_000) : ''
+    const toolCalls = Array.isArray(m.tool_calls)
+      ? m.tool_calls
+          .map((tc) => {
+            const fn = (tc as { function?: { name?: string; arguments?: string } })?.function
+            return fn?.name ? `[call ${fn.name}: ${(fn.arguments ?? '').slice(0, 300)}]` : ''
+          })
+          .filter(Boolean)
+          .join(' ')
+      : ''
+    const combined = [text, toolCalls].filter(Boolean).join('\n')
+    const label = m.role === 'assistant' ? 'Assistant' : 'User'
+    if (!pushPart(`${label}: ${combined}`)) break
+  }
+
+  return parts.join('\n\n')
+}
+
+function extractInitialUserText(messages: AiMessageInput[]): string | null {
+  const firstUser = messages.find((m) => m.role === 'user' && m.text.trim().length > 0)
+  if (!firstUser) return null
+  const text = firstUser.text.trim()
+  // If the caller already passed a compacted recap head as messages[0], keep any
+  // embedded anchor or first chunk bounded instead of nesting anchors.
+  return text.length > 2_000 ? `${text.slice(0, 2_000)}…` : text
+}
+
+function formatInLoopCheckpointText(initialTask: string | null, summary: string): string {
+  const parts: string[] = []
+  if (initialTask && !initialTask.includes('[原始任务锚点') && !initialTask.includes('[Initial Task Anchor')) {
+    parts.push(`[Initial Task Anchor (immutable)]\n${initialTask}`)
+  }
+  parts.push(`(In-loop checkpoint compressed from earlier rounds)\n${summary}`)
+  parts.push(
+    '[SYSTEM RESUME GATE] Earlier rounds in this task were compacted. Continue directly from "## 5. 当前任务与下一步". Do not repeat completed exploration or retry failed approaches in "## 4. 失败路径台账".'
+  )
+  return parts.join('\n\n')
+}
+
+interface LineRange {
+  start: number
+  end: number
+}
+
+function normalizeMaskPathKey(pathValue: unknown, workingDir?: string): string | null {
+  if (typeof pathValue !== 'string') return null
+  const trimmed = pathValue.trim()
+  if (!trimmed) return null
+  const normalized = workingDir ? resolve(workingDir, trimmed) : trimmed.replace(/\\/g, '/').replace(/^\.\//, '')
+  return process.platform === 'win32' ? normalized.toLowerCase() : normalized
+}
+
+function getReadLineRange(args: Record<string, unknown>): LineRange {
+  const start = typeof args.offset === 'number' && Number.isFinite(args.offset) ? Math.max(1, Math.floor(args.offset)) : 1
+  const limit =
+    typeof args.limit === 'number' && Number.isFinite(args.limit)
+      ? Math.min(2000, Math.max(1, Math.floor(args.limit)))
+      : 2000
+  return { start, end: start + limit - 1 }
+}
+
+function readRangesOverlap(a: LineRange, b: LineRange): boolean {
+  return a.start <= b.end && b.start <= a.end
+}
+
+/** Extract the canonical `[tool: ...]` first line when present. */
+function extractToolPrefix(content: string): { prefix: string; body: string } {
+  const nlIdx = content.indexOf('\n')
+  const prefix = nlIdx > 0 && content.startsWith('[tool:') ? content.slice(0, nlIdx + 1) : ''
+  return { prefix, body: prefix ? content.slice(prefix.length) : content }
+}
+
+/** Replace an outdated file-read observation while keeping the `[tool: ...]` header. */
+function closedWindowStub(content: string, pathLabel: string): string {
+  const { prefix } = extractToolPrefix(content)
+  const linesCount = Math.max(1, content.split(/\r?\n/).length - (prefix ? 1 : 0))
+  return `${prefix}[Outdated file read (${linesCount} lines) for ${pathLabel} — superseded by a newer read/edit]`
+}
 
 /** Cap an oversized result keeping head + tail — command failures usually
  * sit at the end of the output, file reads at the start. */
@@ -779,7 +928,7 @@ export async function streamChatMessages(
   // Ask OpenAI-compatible servers for a trailing usage chunk. Some reject
   // unknown stream_options with a 400 — postChat drops the field, retries
   // once, and stops asking for the rest of this request.
-  let wantUsage = !!options.onUsage && provider.apiType !== 'anthropic'
+  let wantUsage = (!!options.onUsage || !!options.onInLoopCompact) && provider.apiType !== 'anthropic'
   const postChat = async (
     url: string,
     body: Record<string, unknown>,
@@ -802,7 +951,7 @@ export async function streamChatMessages(
     return response
   }
   const collectUsage = (event: string, acc: Partial<TokenUsage>): void => {
-    if (!options.onUsage) return
+    if (!options.onUsage && !options.onInLoopCompact) return
     const usage = parseUsageEvent(provider.apiType, event)
     if (usage) Object.assign(acc, usage)
   }
@@ -893,11 +1042,19 @@ export async function streamChatMessages(
   // Time spent inside onToolCall — excluded from the loop budget so slow
   // commands and approval pauses do not abort the conversation.
   let toolTimeMs = 0
-  // Tool-result messages indexed by the round they were produced in, so
-  // rounds that fall out of the recent window can be shrunk in place —
-  // long agent sessions otherwise accumulate every file read and command
-  // output and eventually overflow the model context.
-  const toolResultRefs: Array<{ round: number; shrink: () => void; shrunk?: boolean }> = []
+  // Tool-result messages indexed by round + file identity so superseded reads
+  // (Closed-Window Masking) and aged-out rounds (polling batches) can be
+  // shrunk in place while keeping todo_list / ask_user intact.
+  interface ToolResultRef {
+    round: number
+    toolName: string
+    fileKey: string | null
+    readRange: LineRange | null
+    getContent: () => string
+    shrink: (replacement?: string) => void
+    shrunk?: boolean
+  }
+  const toolResultRefs: ToolResultRef[] = []
   // Mutating tools that actually ran (and weren't rejected) this turn. The
   // hallucination guard cross-checks against this: a wrap-up summary after
   // real edits is grounded and must not be flagged, while "I created/edited X"
@@ -911,6 +1068,15 @@ export async function streamChatMessages(
   // Loop Breaker: detect consecutive rounds with identical tool calls to prevent ping-pong loops (e.g. repeated todo_list)
   let consecutiveDuplicateRounds = 0
   let lastRoundSignatures: string[] = []
+
+  // In-loop compaction tracking for long multi-round tool loops.
+  const initialUserAnchor = extractInitialUserText(messages)
+  let roundStartMessageIndexes: Array<{ round: number; msgIndex: number }> = []
+  let inLoopSummary: string | null = null
+  let inLoopCompactCount = 0
+  let lastInLoopCompactRound = -IN_LOOP_COMPACT_MIN_INTERVAL
+  let lastReportedPromptTokens: number | null = null
+  let lastEstimatedPromptTokens: number | null = null
 
   // Build initial API messages array — replayed tool traces from earlier
   // turns expand into native tool-call/tool-result messages here.
@@ -928,12 +1094,19 @@ export async function streamChatMessages(
     if (Date.now() - loopStart - toolTimeMs > toolLoopTimeoutMs) {
       throw new Error(`Tool-calling loop timed out (${Math.round(toolLoopTimeoutMs / 1000)}s of model streaming)`)
     }
-    // Age out tool results older than the recent-rounds window (mirrors the
-    // renderer's "keep the last ~5 rounds verbatim" compression policy).
-    for (const ref of toolResultRefs) {
-      if (!ref.shrunk && ref.round <= round - TOOL_KEEP_RECENT_ROUNDS) {
-        ref.shrink()
-        ref.shrunk = true
+    // Age out tool results in polling batches of TOOL_MASK_POLLING_INTERVAL so
+    // the prompt prefix stays cache-stable between polls instead of changing
+    // on every single round.
+    const maskCutoff =
+      round >= TOOL_KEEP_RECENT_ROUNDS + TOOL_MASK_POLLING_INTERVAL
+        ? Math.floor((round - TOOL_KEEP_RECENT_ROUNDS) / TOOL_MASK_POLLING_INTERVAL) * TOOL_MASK_POLLING_INTERVAL
+        : 0
+    if (maskCutoff > 0) {
+      for (const ref of toolResultRefs) {
+        if (!ref.shrunk && ref.round < maskCutoff) {
+          ref.shrink()
+          ref.shrunk = true
+        }
       }
     }
     // Deliver user notes queued while the previous round was streaming or
@@ -975,6 +1148,112 @@ export async function streamChatMessages(
       ;(apiMessages[0] as { role: string; content: string }).content = roundSystemPrompt
     }
 
+    const nativeTools = buildToolsBody(apiType, tools!)
+
+    // L3 In-Loop Mid-Task Hard-Watermark Compaction:
+    // If a long multi-round session reaches 85% of the attention budget,
+    // compress older rounds into a rolling recap while preserving the latest
+    // IN_LOOP_COMPACT_KEEP_ROUNDS tool rounds verbatim and intact.
+    if (
+      options.onInLoopCompact &&
+      options.shadowBudget?.contextWindowTokens &&
+      round >= IN_LOOP_COMPACT_MIN_ROUND &&
+      inLoopCompactCount < IN_LOOP_COMPACT_MAX_COUNT &&
+      round - lastInLoopCompactRound >= IN_LOOP_COMPACT_MIN_INTERVAL &&
+      roundStartMessageIndexes.length > IN_LOOP_COMPACT_KEEP_ROUNDS
+    ) {
+      const preMeasure = measureContext({ systemPrompt: roundSystemPrompt, tools: nativeTools, messages: apiMessages })
+      const deltaSinceEstimate =
+        lastEstimatedPromptTokens !== null ? Math.max(0, preMeasure.estimatedPromptTokens - lastEstimatedPromptTokens) : 0
+      const effectiveTokens =
+        lastReportedPromptTokens !== null
+          ? Math.max(preMeasure.estimatedPromptTokens, lastReportedPromptTokens + deltaSinceEstimate)
+          : preMeasure.estimatedPromptTokens
+      const hardTrigger = Math.round(options.shadowBudget.contextWindowTokens * CONTEXT_SHADOW_COMPACT_RATIO)
+
+      if (effectiveTokens >= hardTrigger) {
+        const splitEntry = roundStartMessageIndexes[roundStartMessageIndexes.length - IN_LOOP_COMPACT_KEEP_ROUNDS]
+        const splitMsgIndex = splitEntry.msgIndex
+        const historyStartIndex = apiType === 'anthropic' ? 0 : 1
+        if (splitMsgIndex > historyStartIndex) {
+          const staleSlice = apiMessages.slice(historyStartIndex, splitMsgIndex)
+          const tailSlice = apiMessages.slice(splitMsgIndex)
+          const conversationText = serializeSliceForInLoopCompact(staleSlice)
+          if (conversationText.trim()) {
+            const payloadText = [
+              ...(inLoopSummary ? [`<previous-summary>\n${inLoopSummary}\n</previous-summary>`] : []),
+              `<conversation>\n${conversationText}\n</conversation>`
+            ].join('\n\n')
+            const compactStart = Date.now()
+            try {
+              const compactRes = await options.onInLoopCompact({
+                previousSummary: inLoopSummary,
+                conversationText: payloadText,
+                signal
+              })
+              throwIfAborted(signal)
+              inLoopSummary = inLoopSummary ? mergeRecapDoc(inLoopSummary, compactRes.doc) : compactRes.doc
+              inLoopCompactCount += 1
+              lastInLoopCompactRound = round
+              lastReportedPromptTokens = null
+              lastEstimatedPromptTokens = null
+
+              const checkpointText = formatInLoopCheckpointText(initialUserAnchor, inLoopSummary)
+              let newTailStart: number
+              if (apiType === 'anthropic') {
+                const firstTail = tailSlice[0] as { role?: string; content?: unknown } | undefined
+                if (firstTail?.role === 'user' && Array.isArray(firstTail.content)) {
+                  firstTail.content = [{ type: 'text', text: checkpointText }, ...firstTail.content]
+                  apiMessages = tailSlice
+                  newTailStart = 0
+                } else {
+                  apiMessages = [{ role: 'user', content: [{ type: 'text', text: checkpointText }] }, ...tailSlice]
+                  newTailStart = 1
+                }
+              } else {
+                apiMessages = [
+                  { role: 'system', content: roundSystemPrompt },
+                  { role: 'user', content: checkpointText },
+                  ...tailSlice
+                ]
+                newTailStart = 2
+              }
+
+              const indexShift = newTailStart - splitMsgIndex
+              roundStartMessageIndexes = roundStartMessageIndexes
+                .filter((entry) => entry.msgIndex >= splitMsgIndex)
+                .map((entry) => ({ round: entry.round, msgIndex: entry.msgIndex + indexShift }))
+
+              for (let i = toolResultRefs.length - 1; i >= 0; i--) {
+                if (toolResultRefs[i].round < splitEntry.round) {
+                  toolResultRefs.splice(i, 1)
+                }
+              }
+              options.onInLoopCompacted?.({
+                count: inLoopCompactCount,
+                usedModel: compactRes.usedModel,
+                fellBack: compactRes.fellBack
+              })
+            } catch (error) {
+              if (signal.aborted) throw error
+              // Graceful degradation: never interrupt a live agent run because auxiliary
+              // summarization failed — aggressively mask older tool outputs instead.
+              for (const ref of toolResultRefs) {
+                if (!ref.shrunk && ref.round < splitEntry.round) {
+                  ref.shrink()
+                  ref.shrunk = true
+                }
+              }
+              lastInLoopCompactRound = round
+              options.onInLoopCompacted?.({ count: inLoopCompactCount, degraded: true })
+            } finally {
+              toolTimeMs += Date.now() - compactStart
+            }
+          }
+        }
+      }
+    }
+
     // Dynamically set max_tokens: reasoning modes need more room
     const dynMaxTokens = defaultMaxTokens(reasoning)
     const loopTemp = options.agentTemperature ?? provider.temperature
@@ -987,17 +1266,18 @@ export async function streamChatMessages(
             stream: true,
             system: roundSystemPrompt,
             messages: apiMessages,
-            tools: buildToolsBody(apiType, tools!)
+            tools: nativeTools
           }
         : {
             model: provider.model,
             temperature: loopTemp,
             stream: true,
             messages: apiMessages,
-            tools: buildToolsBody(apiType, tools!)
+            tools: nativeTools
           }
     applyReasoning(body, apiType, reasoning)
-    emitContext(apiMessages, buildToolsBody(apiType, tools!), round)
+    emitContext(apiMessages, nativeTools, round)
+    lastEstimatedPromptTokens = measureContext({ systemPrompt: roundSystemPrompt, tools: nativeTools, messages: apiMessages }).estimatedPromptTokens
 
     const response = await postChat(
       buildProviderUrl(provider, apiType === 'anthropic' ? 'messages' : 'chat/completions'),
@@ -1084,6 +1364,9 @@ export async function streamChatMessages(
 
     await readSseStream(response.body, signal, handleEvent)
     throwIfAborted(signal)
+    if (typeof usageAcc.promptTokens === 'number') {
+      lastReportedPromptTokens = usageAcc.promptTokens
+    }
     emitUsage(usageAcc)
 
     if (options.onToolStreaming) {
@@ -1236,6 +1519,7 @@ export async function streamChatMessages(
     // Echo back the full assistant turn (thinking/text/tool_use) so the API
     // accepts the follow-up request — Anthropic rejects turns that drop
     // thinking blocks when extended thinking is enabled.
+    roundStartMessageIndexes.push({ round, msgIndex: apiMessages.length })
     if (apiType === 'anthropic') {
       const contentBlocks: unknown[] = []
       for (const [, block] of [...anthropicBlocks.entries()].sort((a, b) => a[0] - b[0])) {
@@ -1299,20 +1583,30 @@ export async function streamChatMessages(
     })
 
     // Execute each tool call and collect the results
-    const toolResults: Array<{ id: string; content: string }> = []
+    interface ToolExecOutcome {
+      id: string
+      content: string
+      toolName: string
+      args: Record<string, unknown>
+      ok: boolean
+    }
+    const toolResults: ToolExecOutcome[] = []
     const execStart = Date.now()
 
     const executeOneCall = async ({
       tc,
       args,
       parseError
-    }: PreparedCall): Promise<{ id: string; content: string }> => {
+    }: PreparedCall): Promise<ToolExecOutcome> => {
       throwIfAborted(signal)
       if (parseError) {
         const raw = (tc.arguments || '').slice(0, 200)
         return {
           id: tc.id,
-          content: `[tool: ${tc.name}(INVALID_ARGS) → error]\n[Invalid tool call: arguments for ${tc.name} is not a valid JSON object (${parseError}). Raw: ${JSON.stringify(raw)}. Re-issue the tool call with valid JSON arguments.]`
+          content: `[tool: ${tc.name}(INVALID_ARGS) → error]\n[Invalid tool call: arguments for ${tc.name} is not a valid JSON object (${parseError}). Raw: ${JSON.stringify(raw)}. Re-issue the tool call with valid JSON arguments.]`,
+          toolName: tc.name,
+          args,
+          ok: false
         }
       }
 
@@ -1331,26 +1625,43 @@ export async function streamChatMessages(
             result += `\n\n[System note: This tool call is identical to the previous round. If this was a checklist update, it is already current. Proceed to execute concrete tools (such as read_file, edit_file, or run_command) for the active step.]`
           }
         }
+        const rejectedOrBlocked =
+          result.startsWith('[User rejected') ||
+          result.startsWith('[Blocked:') ||
+          result.startsWith('[Invalid tool call:') ||
+          result.startsWith('[Tool failed:')
         // Register real mutations (name-based so MCP write tools count too);
         // a user-rejected call returned as text is not a mutation.
         if (
           /write|edit|create|delet|remove|save|updat|patch|apply|move|rename|mkdir/i.test(tc.name) &&
-          !result.startsWith('[User rejected')
+          !rejectedOrBlocked
         ) {
           executedMutatingTools.add(tc.name)
         }
         if (
           /command|bash|shell|terminal|run|exec/i.test(tc.name) &&
-          !result.startsWith('[User rejected')
+          !rejectedOrBlocked
         ) {
           executedCommandTools.add(tc.name)
         }
-        return { id: tc.id, content: toolResultPrefix(tc.name, args, true) + result }
+        return {
+          id: tc.id,
+          content: toolResultPrefix(tc.name, args, true) + result,
+          toolName: tc.name,
+          args,
+          ok: !rejectedOrBlocked
+        }
       } catch (error) {
         if (signal.aborted) throw error
         const msg = error instanceof Error ? error.message : String(error)
         onStatus?.(`⚠️ ${msg}`, tc.name)
-        return { id: tc.id, content: toolResultPrefix(tc.name, args, false) + `[Tool failed: ${msg}]` }
+        return {
+          id: tc.id,
+          content: toolResultPrefix(tc.name, args, false) + `[Tool failed: ${msg}]`,
+          toolName: tc.name,
+          args,
+          ok: false
+        }
       }
     }
 
@@ -1384,8 +1695,8 @@ export async function streamChatMessages(
       if (deferred.length > 0) options.onToolsQueued(deferred)
     }
 
-    const runBatchParallel = async (calls: PreparedCall[]): Promise<Array<{ id: string; content: string }>> => {
-      const results = new Array<{ id: string; content: string }>(calls.length)
+    const runBatchParallel = async (calls: PreparedCall[]): Promise<ToolExecOutcome[]> => {
+      const results = new Array<ToolExecOutcome>(calls.length)
       let cursor = 0
       const workers = Array.from({ length: Math.min(MAX_PARALLEL_TOOL_CALLS, calls.length) }, async () => {
         while (cursor < calls.length) {
@@ -1413,6 +1724,39 @@ export async function streamChatMessages(
     }
     toolTimeMs += Date.now() - execStart
 
+    // Closed-Window Masking: when a file is re-read (overlapping range) or mutated
+    // in a later round, immediately replace stale earlier reads of that file.
+    for (const r of toolResults) {
+      if (!r.ok || (r.toolName !== 'read_file' && r.toolName !== 'write_file' && r.toolName !== 'edit_file')) continue
+      const fileKey = normalizeMaskPathKey(r.args.path, options.workingDir)
+      if (!fileKey) continue
+      const newRange = r.toolName === 'read_file' ? getReadLineRange(r.args) : null
+      for (const ref of toolResultRefs) {
+        if (ref.shrunk || ref.round >= round || ref.toolName !== 'read_file' || ref.fileKey !== fileKey) continue
+        if (r.toolName !== 'read_file' || !ref.readRange || !newRange || readRangesOverlap(ref.readRange, newRange)) {
+          ref.shrink(closedWindowStub(ref.getContent(), String(r.args.path ?? fileKey)))
+          ref.shrunk = true
+        }
+      }
+    }
+
+    const recordToolRef = (r: ToolExecOutcome, getContent: () => string, setContent: (v: string) => void): void => {
+      if (NEVER_MASK_TOOLS.has(r.toolName)) return
+      const isFileOp = r.toolName === 'read_file' || r.toolName === 'write_file' || r.toolName === 'edit_file'
+      const fileKey = isFileOp && r.ok ? normalizeMaskPathKey(r.args.path, options.workingDir) : null
+      const readRange = r.toolName === 'read_file' && r.ok ? getReadLineRange(r.args) : null
+      toolResultRefs.push({
+        round,
+        toolName: r.toolName,
+        fileKey,
+        readRange,
+        getContent,
+        shrink: (replacement?: string) => {
+          setContent(replacement ?? stubToolResult(getContent()))
+        }
+      })
+    }
+
     if (apiType === 'anthropic') {
       const resultBlocks = toolResults.map((r) => ({
         type: 'tool_result',
@@ -1420,22 +1764,27 @@ export async function streamChatMessages(
         content: capToolResult(r.content)
       }))
       apiMessages.push({ role: 'user', content: resultBlocks })
-      toolResultRefs.push({
-        round,
-        shrink: () => {
-          for (const block of resultBlocks) block.content = stubToolResult(block.content)
-        }
+      toolResults.forEach((r, idx) => {
+        const block = resultBlocks[idx]
+        recordToolRef(
+          r,
+          () => block.content,
+          (v) => {
+            block.content = v
+          }
+        )
       })
     } else {
       for (const r of toolResults) {
         const msg = { role: 'tool', tool_call_id: r.id, content: capToolResult(r.content) }
         apiMessages.push(msg)
-        toolResultRefs.push({
-          round,
-          shrink: () => {
-            msg.content = stubToolResult(msg.content)
+        recordToolRef(
+          r,
+          () => msg.content,
+          (v) => {
+            msg.content = v
           }
-        })
+        )
       }
     }
     // Loop again — the model will continue with the tool results

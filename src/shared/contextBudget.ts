@@ -1,7 +1,7 @@
 /** Shadow-only context budget decisions. These values are diagnostic until a
  * provider/model calibration supplies a non-zero safety margin. */
 
-export const CONTEXT_SHADOW_COMPACT_RATIO = 0.95
+export const CONTEXT_SHADOW_COMPACT_RATIO = 0.85
 
 export interface ContextBudgetShadowInput {
   contextWindowTokens: number
