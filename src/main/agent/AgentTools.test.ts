@@ -674,9 +674,36 @@ describe('search_files with context_lines', () => {
       { path: contextDir, pattern: 'TARGET_MATCH', context_lines: 1 },
       workDir
     )
+    expect(output).toContain('1 match(es)')
     expect(output).toContain('context.ts-2- line 2')
     expect(output).toContain('context.ts:3: TARGET_MATCH')
     expect(output).toContain('context.ts-4- line 4')
+  })
+
+  it('supports glob brace alternation, skips binary files, and deduplicates overlapping context lines', async () => {
+    const braceDir = join(workDir, 'brace-test')
+    const { mkdirSync } = await import('node:fs')
+    mkdirSync(join(braceDir, 'sub'), { recursive: true })
+    writeFileSync(join(braceDir, 'sub', 'Comp.tsx'), ['top', 'DUP_HIT one', 'DUP_HIT two', 'bottom'].join('\n'), 'utf8')
+    writeFileSync(join(braceDir, 'sub', 'Helper.ts'), 'export const hit = "DUP_HIT three"\n', 'utf8')
+    writeFileSync(join(braceDir, 'sub', 'Styles.css'), '/* DUP_HIT ignored */\n', 'utf8')
+    writeFileSync(join(braceDir, 'sub', 'data.bin'), Buffer.from([0x44, 0x55, 0x50, 0x00, 0x01]))
+
+    const globOut = await executeAgentTool('search_files', { path: braceDir, glob: '**/*.{ts,tsx}' }, workDir)
+    expect(globOut).toContain('Comp.tsx')
+    expect(globOut).toContain('Helper.ts')
+    expect(globOut).not.toContain('Styles.css')
+
+    const ctxOut = await executeAgentTool(
+      'search_files',
+      { path: braceDir, glob: '**/*.{ts,tsx}', pattern: 'DUP_HIT', context_lines: 1, max_results: 3 },
+      workDir
+    )
+    expect(ctxOut).toContain('3 match(es)')
+    expect(ctxOut.match(/Comp\.tsx:2:/g)).toHaveLength(1)
+    expect(ctxOut.match(/Comp\.tsx:3:/g)).toHaveLength(1)
+    expect(ctxOut).not.toContain('Styles.css')
+    expect(ctxOut).not.toContain('data.bin')
   })
 })
 

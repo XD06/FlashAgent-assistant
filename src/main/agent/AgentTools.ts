@@ -750,8 +750,25 @@ const MAX_SEARCH_VISITED = 5000
 const MAX_SEARCH_RESULTS = 200
 const MAX_SEARCH_FILE_SIZE = 1024 * 1024
 
-function globToRegExp(glob: string): RegExp {
-  const input = glob.replace(/\\/g, '/')
+function splitBraceAlternatives(body: string): string[] | null {
+  const parts: string[] = []
+  let depth = 0
+  let start = 0
+  for (let i = 0; i < body.length; i++) {
+    const ch = body[i]
+    if (ch === '{') depth += 1
+    else if (ch === '}') depth -= 1
+    else if (ch === ',' && depth === 0) {
+      parts.push(body.slice(start, i))
+      start = i + 1
+    }
+  }
+  if (parts.length === 0) return null
+  parts.push(body.slice(start))
+  return parts
+}
+
+function globSegmentToRegexSource(input: string): string {
   let source = ''
   for (let index = 0; index < input.length; index++) {
     const char = input[index]
@@ -773,9 +790,29 @@ function globToRegExp(glob: string): RegExp {
       source += '/'
       continue
     }
+    if (char === '{') {
+      let depth = 1
+      let end = index + 1
+      for (; end < input.length && depth > 0; end++) {
+        if (input[end] === '{') depth += 1
+        else if (input[end] === '}') depth -= 1
+      }
+      if (depth === 0) {
+        const alts = splitBraceAlternatives(input.slice(index + 1, end - 1))
+        if (alts) {
+          source += `(?:${alts.map(globSegmentToRegexSource).join('|')})`
+          index = end - 1
+          continue
+        }
+      }
+    }
     source += char.replace(/[.+^${}()|[\]\\]/g, '\\$&')
   }
-  return new RegExp(`^${source}$`, 'i')
+  return source
+}
+
+function globToRegExp(glob: string): RegExp {
+  return new RegExp(`^${globSegmentToRegexSource(glob.replace(/\\/g, '/'))}$`, 'i')
 }
 
 async function searchFilesTool(workingDir: string, args: Record<string, unknown>): Promise<string> {
@@ -798,10 +835,11 @@ async function searchFilesTool(workingDir: string, args: Record<string, unknown>
   )
   const contextLines = Math.min(3, Math.max(0, typeof args.context_lines === 'number' ? Math.floor(args.context_lines) : 0))
   const results: string[] = []
+  let matchCount = 0
   let visited = 0
   let skippedSensitive = 0
   const walk = async (dir: string): Promise<void> => {
-    if (results.length >= maxResults || visited >= MAX_SEARCH_VISITED) return
+    if (matchCount >= maxResults || visited >= MAX_SEARCH_VISITED) return
     let entries
     try {
       entries = await fs.readdir(dir, { withFileTypes: true })
@@ -809,7 +847,7 @@ async function searchFilesTool(workingDir: string, args: Record<string, unknown>
       return // unreadable directory
     }
     for (const entry of entries) {
-      if (results.length >= maxResults || visited >= MAX_SEARCH_VISITED) return
+      if (matchCount >= maxResults || visited >= MAX_SEARCH_VISITED) return
       const full = resolve(dir, entry.name)
       if (entry.isDirectory()) {
         if (SEARCH_SKIP_DIRS.has(entry.name) || entry.name.startsWith('.')) continue
@@ -819,6 +857,7 @@ async function searchFilesTool(workingDir: string, args: Record<string, unknown>
         const candidate = globPattern.includes('/') || globPattern.includes('\\') ? relative(root, full).replace(/\\/g, '/') : entry.name
         if (nameRegExp && !nameRegExp.test(candidate)) continue
         if (!pattern) {
+          matchCount += 1
           results.push(full)
           continue
         }
@@ -831,21 +870,33 @@ async function searchFilesTool(workingDir: string, args: Record<string, unknown>
             skippedSensitive += 1
             continue
           }
-          const content = await fs.readFile(full, 'utf8')
-          if (content.includes('\u0000')) continue // binary
+          const buf = await fs.readFile(full)
+          if (buf.includes(0)) continue // binary
+          const content = buf.toString('utf8')
           const lines = content.split(/\r?\n/)
-          for (let i = 0; i < lines.length && results.length < maxResults; i++) {
-            if (pattern.test(lines[i])) {
-              if (contextLines === 0) {
-                results.push(`${full}:${i + 1}: ${lines[i].trim().slice(0, 200)}`)
-              } else {
-                const start = Math.max(0, i - contextLines)
-                const end = Math.min(lines.length - 1, i + contextLines)
-                for (let c = start; c <= end; c++) {
-                  const sep = c === i ? ':' : '-'
-                  results.push(`${full}${sep}${c + 1}${sep} ${lines[c].trim().slice(0, 200)}`)
-                }
+          if (contextLines === 0) {
+            for (let i = 0; i < lines.length && matchCount < maxResults; i++) {
+              if (!pattern.test(lines[i])) continue
+              matchCount += 1
+              results.push(`${full}:${i + 1}: ${lines[i].trim().slice(0, 200)}`)
+            }
+          } else {
+            const matchedIndices: number[] = []
+            for (let i = 0; i < lines.length && matchCount + matchedIndices.length < maxResults; i++) {
+              if (pattern.test(lines[i])) matchedIndices.push(i)
+            }
+            if (!matchedIndices.length) continue
+            matchCount += matchedIndices.length
+            const matchSet = new Set(matchedIndices)
+            let lastPrintedLine = -1
+            for (const m of matchedIndices) {
+              const start = Math.max(lastPrintedLine + 1, m - contextLines)
+              const end = Math.min(lines.length - 1, m + contextLines)
+              for (let c = start; c <= end; c++) {
+                const sep = matchSet.has(c) ? ':' : '-'
+                results.push(`${full}${sep}${c + 1}${sep} ${lines[c].trim().slice(0, 200)}`)
               }
+              if (end > lastPrintedLine) lastPrintedLine = end
             }
           }
         } catch {
@@ -859,8 +910,8 @@ async function searchFilesTool(workingDir: string, args: Record<string, unknown>
     ? `\n(${skippedSensitive} sensitive file(s) skipped; read one with read_file to request approval)`
     : ''
   if (!results.length) return `No matches under ${root}${sensitiveNote}`
-  const capped = results.length >= maxResults ? ` (capped at ${maxResults})` : ''
-  return `${results.length} match(es) under ${root}${capped}:\n${results.join('\n')}${sensitiveNote}`
+  const capped = matchCount >= maxResults ? ` (capped at ${maxResults})` : ''
+  return `${matchCount} match(es) under ${root}${capped}:\n${results.join('\n')}${sensitiveNote}`
 }
 
 /** True when this call must be approved by the user before running. */
