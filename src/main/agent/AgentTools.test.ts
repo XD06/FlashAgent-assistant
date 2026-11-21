@@ -452,6 +452,35 @@ describe('write_file / read_file / list_dir', () => {
     expect(await executeAgentTool('read_file', { path: lfFile }, workDir)).toContain(', LF):')
   })
 
+  it('rejects binary files with NUL bytes instead of flooding context', async () => {
+    const binFile = join(workDir, 'sample.bin')
+    writeFileSync(binFile, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x01, 0x02]))
+    await expect(executeAgentTool('read_file', { path: binFile }, workDir)).rejects.toThrow(/binary file/i)
+  })
+
+  it('streams line slices from files larger than 10 MB without loading everything into memory', async () => {
+    const bigFile = join(workDir, 'large-log.txt')
+    const line1000Text = 'LINE_1000_CROSS_CHUNK_MARKER'
+    const paddingLine = `${'a'.repeat(99)}\n` // 100 bytes per line
+    const prefixLines = Array.from({ length: 999 }, (_, i) => `${`h-${i + 1}`.padEnd(99, '.')}\n`).join('')
+    const tailCount = 104_000 // ~10.5 MB total, line 1000 sits past 8KB probe and 64KB chunk boundary
+    const content = prefixLines + `${line1000Text}\n` + paddingLine.repeat(tailCount)
+    writeFileSync(bigFile, content, 'utf8')
+    try {
+      const output = await executeAgentTool('read_file', { path: bigFile, offset: 999, limit: 3 }, workDir)
+      expect(output).toContain('MB file')
+      expect(output).toContain('999→h-999')
+      expect(output).toContain(`1000→${line1000Text}`)
+      expect(output).toContain('1001→')
+      expect(output).toContain('more lines follow')
+
+      const pastEof = await executeAgentTool('read_file', { path: bigFile, offset: 200_000, limit: 5 }, workDir)
+      expect(pastEof).toContain('past EOF')
+    } finally {
+      rmSync(bigFile, { force: true })
+    }
+  })
+
   it('lists directory entries with a slash suffix for dirs', async () => {
     const output = await executeAgentTool('list_dir', { path: 'nested' }, workDir)
     expect(output).toContain('dir/')
@@ -607,9 +636,13 @@ describe('list_dir tree exploration with max_depth', () => {
     const treeRoot = join(workDir, 'tree-test')
     mkdirSync(join(treeRoot, 'subA', 'nested'), { recursive: true })
     mkdirSync(join(treeRoot, 'subB'), { recursive: true })
+    mkdirSync(join(treeRoot, '.github', 'workflows'), { recursive: true })
+    mkdirSync(join(treeRoot, '.git', 'objects'), { recursive: true })
     writeFileSync(join(treeRoot, 'root.txt'), 'root', 'utf8')
     writeFileSync(join(treeRoot, 'subA', 'a.txt'), 'a', 'utf8')
     writeFileSync(join(treeRoot, 'subA', 'nested', 'deep.txt'), 'deep', 'utf8')
+    writeFileSync(join(treeRoot, '.github', 'workflows', 'ci.yml'), 'name: ci', 'utf8')
+    writeFileSync(join(treeRoot, '.git', 'objects', 'pack'), 'x', 'utf8')
 
     const output = await executeAgentTool('list_dir', { path: treeRoot, max_depth: 3 }, workDir)
     expect(output).toContain('tree max_depth=3')
@@ -619,6 +652,9 @@ describe('list_dir tree exploration with max_depth', () => {
     expect(output).toContain('  a.txt')
     expect(output).toContain('subB/')
     expect(output).toContain('root.txt')
+    expect(output).toContain('.github/')
+    expect(output).toContain('    ci.yml')
+    expect(output).not.toContain('.git/')
   })
 })
 

@@ -72,4 +72,21 @@ describe('validateAgentToolArgs', () => {
   it('lets unknown tool names pass through', () => {
     expect(validateAgentToolArgs('mcp__whatever', {})).toBeNull()
   })
+
+  it('validates todo_list item shape and status enum', () => {
+    expect(validateAgentToolArgs('todo_list', { tasks: [] })).toContain('non-empty array')
+    expect(validateAgentToolArgs('todo_list', { tasks: [{ text: '  ', status: 'pending' }] })).toContain('tasks[0].text')
+    expect(validateAgentToolArgs('todo_list', { tasks: [{ text: 'Do x', status: 'done' }] })).toContain('tasks[0].status')
+    expect(
+      validateAgentToolArgs('todo_list', { tasks: [{ id: '1', text: 'Do x', status: 'in_progress' }] })
+    ).toBeNull()
+  })
+
+  it('rejects no-op edits and non-positive read/command bounds', () => {
+    expect(validateAgentToolArgs('edit_file', { path: 'a.ts', old_text: '', new_text: 'b' })).toContain('must not be empty')
+    expect(validateAgentToolArgs('edit_file', { path: 'a.ts', old_text: 'x', new_text: 'x' })).toContain('identical')
+    expect(validateAgentToolArgs('read_file', { path: 'a.ts', offset: 0 })).toContain('"offset" must be >= 1')
+    expect(validateAgentToolArgs('read_tool_output', { call_id: '   ' })).toContain('non-empty string')
+    expect(validateAgentToolArgs('run_command', { command: 'ls', timeout_seconds: 0 })).toContain('> 0')
+  })
 })

@@ -2,19 +2,36 @@ import { exec, spawn } from 'node:child_process'
 import { existsSync, promises as fs } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, relative, resolve } from 'node:path'
+import { StringDecoder } from 'node:string_decoder'
 import { isWin } from '../platform'
 import type { ToolDefinition } from '../ai/OpenAICompatibleClient'
 import type { AiMessageInput, AskUserAnswer, AskUserOption, AskUserPrompt, CommandShell, TodoItem } from '@shared/types'
 import { MAX_MUTATION_BYTES, mutationTooLargeError } from './mutationLimits'
 
 const MAX_READ_LINES = 2000
-// Reading loads the whole file into a string first — cap the size so the
-// model cannot ask for a multi-GB file and balloon main-process memory.
+// Files <= 10 MB read into memory for full line count; larger files stream
+// sequentially up to the requested offset/limit (bounded by MAX_LARGE_READ_CHARS).
 const MAX_READ_FILE_SIZE = 10 * 1024 * 1024
+const BINARY_PROBE_BYTES = 8192
+const LARGE_READ_CHUNK_BYTES = 64 * 1024
+const MAX_LARGE_READ_CHARS = 256_000
 const MAX_LIST_ENTRIES = 500
 const MAX_COMMAND_OUTPUT = 1_000_000
 const DEFAULT_COMMAND_TIMEOUT_MS = 60_000
 const MAX_COMMAND_TIMEOUT_MS = 300_000
+const TREE_SKIP_DOT_DIRS = new Set([
+  '.git',
+  '.svn',
+  '.hg',
+  '.next',
+  '.nuxt',
+  '.cache',
+  '.turbo',
+  '.venv',
+  '.pytest_cache',
+  '.mypy_cache',
+  '.tox'
+])
 
 // The agent operates on real files by design — safety comes from per-call user
 // approval, not a sandbox. These are only the last-resort guards.
@@ -310,18 +327,120 @@ function asString(value: unknown): string {
   return typeof value === 'string' ? value : ''
 }
 
+function isBinaryBuffer(buf: Buffer): boolean {
+  const len = Math.min(buf.length, BINARY_PROBE_BYTES)
+  for (let i = 0; i < len; i++) {
+    if (buf[i] === 0) return true
+  }
+  return false
+}
+
+async function readLargeTextSlice(
+  filePath: string,
+  fileSize: number,
+  offset: number,
+  limit: number
+): Promise<string> {
+  const fh = await fs.open(filePath, 'r')
+  try {
+    const probe = Buffer.allocUnsafe(Math.min(fileSize, BINARY_PROBE_BYTES))
+    const firstRead = await fh.read(probe, 0, probe.length, 0)
+    const headBuf = probe.subarray(0, firstRead.bytesRead)
+    if (isBinaryBuffer(headBuf)) {
+      throw new Error(`Cannot read binary file (${fileSize} bytes): ${filePath}. Only text files are supported.`)
+    }
+
+    const eol = detectEol(headBuf.toString('utf8'))
+    const decoder = new StringDecoder('utf8')
+    const slice: string[] = []
+    let sliceChars = 0
+    let position = firstRead.bytesRead
+    let pending = decoder.write(headBuf)
+    let lineNo = 0
+    let hasMoreLines = false
+    let stoppedEarly = false
+
+    const pushLine = (line: string): void => {
+      lineNo += 1
+      if (lineNo < offset) return
+      if (slice.length < limit) {
+        if (sliceChars + line.length > MAX_LARGE_READ_CHARS) {
+          const room = Math.max(0, MAX_LARGE_READ_CHARS - sliceChars)
+          slice.push(`${line.slice(0, room)} ...[line truncated at ${MAX_LARGE_READ_CHARS} chars]`)
+          hasMoreLines = true
+          stoppedEarly = true
+          return
+        }
+        slice.push(line)
+        sliceChars += line.length
+        return
+      }
+      hasMoreLines = true
+      stoppedEarly = true
+    }
+
+    const drainCompleteLines = (): void => {
+      const lastLf = pending.lastIndexOf('\n')
+      if (lastLf === -1) return
+      const complete = pending.slice(0, lastLf)
+      pending = pending.slice(lastLf + 1)
+      const parts = complete.split(/\r?\n/)
+      for (const part of parts) {
+        pushLine(part)
+        if (stoppedEarly) return
+      }
+    }
+
+    drainCompleteLines()
+    const chunk = Buffer.allocUnsafe(LARGE_READ_CHUNK_BYTES)
+    while (!stoppedEarly) {
+      if (pending.length > MAX_LARGE_READ_CHARS) {
+        pushLine(pending)
+        pending = ''
+        hasMoreLines = true
+        break
+      }
+      const { bytesRead } = await fh.read(chunk, 0, chunk.length, position)
+      position += bytesRead
+      if (bytesRead === 0) {
+        pending += decoder.end()
+        drainCompleteLines()
+        if (!stoppedEarly && pending.length > 0) {
+          pushLine(pending)
+        }
+        break
+      }
+      pending += decoder.write(chunk.subarray(0, bytesRead))
+      drainCompleteLines()
+    }
+
+    const sizeMb = Math.max(1, Math.round(fileSize / 1024 / 1024))
+    if (slice.length === 0) {
+      return `${filePath} (${lineNo} lines total, ${sizeMb} MB file, ${eol}): offset ${offset} is past EOF.`
+    }
+    const endLine = offset + slice.length - 1
+    const numbered = slice.map((line, i) => `${offset + i}→${line}`).join('\n')
+    const suffix = hasMoreLines ? `\n... (more lines follow; stopped at line ${endLine})` : ''
+    return `${filePath} (lines ${offset}-${endLine}, ${sizeMb} MB file, ${eol}):\n${numbered}${suffix}`
+  } finally {
+    await fh.close()
+  }
+}
+
 async function readFileTool(workingDir: string, args: Record<string, unknown>): Promise<string> {
   const filePath = resolveAgentPath(workingDir, asString(args.path))
   const stat = await fs.stat(filePath)
-  if (stat.size > MAX_READ_FILE_SIZE) {
-    throw new Error(
-      `File is too large to read (${Math.round(stat.size / 1024 / 1024)} MB, limit ${MAX_READ_FILE_SIZE / 1024 / 1024} MB): ${filePath}`
-    )
-  }
-  const raw = await fs.readFile(filePath, 'utf8')
-  const lines = raw.split(/\r?\n/)
   const offset = Math.max(1, typeof args.offset === 'number' ? Math.floor(args.offset) : 1)
   const limit = Math.min(MAX_READ_LINES, Math.max(1, typeof args.limit === 'number' ? Math.floor(args.limit) : MAX_READ_LINES))
+  if (stat.size > MAX_READ_FILE_SIZE) {
+    return readLargeTextSlice(filePath, stat.size, offset, limit)
+  }
+  const buf = await fs.readFile(filePath)
+  if (isBinaryBuffer(buf)) {
+    throw new Error(`Cannot read binary file (${stat.size} bytes): ${filePath}. Only text files are supported.`)
+  }
+  const raw = buf.toString('utf8')
+  const lines = raw.split(/\r?\n/)
   const slice = lines.slice(offset - 1, offset - 1 + limit)
   const numbered = slice.map((line, i) => `${offset + i}→${line}`).join('\n')
   const remaining = lines.length - (offset - 1 + slice.length)
@@ -500,7 +619,7 @@ async function listDirTool(workingDir: string, args: Record<string, unknown>): P
     })
     for (const entry of entries) {
       if (totalCount >= MAX_LIST_ENTRIES) break
-      if (entry.name.startsWith('.') || SEARCH_SKIP_DIRS.has(entry.name)) continue
+      if (TREE_SKIP_DOT_DIRS.has(entry.name) || SEARCH_SKIP_DIRS.has(entry.name)) continue
       totalCount++
       if (entry.isDirectory()) {
         lines.push(`${indent}${entry.name}/`)
