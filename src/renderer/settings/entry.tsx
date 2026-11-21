@@ -1,5 +1,6 @@
 import '../styles.css'
 import React from 'react'
+import { createPortal } from 'react-dom'
 import { createRoot } from 'react-dom/client'
 import { useSettings } from '../useSettings'
 import { Icon } from '../icons'
@@ -605,10 +606,12 @@ function chipMeanings(entry: VocabEntry): string {
 function VocabularySection({
   autoRecord,
   onToggleAutoRecord,
+  modalContainer,
   t
 }: {
   autoRecord: boolean
   onToggleAutoRecord: (autoRecord: boolean) => void
+  modalContainer?: HTMLElement | null
   t: (key: string) => string
 }) {
   const [entries, setEntries] = React.useState<VocabEntry[] | null>(null)
@@ -666,6 +669,56 @@ function VocabularySection({
     entry.word.toLowerCase().includes(search.trim().toLowerCase())
   )
 
+  const detailModal = detail ? (
+    <div className="vocab-modal-backdrop" onClick={() => setDetail(null)}>
+      <div className="vocab-modal" onClick={(event) => event.stopPropagation()}>
+        <div className="vocab-modal__head">
+          <strong>{detail.word}</strong>
+          <button type="button" className="inline-icon-button" onClick={() => setDetail(null)} aria-label="close">
+            <Icon name="x" size={14} />
+          </button>
+        </div>
+        <div className="vocab-modal__body">
+          {detail.phonetics.length > 0 && (
+            <div className="tr-dict__phonetics">
+              {detail.phonetics.map((phonetic) => (
+                <span className="tr-dict__phonetic" key={phonetic.label}>
+                  <span className={`tr-dict__phonetic-tag tr-dict__phonetic-tag--${phonetic.label}`}>{phonetic.label}</span>
+                  <span className="tr-dict__phonetic-text">/{phonetic.phonetic}/</span>
+                  {phonetic.audioUrl && (
+                    <button
+                      type="button"
+                      className="tr-tool-button"
+                      onClick={() => {
+                        const audio = new Audio(phonetic.audioUrl)
+                        void audio.play().catch(() => {})
+                      }}>
+                      <Icon name="volume-2" size={13} />
+                    </button>
+                  )}
+                </span>
+              ))}
+            </div>
+          )}
+          <div className="tr-dict__meanings">
+            {detail.meanings.map((meaning, index) => (
+              <div className="tr-dict__meaning" key={index}>
+                {meaning.partOfSpeech && <span className="tr-dict__pos">{meaning.partOfSpeech}</span>}
+                <span className="tr-dict__means">{meaning.means.join('；')}</span>
+              </div>
+            ))}
+          </div>
+          <ExchangeLines exchange={detail.exchange} t={t} />
+        </div>
+        <div className="vocab-modal__foot">
+          <button type="button" className="danger-text" onClick={() => void removeWord(detail.word)}>
+            {t('vocabDelete')}
+          </button>
+        </div>
+      </div>
+    </div>
+  ) : null
+
   return (
     <div className="settings-stack settings-stack--vocabulary">
       <SettingSection title={t('sectionVocabulary')}>
@@ -711,55 +764,7 @@ function VocabularySection({
         )}
       </SettingSection>
 
-      {detail && (
-        <div className="vocab-modal-backdrop" onClick={() => setDetail(null)}>
-          <div className="vocab-modal" onClick={(event) => event.stopPropagation()}>
-            <div className="vocab-modal__head">
-              <strong>{detail.word}</strong>
-              <button type="button" className="inline-icon-button" onClick={() => setDetail(null)} aria-label="close">
-                <Icon name="x" size={14} />
-              </button>
-            </div>
-            <div className="vocab-modal__body">
-              {detail.phonetics.length > 0 && (
-                <div className="tr-dict__phonetics">
-                  {detail.phonetics.map((phonetic) => (
-                    <span className="tr-dict__phonetic" key={phonetic.label}>
-                      <span className={`tr-dict__phonetic-tag tr-dict__phonetic-tag--${phonetic.label}`}>{phonetic.label}</span>
-                      <span className="tr-dict__phonetic-text">/{phonetic.phonetic}/</span>
-                      {phonetic.audioUrl && (
-                        <button
-                          type="button"
-                          className="tr-tool-button"
-                          onClick={() => {
-                            const audio = new Audio(phonetic.audioUrl)
-                            void audio.play().catch(() => {})
-                          }}>
-                          <Icon name="volume-2" size={13} />
-                        </button>
-                      )}
-                    </span>
-                  ))}
-                </div>
-              )}
-              <div className="tr-dict__meanings">
-                {detail.meanings.map((meaning, index) => (
-                  <div className="tr-dict__meaning" key={index}>
-                    {meaning.partOfSpeech && <span className="tr-dict__pos">{meaning.partOfSpeech}</span>}
-                    <span className="tr-dict__means">{meaning.means.join('；')}</span>
-                  </div>
-                ))}
-              </div>
-              <ExchangeLines exchange={detail.exchange} t={t} />
-            </div>
-            <div className="vocab-modal__foot">
-              <button type="button" className="danger-text" onClick={() => void removeWord(detail.word)}>
-                {t('vocabDelete')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {detailModal && (modalContainer ? createPortal(detailModal, modalContainer) : detailModal)}
     </div>
   )
 }
@@ -1013,6 +1018,7 @@ function SettingsApp() {
   const [proxyStatus, setProxyStatus] = React.useState<string | null>(null)
   const [ocrEngine, setOcrEngine] = React.useState<OcrEngineStatusPayload | null>(null)
   const [ocrEngineError, setOcrEngineError] = React.useState<string | null>(null)
+  const [mainHost, setMainHost] = React.useState<HTMLDivElement | null>(null)
   const t = getTranslator(settings.language)
   useThemeMode(settings)
   useAppearance(settings)
@@ -1924,6 +1930,7 @@ function SettingsApp() {
         <VocabularySection
           autoRecord={settings.vocabulary.autoRecord}
           onToggleAutoRecord={(autoRecord) => update({ vocabulary: { autoRecord } })}
+          modalContainer={mainHost}
           t={t}
         />
       )
@@ -2068,7 +2075,7 @@ function SettingsApp() {
           t={t}
         />
 
-        <div className="settings-main">
+        <div className="settings-main" ref={setMainHost}>
           <section className="settings-content">
             <div className="settings-content-inner">
               {!accessibilityTrusted && (
