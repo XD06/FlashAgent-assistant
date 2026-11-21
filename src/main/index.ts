@@ -9,9 +9,9 @@ import { defaultPrimaryColor } from '@shared/defaults'
 import { deriveThemeCssVars, normalizeSystemAccentColor, type ResolvedThemeMode } from '@shared/theme'
 import { IPC } from '@shared/ipc'
 import { APP_ICON_DATA_URL, APP_TRAY_DATA_URL } from '@shared/brand'
-import type { AgentToolEvent, AiStreamRequest, AiSummarizeRequest, AiSummarizeResult, AskUserAnswer, OpenNewWindowOptions, SettingsPatch, TopicMetaPatch } from '@shared/types'
+import type { AgentToolEvent, AiJudgeCompactRequest, AiJudgeCompactResult, AiStreamRequest, AiSummarizeRequest, AiSummarizeResult, AskUserAnswer, OpenNewWindowOptions, SettingsPatch, TopicMetaPatch } from '@shared/types'
 import { listModels, streamChatMessages, testModel, type ProviderFetch } from './ai/OpenAICompatibleClient'
-import { resolveAuxModelCandidates, summarizeWithFallback } from './ai/auxModelFallback'
+import { judgeCompactionWithFallback, resolveAuxModelCandidates, summarizeWithFallback } from './ai/auxModelFallback'
 import { extractPartialProperty, parseStreamingToolArgs } from './ai/streamingArgsParser'
 import { formatSearchContext, searchWithFallback, webSearchTool } from './ai/WebSearch'
 import { agentToolDefinitionsForShell, assessCommandRisk, classifyToolConcurrency, executeAgentTool, findLatestChecklistState, formatAskUserResult, formatChecklistAnchor, isReadOnlyTool, parseAskUserArgs, parseTodoTasks, requiresApproval, resolveCommandShell, restoreSnapshot, shellSyntaxLabel, snapshotForMutation, summarizeToolCall } from './agent/AgentTools'
@@ -1351,6 +1351,7 @@ function registerIpc(): void {
         request.reasoning ?? provider.reasoning,
         {
           fetcher: providerFetch,
+          workingDir: agentEnabled ? workingDir : undefined,
           tools: tools.length ? tools : undefined,
           isReadOnlyTool: (name) => isReadOnlyTool(name, mcpManager.getReadOnlyHint(name)),
           getToolConcurrency: (name, args) => classifyToolConcurrency(name, args, mcpManager.getReadOnlyHint(name)),
@@ -1418,6 +1419,36 @@ function registerIpc(): void {
           onUsage: (usage) => sendChunk({ type: 'usage', usage }),
           onContextMeasured: (context) => sendChunk({ type: 'context', context: { ...context, taskRoundId: request.taskRoundId } }),
           shadowBudget: { contextWindowTokens: settings.contextWindowTokens },
+          ...(agentEnabled || mcpTools.length
+            ? {
+                onInLoopCompact: async ({ conversationText, signal }) => {
+                  const liveSettings = getSettings()
+                  const candidates = resolveAuxModelCandidates(liveSettings.compressModel, provider.model, provider.model)
+                  return summarizeWithFallback({
+                    baseProvider: provider,
+                    candidates,
+                    text: conversationText,
+                    signal,
+                    fetcher: providerFetch
+                  })
+                },
+                onInLoopCompacted: ({ count, usedModel, fellBack, degraded }) => {
+                  const zh = getSettings().language === 'zh-CN'
+                  const text = degraded
+                    ? zh
+                      ? '任务中已清理较早工具输出以维持上下文预算'
+                      : 'Trimmed earlier tool outputs mid-task to stay within context budget'
+                    : fellBack && usedModel
+                      ? zh
+                        ? `任务中自动压缩了早期工具轮次（第 ${count} 次，压缩模型不可用已切换 ${usedModel}）`
+                        : `Auto-compacted earlier rounds mid-task (#${count}, fell back to ${usedModel})`
+                      : zh
+                        ? `任务中自动压缩了早期工具轮次（第 ${count} 次）`
+                        : `Auto-compacted earlier rounds mid-task (#${count})`
+                  sendChunk({ type: 'notice', text })
+                }
+              }
+            : {}),
           onToolStreaming: (streamTool) => {
             try {
               if (streamTool.name === webSearchTool.name) {
@@ -1636,6 +1667,40 @@ function registerIpc(): void {
         )
       }
       return result
+    } finally {
+      if (requestId) abortControllers.delete(requestId)
+      endStream(event.sender.id)
+      event.sender.removeListener('destroyed', onSenderDestroyed)
+    }
+  })
+
+  // Lightweight pre-send compaction gatekeeper at soft watermarks / milestones.
+  // Always degrades silently to 'defer' on non-abort failure so messaging never stalls.
+  ipcMain.handle(IPC.AiJudgeCompact, async (event, payload: AiJudgeCompactRequest): Promise<AiJudgeCompactResult> => {
+    if (!payload || !Array.isArray(payload.candidates) || payload.candidates.length === 0) {
+      return { decision: 'defer', keepRoundIndexes: [] }
+    }
+    const settings = getSettings()
+    const base = resolveProvider(settings, payload.providerTemplateId)
+    const chatModel =
+      (typeof payload.model === 'string' && payload.model.trim()) || base.model
+    const candidates = resolveAuxModelCandidates(settings.compressModel, chatModel, base.model)
+
+    const controller = new AbortController()
+    const requestId = typeof payload.requestId === 'string' && payload.requestId.trim() ? payload.requestId.trim() : null
+    if (requestId) abortControllers.set(requestId, controller)
+    const onSenderDestroyed = (): void => controller.abort()
+    event.sender.once('destroyed', onSenderDestroyed)
+
+    try {
+      beginStream(event.sender.id)
+      return await judgeCompactionWithFallback({
+        baseProvider: base,
+        candidates,
+        request: payload,
+        signal: controller.signal,
+        fetcher: providerFetch
+      })
     } finally {
       if (requestId) abortControllers.delete(requestId)
       endStream(event.sender.id)

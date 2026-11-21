@@ -29,6 +29,7 @@ export const IPC = {
   AiListModels: 'ai:list-models',
   AiTestModel: 'ai:test-model',
   AiSummarize: 'ai:summarize',
+  AiJudgeCompact: 'ai:judge-compact',
   AiNameTopic: 'ai:name-topic',
 
   AgentPickWorkingDir: 'agent:pick-working-dir',

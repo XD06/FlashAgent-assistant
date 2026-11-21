@@ -1439,6 +1439,13 @@ function SettingsApp() {
                 onCommit={(contextWindowTokens) => update({ contextWindowTokens })}
               />
             </SettingRow>
+            <SettingRow title={t('smartAutoCompact')} description={t('smartAutoCompactDesc')}>
+              <Toggle
+                checked={settings.smartAutoCompact}
+                label={t('smartAutoCompact')}
+                onChange={(smartAutoCompact) => update({ smartAutoCompact })}
+              />
+            </SettingRow>
           </SettingSection>
 
           <SettingSection title={t('ocrGroup')}>

@@ -2,28 +2,36 @@ import { describe, expect, it } from 'vitest'
 import type { AiMessageInput } from '@shared/types'
 import {
   CJK_TOKENS_PER_CHAR,
+  COMPACT_KEEP_TAIL_RATIO,
   COMPACT_TRIGGER_TOKENS,
   CONTEXT_WINDOW_TOKENS,
+  INITIAL_TASK_ANCHOR_MAX_CHARS,
   KEEP_RECENT_TOKEN_RATIO,
   MAX_SEND_CHARS,
   MAX_SEND_MESSAGES,
+  SOFT_COMPACT_TRIGGER_RATIO,
+  buildRecapHeadMessage,
   computeTaskRoundKeepStart,
   estimateEffectiveTokens,
   estimateTokensFromChars,
   estimateTokensFromText,
+  evaluatePreSendCompaction,
   groupTaskRounds,
   messagePayloadChars,
   messagePayloadTokens,
   sendCharCapForWindow,
   sendMessageCapForWindow,
   shouldCompact,
+  softCompactTriggerTokens,
   truncateForSend
 } from './compaction'
 
 describe('compaction constants', () => {
-  it('trigger line is 95% of the 200k attention budget', () => {
+  it('hard trigger line is 85% and soft trigger line is 65% of the 200k attention budget', () => {
     expect(CONTEXT_WINDOW_TOKENS).toBe(200_000)
-    expect(COMPACT_TRIGGER_TOKENS).toBe(190_000)
+    expect(COMPACT_TRIGGER_TOKENS).toBe(170_000)
+    expect(softCompactTriggerTokens(200_000)).toBe(Math.round(200_000 * SOFT_COMPACT_TRIGGER_RATIO))
+    expect(COMPACT_KEEP_TAIL_RATIO).toBe(0.35)
   })
 })
 
@@ -66,8 +74,8 @@ describe('shouldCompact', () => {
   })
 
   it('uses the configured attention budget for a replay-token estimate', () => {
-    expect(shouldCompact({ promptTokens: null, staleEntries: 2, sendTokens: 120_000 }, 128_000)).toBe(false)
-    expect(shouldCompact({ promptTokens: null, staleEntries: 2, sendTokens: 121_600 }, 128_000)).toBe(true)
+    expect(shouldCompact({ promptTokens: null, staleEntries: 2, sendTokens: 108_799 }, 128_000)).toBe(false)
+    expect(shouldCompact({ promptTokens: null, staleEntries: 2, sendTokens: 108_800 }, 128_000)).toBe(true)
     expect(shouldCompact({ promptTokens: null, staleEntries: 2, sendTokens: 120_000 }, 1_000_000)).toBe(false)
   })
 })
@@ -276,5 +284,132 @@ describe('estimateEffectiveTokens', () => {
 
   it('zero trailing tokens leaves usage untouched', () => {
     expect(estimateEffectiveTokens(42, 0)).toBe(42)
+  })
+})
+
+describe('buildRecapHeadMessage', () => {
+  it('prepends immutable initial task anchor when provided and appends resume gate', () => {
+    const out = buildRecapHeadMessage({
+      summary: '# 复工文档\n## 5. 当前任务与下一步\n继续修改测试',
+      initialTaskText: '修复登录 500 异常并补回归单测',
+      isZh: true
+    })
+    expect(out).toContain('[原始任务锚点（请勿偏离）]')
+    expect(out).toContain('修复登录 500 异常并补回归单测')
+    expect(out).toContain('# 复工文档')
+    expect(out).toContain('[SYSTEM RESUME GATE]')
+  })
+
+  it('caps oversized initial task anchors and omits the anchor block when null', () => {
+    const huge = 'a'.repeat(INITIAL_TASK_ANCHOR_MAX_CHARS + 500)
+    const withHuge = buildRecapHeadMessage({ summary: 'SUMMARY', initialTaskText: huge, isZh: false })
+    expect(withHuge).toContain('[Initial Task Anchor (immutable)]')
+    expect(withHuge).toContain(`${'a'.repeat(INITIAL_TASK_ANCHOR_MAX_CHARS)}…`)
+
+    const withoutAnchor = buildRecapHeadMessage({ summary: 'SUMMARY', initialTaskText: null, isZh: false })
+    expect(withoutAnchor).not.toContain('Initial Task Anchor')
+    expect(withoutAnchor).toContain('[SYSTEM RESUME GATE]')
+  })
+})
+
+describe('evaluatePreSendCompaction', () => {
+  it('fires hard compaction at 85% regardless of smartAutoCompact or defer cooldown', () => {
+    const res = evaluatePreSendCompaction({
+      promptTokens: 85_000,
+      sendTokens: 80_000,
+      toolOutputTokens: 0,
+      staleEntries: 4,
+      windowTokens: 100_000,
+      smartAutoCompact: false,
+      hasTodoMilestone: false,
+      deferState: { deferredAtTokens: 84_000, deferredAtTurns: 10 },
+      currentTurnsCount: 10
+    })
+    expect(res).toEqual({ action: 'hard', effectiveTokens: 85_000 })
+  })
+
+  it('requests smart judgment at >=65% soft watermark, >=40% todo milestone, or >=40% tool bloat', () => {
+    expect(
+      evaluatePreSendCompaction({
+        promptTokens: 65_000,
+        sendTokens: 60_000,
+        toolOutputTokens: 1_000,
+        staleEntries: 4,
+        windowTokens: 100_000,
+        smartAutoCompact: true,
+        hasTodoMilestone: false,
+        deferState: null,
+        currentTurnsCount: 8
+      })
+    ).toEqual({ action: 'judge', effectiveTokens: 65_000, phaseHint: 'soft-budget' })
+
+    expect(
+      evaluatePreSendCompaction({
+        promptTokens: 42_000,
+        sendTokens: 42_000,
+        toolOutputTokens: 1_000,
+        staleEntries: 4,
+        windowTokens: 100_000,
+        smartAutoCompact: true,
+        hasTodoMilestone: true,
+        deferState: null,
+        currentTurnsCount: 8
+      })
+    ).toEqual({ action: 'judge', effectiveTokens: 42_000, phaseHint: 'todo-milestone' })
+
+    expect(
+      evaluatePreSendCompaction({
+        promptTokens: 42_000,
+        sendTokens: 42_000,
+        toolOutputTokens: 25_000,
+        staleEntries: 4,
+        windowTokens: 100_000,
+        smartAutoCompact: true,
+        hasTodoMilestone: false,
+        deferState: null,
+        currentTurnsCount: 8
+      })
+    ).toEqual({ action: 'judge', effectiveTokens: 42_000, phaseHint: 'tool-bloat' })
+  })
+
+  it('enforces defer cooldown until +10% context growth or +4 turns, and skips soft checks when disabled', () => {
+    const cooled = evaluatePreSendCompaction({
+      promptTokens: 70_000,
+      sendTokens: 70_000,
+      toolOutputTokens: 0,
+      staleEntries: 4,
+      windowTokens: 100_000,
+      smartAutoCompact: true,
+      hasTodoMilestone: false,
+      deferState: { deferredAtTokens: 65_000, deferredAtTurns: 8 },
+      currentTurnsCount: 10
+    })
+    expect(cooled).toEqual({ action: 'none', effectiveTokens: 70_000 })
+
+    const afterGrowth = evaluatePreSendCompaction({
+      promptTokens: 76_000,
+      sendTokens: 76_000,
+      toolOutputTokens: 0,
+      staleEntries: 4,
+      windowTokens: 100_000,
+      smartAutoCompact: true,
+      hasTodoMilestone: false,
+      deferState: { deferredAtTokens: 65_000, deferredAtTurns: 8 },
+      currentTurnsCount: 10
+    })
+    expect(afterGrowth).toEqual({ action: 'judge', effectiveTokens: 76_000, phaseHint: 'soft-budget' })
+
+    const disabled = evaluatePreSendCompaction({
+      promptTokens: 76_000,
+      sendTokens: 76_000,
+      toolOutputTokens: 50_000,
+      staleEntries: 4,
+      windowTokens: 100_000,
+      smartAutoCompact: false,
+      hasTodoMilestone: true,
+      deferState: null,
+      currentTurnsCount: 12
+    })
+    expect(disabled).toEqual({ action: 'none', effectiveTokens: 76_000 })
   })
 })

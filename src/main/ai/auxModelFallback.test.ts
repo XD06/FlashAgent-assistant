@@ -3,6 +3,8 @@ import type { ProviderSettings } from '@shared/types'
 import type { streamChatMessages } from './OpenAICompatibleClient'
 import {
   isImmediateFallbackError,
+  judgeCompactionWithFallback,
+  parseCompactionJudgment,
   resolveAuxModelCandidates,
   runWithModelFallback,
   summarizeWithFallback
@@ -252,5 +254,99 @@ describe('summarizeWithFallback', () => {
       })
     ).rejects.toThrow('gpt-4o down')
     expect(streamFn).toHaveBeenCalledTimes(3)
+  })
+})
+
+describe('parseCompactionJudgment', () => {
+  it('extracts JSON wrapped in fences and filters keepRoundIndexes against the allowlist', () => {
+    const parsed = parseCompactionJudgment(
+      '```json\n{"decision":"compact_now","keepRoundIndexes":[1,99,2,2,0],"reason":"phase done"}\n```',
+      new Set([0, 1, 2, 3])
+    )
+    expect(parsed).toEqual({
+      decision: 'compact_now',
+      keepRoundIndexes: [1, 2],
+      reason: 'phase done'
+    })
+  })
+
+  it('rejects invalid decisions or non-JSON responses', () => {
+    expect(() => parseCompactionJudgment('{"decision":"maybe"}', new Set([0]))).toThrow('Invalid compaction decision')
+    expect(() => parseCompactionJudgment('plain text response', new Set([0]))).toThrow('missing JSON object')
+  })
+})
+
+describe('judgeCompactionWithFallback', () => {
+  const sampleReq = {
+    usageRatio: 0.68,
+    phaseHint: 'soft-budget',
+    candidates: [
+      { roundIndex: 0, summary: 'U: inspect codebase' },
+      { roundIndex: 1, summary: 'U: implement helper' }
+    ],
+    nextUserMessage: 'now write tests'
+  }
+
+  it('falls back to chatModel when preferred compressModel errors or returns malformed JSON', async () => {
+    const called: string[] = []
+    const streamFn = vi.fn(async (provider, _msgs, _sys, _signal, onDelta) => {
+      called.push(provider.model)
+      if (provider.model === 'mini-judge') {
+        onDelta({ content: 'not valid json' })
+        return
+      }
+      onDelta({ content: '{"decision":"compact_now","keepRoundIndexes":[1],"reason":"switching to tests"}' })
+    }) as unknown as typeof streamChatMessages
+
+    const result = await judgeCompactionWithFallback({
+      baseProvider,
+      candidates: ['mini-judge', 'gpt-4o'],
+      request: sampleReq,
+      streamFn
+    })
+
+    expect(called).toEqual(['mini-judge', 'gpt-4o'])
+    expect(result).toEqual({
+      decision: 'compact_now',
+      keepRoundIndexes: [1],
+      reason: 'switching to tests',
+      usedModel: 'gpt-4o',
+      fellBack: true
+    })
+  })
+
+  it('degrades silently to defer when all models fail without blocking send', async () => {
+    const streamFn = vi.fn(async () => {
+      throw new Error('Provider request failed (503): down')
+    }) as unknown as typeof streamChatMessages
+
+    const result = await judgeCompactionWithFallback({
+      baseProvider,
+      candidates: ['mini-judge', 'gpt-4o'],
+      request: sampleReq,
+      streamFn
+    })
+
+    expect(result.decision).toBe('defer')
+    expect(result.keepRoundIndexes).toEqual([])
+  })
+
+  it('rethrows AbortError immediately on caller abort without falling back', async () => {
+    const controller = new AbortController()
+    const streamFn = vi.fn(async (_provider, _msgs, _sys, signal) => {
+      controller.abort()
+      throw signal.reason ?? new DOMException('Aborted', 'AbortError')
+    }) as unknown as typeof streamChatMessages
+
+    await expect(
+      judgeCompactionWithFallback({
+        baseProvider,
+        candidates: ['mini-judge', 'gpt-4o'],
+        request: sampleReq,
+        signal: controller.signal,
+        streamFn
+      })
+    ).rejects.toMatchObject({ name: 'AbortError' })
+    expect(streamFn).toHaveBeenCalledTimes(1)
   })
 })

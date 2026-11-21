@@ -13,15 +13,29 @@ export { CJK_TOKENS_PER_CHAR, estimateTokensFromChars, estimateTokensFromText } 
 // `contextWindowTokens` setting; this constant is the default.
 export const CONTEXT_WINDOW_TOKENS = 200_000
 
-/** Inter-turn trigger line: once the latest request's prompt reached this
- * share of the attention budget, compress before the next send. */
-export const COMPACT_TRIGGER_RATIO = 0.95
+/** Inter-turn hard trigger line: once the latest request's prompt reached this
+ * share of the attention budget, compress unconditionally before the next send. */
+export const COMPACT_TRIGGER_RATIO = 0.85
 export const COMPACT_TRIGGER_TOKENS = Math.round(CONTEXT_WINDOW_TOKENS * COMPACT_TRIGGER_RATIO)
+/** Soft trigger line where smart judgment evaluates whether to compact at a clean phase boundary. */
+export const SOFT_COMPACT_TRIGGER_RATIO = 0.65
+/** Minimum context ratio required before phase milestones / tool bloat invoke the smart judge. */
+export const PHASE_COMPACT_MIN_RATIO = 0.40
+/** Tail token budget kept verbatim when a compaction split occurs (leaves ~35% live context after compaction). */
+export const COMPACT_KEEP_TAIL_RATIO = 0.35
+export const DEFER_COOLDOWN_GROWTH_RATIO = 0.10
+export const DEFER_COOLDOWN_MIN_TURNS = 4
 
 /** Trigger line for a (possibly user-configured) attention budget. */
 export function compactTriggerTokens(windowTokens?: number): number {
   const window = windowTokens && windowTokens > 0 ? windowTokens : CONTEXT_WINDOW_TOKENS
   return Math.round(window * COMPACT_TRIGGER_RATIO)
+}
+
+/** Soft trigger line for smart pre-send judgment. */
+export function softCompactTriggerTokens(windowTokens?: number): number {
+  const window = windowTokens && windowTokens > 0 ? windowTokens : CONTEXT_WINDOW_TOKENS
+  return Math.round(window * SOFT_COMPACT_TRIGGER_RATIO)
 }
 
 // Send-window layout (see ChatMode for how the zones are built):
@@ -237,11 +251,12 @@ export function groupTaskRounds(entries: TaskRoundTokenInput[]): TaskRoundRange[
 export function computeTaskRoundKeepStart(
   entries: TaskRoundTokenInput[],
   windowTokens?: number,
-  maxKeptTurnEntries?: number
+  maxKeptTurnEntries?: number,
+  keepRatio = KEEP_RECENT_TOKEN_RATIO
 ): number {
   if (!entries.length) return 0
   const window = windowTokens && windowTokens > 0 ? windowTokens : CONTEXT_WINDOW_TOKENS
-  const budget = Math.round(window * KEEP_RECENT_TOKEN_RATIO)
+  const budget = Math.round(window * keepRatio)
   const maxEntries =
     maxKeptTurnEntries === undefined ? Number.POSITIVE_INFINITY : Math.max(1, Math.floor(maxKeptTurnEntries))
   const rounds = groupTaskRounds(entries)
@@ -261,6 +276,43 @@ export function computeTaskRoundKeepStart(
   return keepStart
 }
 
+export const INITIAL_TASK_ANCHOR_MAX_CHARS = 2_000
+
+/**
+ * Assemble the pinned leading message for a compacted conversation:
+ * optional verbatim initial task anchor (when the original first prompt was
+ * compressed out) + structured recap document + resume gate instruction.
+ */
+export function buildRecapHeadMessage(options: {
+  summary: string
+  initialTaskText?: string | null
+  isZh: boolean
+}): string {
+  const { summary, initialTaskText, isZh } = options
+  const parts: string[] = []
+  const trimmedInitial = initialTaskText?.trim() ?? ''
+  if (trimmedInitial) {
+    const anchorText =
+      trimmedInitial.length > INITIAL_TASK_ANCHOR_MAX_CHARS
+        ? `${trimmedInitial.slice(0, INITIAL_TASK_ANCHOR_MAX_CHARS)}…`
+        : trimmedInitial
+    parts.push(
+      isZh
+        ? `[原始任务锚点（请勿偏离）]\n${anchorText}`
+        : `[Initial Task Anchor (immutable)]\n${anchorText}`
+    )
+  }
+  parts.push(
+    `${isZh ? '（前情摘要，由较早的对话压缩而来）' : '(Recap compressed from earlier conversation)'}\n${summary}`
+  )
+  parts.push(
+    isZh
+      ? '[SYSTEM RESUME GATE] 上下文已压缩完毕。请严格沿着「## 5. 当前任务与下一步」继续推进，不要重复已完成或已排查无关的读取/检索，也不要重试「## 4. 失败路径台账」中已失败的方案。'
+      : '[SYSTEM RESUME GATE] Context compacted successfully. Resume directly from "## 5. 当前任务与下一步". Do not repeat completed or ruled-out exploration, and do not retry approaches recorded in "## 4. 失败路径台账".'
+  )
+  return parts.join('\n\n')
+}
+
 /** Hybrid context size: the provider's last real usage report plus a rough
  * estimate of everything it has not seen yet (turns appended after the
  * report and the message about to be sent, pre-estimated by the caller —
@@ -270,4 +322,77 @@ export function computeTaskRoundKeepStart(
 export function estimateEffectiveTokens(usageTokens: number | null, trailingTokens: number): number | null {
   if (usageTokens === null) return null
   return usageTokens + Math.max(0, trailingTokens)
+}
+
+export interface CompactDeferState {
+  deferredAtTokens: number
+  deferredAtTurns: number
+}
+
+export type PreSendCompactPhaseHint = 'soft-budget' | 'tool-bloat' | 'todo-milestone'
+
+export interface EvaluatePreSendCompactionInput {
+  promptTokens: number | null
+  sendTokens: number
+  toolOutputTokens: number
+  staleEntries: number
+  windowTokens?: number
+  smartAutoCompact: boolean
+  hasTodoMilestone: boolean
+  deferState: CompactDeferState | null
+  currentTurnsCount: number
+}
+
+export type PreSendCompactionEvaluation =
+  | { action: 'none'; effectiveTokens: number }
+  | { action: 'hard'; effectiveTokens: number }
+  | { action: 'judge'; effectiveTokens: number; phaseHint: PreSendCompactPhaseHint }
+
+/**
+ * Dual-watermark pre-send compaction classifier:
+ * - >= 85% hard watermark -> compress unconditionally ('hard').
+ * - >= 65% soft watermark, or >= 40% with phase milestone / >50% tool bloat -> ask smart judge ('judge'),
+ *   subject to cooldown after a prior 'defer'.
+ */
+export function evaluatePreSendCompaction(
+  input: EvaluatePreSendCompactionInput
+): PreSendCompactionEvaluation {
+  const effectiveTokens = Math.max(input.promptTokens ?? 0, input.sendTokens)
+  if (input.staleEntries <= 0) {
+    return { action: 'none', effectiveTokens }
+  }
+  const window = input.windowTokens && input.windowTokens > 0 ? input.windowTokens : CONTEXT_WINDOW_TOKENS
+  if (effectiveTokens >= compactTriggerTokens(window)) {
+    return { action: 'hard', effectiveTokens }
+  }
+  if (!input.smartAutoCompact) {
+    return { action: 'none', effectiveTokens }
+  }
+
+  let phaseHint: PreSendCompactPhaseHint | null = null
+  const phaseFloor = Math.round(window * PHASE_COMPACT_MIN_RATIO)
+  if (effectiveTokens >= softCompactTriggerTokens(window)) {
+    phaseHint = 'soft-budget'
+  } else if (effectiveTokens >= phaseFloor) {
+    if (input.hasTodoMilestone) {
+      phaseHint = 'todo-milestone'
+    } else if (input.sendTokens > 0 && input.toolOutputTokens / input.sendTokens >= 0.5) {
+      phaseHint = 'tool-bloat'
+    }
+  }
+
+  if (!phaseHint) {
+    return { action: 'none', effectiveTokens }
+  }
+
+  if (input.deferState) {
+    const tokenGrowthNeeded = Math.round(window * DEFER_COOLDOWN_GROWTH_RATIO)
+    const cooledByTokens = effectiveTokens >= input.deferState.deferredAtTokens + tokenGrowthNeeded
+    const cooledByTurns = input.currentTurnsCount >= input.deferState.deferredAtTurns + DEFER_COOLDOWN_MIN_TURNS
+    if (!cooledByTokens && !cooledByTurns) {
+      return { action: 'none', effectiveTokens }
+    }
+  }
+
+  return { action: 'judge', effectiveTokens, phaseHint }
 }

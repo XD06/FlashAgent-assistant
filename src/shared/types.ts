@@ -176,9 +176,11 @@ export interface AppSettings {
   proxyUrl: string
   /** Model used to compress long chat history. Empty = current chat model. */
   compressModel: string
-  /** Chat context attention budget in tokens; compression triggers at 95%.
-   * Set to match the context window of the model in use. */
+  /** Chat context attention budget in tokens; hard compaction triggers at 85%
+   * (soft smart check starts at 65% when smartAutoCompact is enabled). */
   contextWindowTokens: number
+  /** Enable smart pre-send compaction check at soft watermark / task boundaries. */
+  smartAutoCompact: boolean
   /** Model used for screenshot AI vision. Empty = current chat model. */
   visionModel: string
   /** Engine used by the screenshot "copy text" action (see OcrEngineId). */
@@ -349,8 +351,9 @@ export interface AgentToolEvent {
 export interface AiChunkPayload {
   requestId: string
   /** 'injected' confirms a queued user note was delivered into the running
-   * tool loop — `text` carries the note verbatim. */
-  type: 'delta' | 'done' | 'error' | 'status' | 'reasoning' | 'tool' | 'injected' | 'usage' | 'context'
+   * tool loop — `text` carries the note verbatim. 'notice' surfaces transient
+   * loop-level notices (e.g. mid-run context compaction) without touching reply text. */
+  type: 'delta' | 'done' | 'error' | 'status' | 'reasoning' | 'tool' | 'injected' | 'usage' | 'context' | 'notice'
   text?: string
   reasoning?: string
   error?: string
@@ -519,4 +522,28 @@ export interface AiSummarizeResult {
   usedModel: string
   fellBack: boolean
   fallbackReason?: string
+}
+
+export interface AiJudgeCompactRoundDigest {
+  roundIndex: number
+  summary: string
+}
+
+export interface AiJudgeCompactRequest {
+  requestId?: string
+  providerTemplateId?: string
+  model?: string
+  usageRatio: number
+  phaseHint: string
+  todoProgress?: string
+  candidates: AiJudgeCompactRoundDigest[]
+  nextUserMessage: string
+}
+
+export interface AiJudgeCompactResult {
+  decision: 'compact_now' | 'defer'
+  keepRoundIndexes: number[]
+  reason?: string
+  usedModel?: string
+  fellBack?: boolean
 }

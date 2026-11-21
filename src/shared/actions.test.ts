@@ -451,4 +451,10 @@ describe('multi-theme settings normalization', () => {
     expect(normalizeSettings({ chatColorMode: 'theme' }).chatColorMode).toBe('theme')
     expect(normalizeSettings({ chatColorMode: 'minimal' }).chatColorMode).toBe('minimal')
   })
+
+  it('normalizes smartAutoCompact boolean and falls back to default on invalid values', () => {
+    expect(normalizeSettings({}).smartAutoCompact).toBe(true)
+    expect(normalizeSettings({ smartAutoCompact: false }).smartAutoCompact).toBe(false)
+    expect(normalizeSettings({ smartAutoCompact: 'yes' as never }).smartAutoCompact).toBe(true)
+  })
 })

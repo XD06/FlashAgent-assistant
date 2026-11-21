@@ -125,6 +125,7 @@ export const defaultSettings: AppSettings = {
   proxyUrl: '',
   compressModel: '',
   contextWindowTokens: 200_000,
+  smartAutoCompact: true,
   visionModel: '',
   ocrEngine: 'system',
   agentFullAccess: false,

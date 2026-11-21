@@ -149,6 +149,10 @@ export function mergeSettings(current: AppSettings, patch: SettingsPatch): AppSe
       if (raw === 128_000) return defaultSettings.contextWindowTokens
       return clampInt(raw, 4000, 2_000_000, defaultSettings.contextWindowTokens)
     })(),
+    smartAutoCompact:
+      typeof (rest.smartAutoCompact ?? current.smartAutoCompact) === 'boolean'
+        ? Boolean(rest.smartAutoCompact ?? current.smartAutoCompact)
+        : defaultSettings.smartAutoCompact,
     autoLaunch: typeof (rest.autoLaunch ?? current.autoLaunch) === 'boolean' ? (rest.autoLaunch ?? current.autoLaunch) : false,
     provider: nextProvider,
     providerTemplates: nextProviderTemplates,

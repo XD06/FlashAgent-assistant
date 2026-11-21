@@ -35,15 +35,19 @@ import { TodoListPill } from './TodoListPill'
 import { renderTerminalText, highlightLineNumbers } from './ansi'
 import { buildToolTrace, TOOL_TRACE_OUTPUT_PER_CALL } from './toolTrace'
 import {
+  COMPACT_KEEP_TAIL_RATIO,
+  buildRecapHeadMessage,
   compactTriggerTokens,
   computeTaskRoundKeepStart,
   estimateEffectiveTokens,
   estimateTokensFromChars,
   estimateTokensFromText,
+  evaluatePreSendCompaction,
+  groupTaskRounds,
   messagePayloadTokens,
   sendMessageCapForWindow,
-  shouldCompact,
-  truncateForSend
+  truncateForSend,
+  type CompactDeferState
 } from './compaction'
 import { mergeRecapDoc } from '@shared/recapDoc'
 import {
@@ -287,12 +291,41 @@ function estimateTurnTokens(turn: ChatTurn): number {
 /** Keep full evidence for complete recent user task rounds. The message cap
  * is a transport safety limit, not a normal "keep N turns" policy: it only
  * reserves room for the recap head and the user message being sent. */
-function computeChatTaskRoundKeepStart(turns: ChatTurn[], windowTokens: number): number {
+function computeChatTaskRoundKeepStart(turns: ChatTurn[], windowTokens: number, keepRatio?: number): number {
   return computeTaskRoundKeepStart(
     turns.map((turn) => ({ role: turn.role, taskRoundId: turn.taskRoundId, tokens: estimateTurnTokens(turn) })),
     windowTokens,
-    sendMessageCapForWindow(windowTokens) - 2
+    sendMessageCapForWindow(windowTokens) - 2,
+    keepRatio
   )
+}
+
+function summarizeTodoProgress(turns: ChatTurn[]): { hasTodoMilestone: boolean; todoProgress?: string } {
+  let prevCompleted = 0
+  let latestTasks: TodoItem[] | null = null
+  let latestTurnIdx = -1
+  for (let i = 0; i < turns.length; i++) {
+    const blocks = turns[i].blocks ?? []
+    for (const block of blocks) {
+      if (block.kind !== 'tools') continue
+      for (const ev of block.events) {
+        if (ev.toolName === 'todo_list' && ev.todoList && ev.todoList.length > 0) {
+          if (latestTasks) {
+            prevCompleted = latestTasks.filter((t) => t.status === 'completed').length
+          }
+          latestTasks = ev.todoList
+          latestTurnIdx = i
+        }
+      }
+    }
+  }
+  if (!latestTasks || !latestTasks.length) return { hasTodoMilestone: false }
+  const completed = latestTasks.filter((t) => t.status === 'completed').length
+  const inProgress = latestTasks.find((t) => t.status === 'in_progress')?.text
+  const allDone = completed === latestTasks.length && completed > 0
+  const newlyCompletedInLatest = latestTurnIdx >= turns.length - 2 && completed > prevCompleted
+  const todoProgress = `${completed}/${latestTasks.length} completed${inProgress ? `; active: ${inProgress}` : ''}`
+  return { hasTodoMilestone: allDone || newlyCompletedInLatest, todoProgress }
 }
 
 // Rolling-compression policy (window constants + trigger math) lives in
@@ -1469,6 +1502,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
   const chatRef = React.useRef<ChatTurn[]>([])
   // Rolling summary of turns already compressed out of the send window.
   const compactRef = React.useRef<ChatCompact | null>(null)
+  const compactDeferRef = React.useRef<CompactDeferState | null>(null)
   // UI notice shown while/after compressing history.
   const [compactNotice, setCompactNotice] = React.useState<string | null>(null)
   // Real prompt size (tokens) reported by the provider for the latest model
@@ -1919,12 +1953,9 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
   // Codex-style inter-turn compaction: runs when the user sends the next
   // message, before the real request goes out. UI keeps every turn; only the
   // *send* payload substitutes [0, covered) with the recap.
-  // Trigger: token-driven at 95% of the attention budget. When the provider
-  // has no usage report, the exact payload to be replayed is token-estimated.
-  // Throws when compression was needed but failed — the caller reports it as
-  // a normal request failure (the main process already retried the compress
-  // model and fell back to the current chat model, whose window certainly
-  // fits since we just talked to it).
+  // Trigger: hard watermark at 85% of the attention budget; when smartAutoCompact
+  // is on, soft watermark (65%) and task milestones (>=40%) ask the lightweight
+  // judge whether to compact now or defer (silently degrading to 'defer' on errors).
   const compactIfNeeded = React.useCallback(
     async (
       turns: ChatTurn[],
@@ -1934,9 +1965,9 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
       options?: { force?: boolean }
     ): Promise<void> => {
       const covered = compactRef.current?.covered ?? 0
-      // keepStart is always a user-task boundary. It is token-budgeted, not
-      // a fixed turn count, so a request/tool/result sequence stays intact.
-      let keepStart = computeChatTaskRoundKeepStart(turns, settings.contextWindowTokens)
+      // Use the tighter compaction tail budget (35%) when choosing where to split
+      // stale vs retained turns so compaction actually reclaims headroom.
+      let keepStart = computeChatTaskRoundKeepStart(turns, settings.contextWindowTokens, COMPACT_KEEP_TAIL_RATIO)
 
       // Hybrid count: the provider's usage report lags one request behind —
       // add a script-aware estimate for the turns it never saw plus the
@@ -1972,34 +2003,115 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
       }
 
       if (keepStart <= covered) return
-      const stale = turns.slice(covered, keepStart)
 
-      // Estimate the same payload that the send path will replay. This is a
-      // token estimate rather than a fixed character/message cap, so a larger
-      // configured attention budget survives a completed 50-tool task round.
+      // Estimate the same payload that the send path will replay.
+      const outputKeepStart = computeChatTaskRoundKeepStart(turns, settings.contextWindowTokens)
       const recentZone = turns.slice(covered)
       let sendTokens = estimateTokensFromText(compactRef.current?.summary ?? '') + estimateTokensFromText(pendingText)
+      let toolOutputTokens = 0
       recentZone.forEach((turn, i) => {
         if (turn.role !== 'assistant') {
           sendTokens += estimateTokensFromText(buildSendText(turn))
           return
         }
+        const trace = buildToolTrace(settledToolEvents(turn), isZh, covered + i >= outputKeepStart)
+        for (const item of trace) {
+          toolOutputTokens += estimateTokensFromText(item.result ?? '')
+        }
         sendTokens += messagePayloadTokens({
           role: 'assistant',
           text: stripForgedRecap(turn.text),
-          toolTrace: buildToolTrace(settledToolEvents(turn), isZh, covered + i >= keepStart)
+          toolTrace: trace
         })
         for (const note of injectedNotes(turn)) sendTokens += estimateTokensFromText(note)
       })
-      if (
-        !options?.force &&
-        !shouldCompact(
-          { promptTokens, staleEntries: stale.length, sendTokens },
-          settings.contextWindowTokens
-        )
-      )
-        return
 
+      const pinnedStaleTurnIndexes = new Set<number>()
+      if (!options?.force) {
+        const todoInfo = summarizeTodoProgress(turns.slice(covered))
+        const evaluation = evaluatePreSendCompaction({
+          promptTokens,
+          sendTokens,
+          toolOutputTokens,
+          staleEntries: keepStart - covered,
+          windowTokens: settings.contextWindowTokens,
+          smartAutoCompact: settings.smartAutoCompact,
+          hasTodoMilestone: todoInfo.hasTodoMilestone,
+          deferState: compactDeferRef.current,
+          currentTurnsCount: turns.length
+        })
+        if (evaluation.action === 'none') return
+
+        if (evaluation.action === 'judge' && typeof window.assistantLite?.ai?.judgeCompact === 'function') {
+          const staleSlice = turns.slice(covered, keepStart)
+          const staleRounds = groupTaskRounds(
+            staleSlice.map((t) => ({ role: t.role, taskRoundId: t.taskRoundId, tokens: 0 }))
+          )
+          const digests = staleRounds.slice(-12).map((r, idx) => {
+            const roundTurns = staleSlice.slice(r.start, r.end)
+            const u = roundTurns.find((t) => t.role === 'user' && !t.injected)?.text.replace(/\s+/g, ' ').trim().slice(0, 90) ?? ''
+            const toolCount = roundTurns.reduce((sum, t) => sum + settledToolEvents(t).length, 0)
+            const a = [...roundTurns].reverse().find((t) => t.role === 'assistant')?.text.replace(/\s+/g, ' ').trim().slice(0, 100) ?? ''
+            return {
+              roundIndex: idx,
+              summary: `U: ${u || '(none)'}${toolCount ? ` | tools:${toolCount}` : ''}${a ? ` | A: ${a}` : ''}`
+            }
+          })
+          const judgeReqId = crypto.randomUUID()
+          gate.summarizeRequestId = judgeReqId
+          let judgment: Awaited<ReturnType<typeof window.assistantLite.ai.judgeCompact>>
+          try {
+            judgment = await window.assistantLite.ai.judgeCompact({
+              requestId: judgeReqId,
+              model: selectedModel || undefined,
+              usageRatio: evaluation.effectiveTokens / Math.max(1, settings.contextWindowTokens),
+              phaseHint: evaluation.phaseHint,
+              todoProgress: todoInfo.todoProgress,
+              candidates: digests,
+              nextUserMessage: pendingText
+            })
+          } catch {
+            judgment = { decision: 'defer', keepRoundIndexes: [] }
+          } finally {
+            if (gate.summarizeRequestId === judgeReqId) gate.summarizeRequestId = null
+          }
+          if (gate.cancelled || chatSessionRef.current !== session) return
+          if (judgment.decision !== 'compact_now') {
+            compactDeferRef.current = {
+              deferredAtTokens: evaluation.effectiveTokens,
+              deferredAtTurns: turns.length
+            }
+            return
+          }
+
+          // Honor judge-nominated high-value rounds: shrink keepStart for trailing ones,
+          // and mark any earlier ones so the summarizer retains their verbatim constraints.
+          if (judgment.keepRoundIndexes?.length && staleRounds.length > 1) {
+            const offsetBase = Math.max(0, staleRounds.length - digests.length)
+            const keptAbsRounds = new Set(
+              judgment.keepRoundIndexes.map((dIdx) => offsetBase + dIdx).filter((abs) => abs >= 0 && abs < staleRounds.length)
+            )
+            let trailingMoved = false
+            for (let rIdx = staleRounds.length - 1; rIdx >= 1; rIdx--) {
+              if (!keptAbsRounds.has(rIdx)) break
+              keepStart = covered + staleRounds[rIdx].start
+              keptAbsRounds.delete(rIdx)
+              trailingMoved = true
+            }
+            if (!trailingMoved && keptAbsRounds.size > 0) {
+              for (const abs of keptAbsRounds) {
+                const r = staleRounds[abs]
+                for (let ti = r.start; ti < r.end; ti++) {
+                  pinnedStaleTurnIndexes.add(covered + ti)
+                }
+              }
+            }
+          }
+        }
+      }
+
+      if (keepStart <= covered) return
+      const stale = turns.slice(covered, keepStart)
       const staleCount = stale.length
       clearCompactNotice()
       setCompactNotice(isZh ? '正在压缩较早的对话…' : 'Compressing earlier messages…')
@@ -2007,7 +2119,10 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
       // wrapped in <conversation> tags — data for the summarizer, never
       // instructions (the main-process prompt declares the tag contract).
       const entries: string[] = []
-      for (const turn of stale) {
+      for (let idx = 0; idx < stale.length; idx++) {
+        const turn = stale[idx]
+        const absIndex = covered + idx
+        const isJudgePinned = pinnedStaleTurnIndexes.has(absIndex)
         const body = (turn.role === 'assistant' ? stripForgedRecap(turn.text ?? '') : (turn.text ?? '')).trim()
         // Keep the tool record in the recap too — "what was actually done"
         // must survive compression, not just the assistant's prose.
@@ -2018,7 +2133,12 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
           entries.push(`${isZh ? '用户（任务中追加）' : 'User (mid-task)'}：${note}`)
         }
         if (!body && !recap) continue
-        let entry = `${turn.role === 'user' ? (isZh ? '用户' : 'User') : (isZh ? '助手' : 'Assistant')}：${body}${recap}`
+        const pinTag = isJudgePinned
+          ? isZh
+            ? '[重点保留：此轮包含关键约束/报错/修正，请务必完整保留其核心事实与路径]\n'
+            : '[KEEP KEY FACTS: preserve core constraints, errors, and exact paths from this turn]\n'
+          : ''
+        let entry = `${pinTag}${turn.role === 'user' ? (isZh ? '用户' : 'User') : (isZh ? '助手' : 'Assistant')}：${body}${recap}`
         // A single giant turn (huge paste / file dump) must not blow up the
         // summarize request: keep head + tail, drop the middle.
         if (entry.length > COMPACT_TURN_MAX_CHARS) {
@@ -2090,6 +2210,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
       // Advance the covered frontier to keepStart *at compress time*. The
       // just-typed user turn is not in `turns` and stays in the recent zone.
       compactRef.current = { summary, covered: keepStart }
+      compactDeferRef.current = null
 
       // Refresh real-time context token usage after compaction
       const remainingTurns = turns.slice(keepStart)
@@ -2116,7 +2237,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
         setCompactNotice(null)
       }, 4000)
     },
-    [isZh, selectedModel, persistTopic, clearCompactNotice, settings.contextWindowTokens]
+    [isZh, selectedModel, persistTopic, clearCompactNotice, settings.contextWindowTokens, settings.smartAutoCompact]
   )
 
   // In-place manual compaction triggered by clicking the context ring
@@ -2323,6 +2444,15 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
         }
         // Non-text events must see buffered text/tools applied first
         flush()
+        if (chunk.type === 'notice' && chunk.text) {
+          clearCompactNotice()
+          setCompactNotice(chunk.text)
+          compactNoticeTimerRef.current = setTimeout(() => {
+            compactNoticeTimerRef.current = null
+            setCompactNotice(null)
+          }, 4000)
+          return
+        }
         if (chunk.type === 'injected') {
           const note = chunk.text ?? ''
           const qi = queuedRef.current.indexOf(note)
@@ -2779,9 +2909,14 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
         { role: 'user' as const, text: buildSendText({ text, files }), ...(images.length ? { images } : {}) }
       ]
       if (compact?.summary) {
+        const firstRealUserIdx = history.findIndex((turn) => turn.role === 'user' && !turn.injected)
+        const initialTaskText =
+          firstRealUserIdx >= 0 && firstRealUserIdx < recentStart
+            ? buildSendText(history[firstRealUserIdx])
+            : null
         raw.unshift({
           role: 'user',
-          text: `${isZh ? '（前情摘要，由较早的对话压缩而来）' : '(Recap compressed from earlier conversation)'}\n${compact.summary}`
+          text: buildRecapHeadMessage({ summary: compact.summary, initialTaskText, isZh })
         })
       }
       // Merge consecutive user messages (recap + first turn, or an injected
@@ -3028,6 +3163,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
     prevLastPendingRef.current = false
     chatRef.current = []
     compactRef.current = null
+    compactDeferRef.current = null
     chatSessionRef.current += 1
     clearCompactNotice()
     contextUsageRef.current = null
@@ -3136,6 +3272,7 @@ export function ChatMode({ settings }: { settings: AppSettings }) {
     prevLastPendingRef.current = Boolean(turnsToLoad[turnsToLoad.length - 1]?.pending)
     chatRef.current = turnsToLoad
     compactRef.current = loadedTopic.compact ?? null
+    compactDeferRef.current = null
     chatSessionRef.current += 1
     clearCompactNotice()
     const findLatestTodoList = (turns: ChatTurn[]): TodoItem[] | null => {

@@ -4,6 +4,8 @@ import { deriveThemeCssVars, type ResolvedThemeMode, type ThemePaletteInput } fr
 import type {
   ActionPayload,
   AiChunkPayload,
+  AiJudgeCompactRequest,
+  AiJudgeCompactResult,
   AiStreamRequest,
   AiSummarizeResult,
   AppSettings,
@@ -98,6 +100,8 @@ const api = {
       requestId?: string
     ): Promise<AiSummarizeResult> =>
       ipcRenderer.invoke(IPC.AiSummarize, { text, model, providerTemplateId, requestId }),
+    judgeCompact: (request: AiJudgeCompactRequest): Promise<AiJudgeCompactResult> =>
+      ipcRenderer.invoke(IPC.AiJudgeCompact, request),
     /** Best-effort topic title from the first round; '' when naming failed. */
     nameTopic: (text: string, model?: string): Promise<string> =>
       ipcRenderer.invoke(IPC.AiNameTopic, { text, model }),
