@@ -162,6 +162,7 @@ describe('truncateForSend', () => {
     const immediate = out.find((m) => m.text === 'recent_done')
     expect(immediate).toBeDefined()
     expect(immediate?.toolTrace?.[0].result).toContain('trimmed for context window')
+    expect(immediate?.toolTrace?.[0].result).toContain('call_id="c1"')
     expect(out[out.length - 1].text).toBe('q2')
   })
 

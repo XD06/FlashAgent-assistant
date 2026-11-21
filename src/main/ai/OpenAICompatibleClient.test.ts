@@ -586,6 +586,44 @@ describe('OpenAI-compatible stream parser', () => {
     expect(newest).toContain('y'.repeat(2_000))
   })
 
+  it('exposes persisted call_id for read_tool_output in truncated and masked in-loop results', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+    for (let i = 0; i < 17; i++) fetchMock.mockResolvedValueOnce(toolCallResponse(`call_${i}`))
+    fetchMock.mockResolvedValueOnce(streamingTextResponse('done'))
+
+    await streamChatMessages(
+      provider,
+      [{ role: 'user', text: 'work' }],
+      'system',
+      new AbortController().signal,
+      () => {},
+      'off',
+      {
+        tools: [toolDef],
+        onToolCall: async (_name, _args, meta) => (meta?.round === 0 ? 'x'.repeat(30_000) : 'y'.repeat(1_200)),
+        resolveToolOutputId: (meta) => `persisted_${meta.round ?? 0}`,
+        maxToolRounds: 20
+      }
+    )
+
+    // Right after round 0 (before round 1 request), the 30k result is truncated with exact offset & call_id
+    const afterRound0Body = JSON.parse(String(fetchMock.mock.calls[1][1]?.body)) as {
+      messages: Array<{ role: string; content: string }>
+    }
+    const truncatedMsg = afterRound0Body.messages.find((m) => m.role === 'tool')
+    expect(truncatedMsg?.content).toContain('read_tool_output')
+    expect(truncatedMsg?.content).toContain('call_id="persisted_0"')
+
+    // At round 16 (poll mask cutoff = 4), round 1's 1.2k result is trimmed with persisted call_id
+    const round16Body = JSON.parse(String(fetchMock.mock.calls[16][1]?.body)) as {
+      messages: Array<{ role: string; content: string }>
+    }
+    const maskedMsgs = round16Body.messages.filter((m) => m.role === 'tool')
+    expect(maskedMsgs[1].content).toContain('trimmed')
+    expect(maskedMsgs[1].content).toContain('read_tool_output')
+    expect(maskedMsgs[1].content).toContain('call_id="persisted_1"')
+  })
+
   it('returns an actionable error to the model when tool arguments are not valid JSON', async () => {
     const encoder = new TextEncoder()
     const badArgsBody = new ReadableStream({

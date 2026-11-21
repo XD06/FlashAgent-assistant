@@ -593,6 +593,7 @@ const TOOL_LABELS: Record<string, { zh: string; en: string }> = {
   list_dir: { zh: '目录', en: 'List' },
   search_files: { zh: '搜索', en: 'Search' },
   run_command: { zh: '命令', en: 'Run' },
+  read_tool_output: { zh: '读取输出', en: 'Output' },
   todo_list: { zh: '待办', en: 'Todo' },
   ask_user: { zh: '询问', en: 'Ask' }
 }
@@ -604,6 +605,7 @@ const TOOL_ICONS: Record<string, string> = {
   list_dir: 'folder',
   search_files: 'search',
   run_command: 'terminal',
+  read_tool_output: 'file-text',
   todo_list: 'check',
   ask_user: 'circle-help'
 }
@@ -614,6 +616,7 @@ const TOOL_CATEGORIES: Record<string, string> = {
   read_file: 'read',
   list_dir: 'read',
   search_files: 'read',
+  read_tool_output: 'read',
   write_file: 'write',
   edit_file: 'write',
   run_command: 'command',

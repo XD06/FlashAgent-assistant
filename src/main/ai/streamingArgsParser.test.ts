@@ -115,4 +115,9 @@ describe('parseStreamingToolArgs', () => {
     expect(result.summary).toBe('Which database should we use?')
     expect(result.charCount).toBe(partialJson.length)
   })
+
+  it('extracts glob for search_files and call_id for read_tool_output', () => {
+    expect(parseStreamingToolArgs('search_files', '{"glob": "*.tsx"').summary).toBe('*.tsx')
+    expect(parseStreamingToolArgs('read_tool_output', '{"call_id": "saved-uuid-1", "offset": 0').summary).toBe('saved-uuid-1')
+  })
 })

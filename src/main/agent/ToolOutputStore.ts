@@ -50,14 +50,16 @@ async function prune(dir: string): Promise<void> {
 
 /** Persist complete agent-tool output locally so an expensive command does
  * not need to run again merely because its replay was later compacted. */
-export async function saveToolOutput(callId: string, output: string, root?: string): Promise<void> {
+export async function saveToolOutput(callId: string, output: string, root?: string): Promise<boolean> {
   try {
     const dir = await outputDir(root)
     const record: StoredToolOutput = { output: capStoredOutput(output), savedAt: Date.now() }
     await fs.writeFile(fileFor(dir, callId), JSON.stringify(record), 'utf8')
     await prune(dir)
+    return true
   } catch {
     // Best effort: normal tool execution must not fail because archival failed.
+    return false
   }
 }
 

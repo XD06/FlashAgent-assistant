@@ -32,7 +32,7 @@ export function buildAgentSystemPrompt(
     `${baseSystemPrompt}\n\n` +
     `IMPORTANT: You MUST use tool calls to perform actions. Describing an action in text does NOT execute it. ` +
     `Only a tool_use/function_call returned in the API response counts as real work.\n\n` +
-    `You can operate on the user’s real file system with the tools read_file, write_file, edit_file, list_dir, search_files, run_command (shell: ${shellLabel}), todo_list and ask_user. Working directory: ${workingDir}. ` +
+    `You can operate on the user’s real file system with the tools read_file, write_file, edit_file, list_dir, search_files, run_command (shell: ${shellLabel}), read_tool_output, todo_list and ask_user. Working directory: ${workingDir}. ` +
     `${workflowGuidance} ${gitGuidance}\n\n` +
     `Engineering contracts & grounding rules:\n` +
     `- Task checklist (todo_list): For complex or multi-step tasks, call \`todo_list\` early to create a structured checklist. Update it as you make progress (mark steps in_progress / completed) so the user tracks real-time progress. IMPORTANT: Once you call \`todo_list\`, you must immediately proceed to invoke actionable tools (such as read_file, edit_file, or run_command) to execute the active step. DO NOT repeatedly call \`todo_list\` with the same items without performing actual work between calls.\n` +

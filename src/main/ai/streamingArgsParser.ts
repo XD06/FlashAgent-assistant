@@ -148,9 +148,17 @@ export function parseStreamingToolArgs(
     }
 
     if (toolName === 'search_files') {
-      const query = extractAnyProperty(rawArgs, ['query', 'pattern', 'search_term', 'term'])
+      const query = extractAnyProperty(rawArgs, ['query', 'pattern', 'glob', 'search_term', 'term'])
       return {
         summary: query || '...',
+        charCount
+      }
+    }
+
+    if (toolName === 'read_tool_output') {
+      const callId = extractAnyProperty(rawArgs, ['call_id', 'callId'])
+      return {
+        summary: callId || '...',
         charCount
       }
     }

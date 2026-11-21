@@ -12,6 +12,7 @@ describe('buildAgentSystemPrompt', () => {
     const prompt = buildAgentSystemPrompt(options, 'baseline')
 
     expect(prompt).toContain('IMPORTANT: You MUST use tool calls to perform actions.')
+    expect(prompt).toContain('read_tool_output')
     expect(prompt).toContain('Working directory: C:\\workspace.')
     expect(prompt).toContain('Never claim you created, edited, or verified anything without the matching tool result.')
     expect(prompt).toContain('do not repeat substantially equivalent searches')

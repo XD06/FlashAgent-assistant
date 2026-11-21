@@ -138,9 +138,12 @@ export function slimMessageForSend(m: AiMessageInput, targetMaxResultChars = 500
     if (t.name === 'todo_list' || t.name === 'ask_user' || t.result.length <= targetMaxResultChars) return t
     const head = t.result.slice(0, Math.floor(targetMaxResultChars * 0.7))
     const tail = t.result.slice(-Math.floor(targetMaxResultChars * 0.25))
+    const hint = t.id
+      ? ` — use read_tool_output with call_id=${JSON.stringify(t.id)} if needed`
+      : ''
     return {
       ...t,
-      result: `${head}\n... [earlier tool output trimmed for context window] ...\n${tail}`
+      result: `${head}\n... [earlier tool output trimmed for context window${hint}] ...\n${tail}`
     }
   })
   return { ...m, toolTrace: nextTrace }

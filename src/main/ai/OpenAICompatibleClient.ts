@@ -612,6 +612,8 @@ export interface ToolCallStreamOptions extends ProviderRequestOptions {
   shadowBudget?: { contextWindowTokens: number; safetyMarginTokens?: number }
   /** Working directory used to normalize file paths for Closed-Window Masking. */
   workingDir?: string
+  /** Optional lookup returning the persisted call_id for an executed tool output so truncated/masked in-loop hints point to read_tool_output. */
+  resolveToolOutputId?: (meta: { id?: string; index?: number; round?: number }) => string | undefined
   /** Optional in-loop compaction hook triggered when a long multi-round run hits 85% of shadowBudget. */
   onInLoopCompact?: (input: {
     previousSummary: string | null
@@ -773,11 +775,16 @@ function closedWindowStub(content: string, pathLabel: string): string {
 
 /** Cap an oversized result keeping head + tail — command failures usually
  * sit at the end of the output, file reads at the start. */
-function capToolResult(content: string): string {
+function capToolResult(content: string, outputId?: string): string {
   if (content.length <= TOOL_RESULT_MAX_CHARS) return content
   const head = content.slice(0, Math.floor(TOOL_RESULT_MAX_CHARS * 0.7))
   const tail = content.slice(-Math.floor(TOOL_RESULT_MAX_CHARS * 0.25))
-  return `${head}\n\n[... ${content.length - head.length - tail.length} chars truncated ...]\n\n${tail}`
+  const { prefix } = extractToolPrefix(content)
+  const rawHeadLen = Math.max(0, head.length - prefix.length)
+  const readHint = outputId
+    ? ` — use read_tool_output with call_id=${JSON.stringify(outputId)} offset=${rawHeadLen} to read more`
+    : ''
+  return `${head}\n\n[... ${content.length - head.length - tail.length} chars truncated${readHint} ...]\n\n${tail}`
 }
 
 /** Identity prefix prepended to every tool result inside the loop so the
@@ -797,14 +804,15 @@ function toolResultPrefix(name: string, args: Record<string, unknown>, ok: boole
 /** Replace an aged-out result with a short stub. The identity prefix (first
  * line, `[tool: ...]`) is always preserved so the model still knows which
  * tool produced this result and whether it succeeded or failed. */
-function stubToolResult(content: string): string {
+function stubToolResult(content: string, outputId?: string): string {
   if (content.length <= TOOL_STUB_CHARS) return content
   // Preserve the [tool: ...] prefix line if present.
-  const nlIdx = content.indexOf('\n')
-  const prefix = nlIdx > 0 && content.startsWith('[tool:') ? content.slice(0, nlIdx + 1) : ''
-  const body = prefix ? content.slice(prefix.length) : content
+  const { prefix, body } = extractToolPrefix(content)
   const budget = Math.max(60, TOOL_STUB_CHARS - prefix.length)
-  return `${prefix}${body.slice(0, budget)}\n[... earlier tool output trimmed — call the tool again if needed ...]`
+  const recovery = outputId
+    ? `use read_tool_output with call_id=${JSON.stringify(outputId)} if needed`
+    : 'call the tool again if needed'
+  return `${prefix}${body.slice(0, budget)}\n[... earlier tool output trimmed — ${recovery} ...]`
 }
 
 /** Parse OpenAI streaming event for tool-call fragments. */
@@ -1589,6 +1597,7 @@ export async function streamChatMessages(
       toolName: string
       args: Record<string, unknown>
       ok: boolean
+      outputId?: string
     }
     const toolResults: ToolExecOutcome[] = []
     const execStart = Date.now()
@@ -1644,12 +1653,17 @@ export async function streamChatMessages(
         ) {
           executedCommandTools.add(tc.name)
         }
+        const outputId =
+          consecutiveDuplicateRounds < 2 && !rejectedOrBlocked
+            ? options.resolveToolOutputId?.({ id: tc.id, index: tc.index, round })
+            : undefined
         return {
           id: tc.id,
           content: toolResultPrefix(tc.name, args, true) + result,
           toolName: tc.name,
           args,
-          ok: !rejectedOrBlocked
+          ok: !rejectedOrBlocked,
+          outputId
         }
       } catch (error) {
         if (signal.aborted) throw error
@@ -1752,7 +1766,7 @@ export async function streamChatMessages(
         readRange,
         getContent,
         shrink: (replacement?: string) => {
-          setContent(replacement ?? stubToolResult(getContent()))
+          setContent(replacement ?? stubToolResult(getContent(), r.outputId))
         }
       })
     }
@@ -1761,7 +1775,7 @@ export async function streamChatMessages(
       const resultBlocks = toolResults.map((r) => ({
         type: 'tool_result',
         tool_use_id: r.id,
-        content: capToolResult(r.content)
+        content: capToolResult(r.content, r.outputId)
       }))
       apiMessages.push({ role: 'user', content: resultBlocks })
       toolResults.forEach((r, idx) => {
@@ -1776,7 +1790,7 @@ export async function streamChatMessages(
       })
     } else {
       for (const r of toolResults) {
-        const msg = { role: 'tool', tool_call_id: r.id, content: capToolResult(r.content) }
+        const msg = { role: 'tool', tool_call_id: r.id, content: capToolResult(r.content, r.outputId) }
         apiMessages.push(msg)
         recordToolRef(
           r,

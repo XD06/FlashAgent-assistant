@@ -1123,6 +1123,7 @@ function registerIpc(): void {
       }
 
       const activeEdits = new Map<string, 'edited' | 'created'>()
+      const savedToolOutputIds = new Set<string>()
       const toolCallIdMap = new Map<string, string>()
       const resolveCallId = (round: number, index: number, metaId?: string): string => {
         const roundKey = `r${round}_i${index}`
@@ -1256,7 +1257,9 @@ function registerIpc(): void {
             snapshotSaved = true
           }
           controller.signal.throwIfAborted()
-          if (name !== 'read_tool_output') await saveToolOutput(callId, output)
+          if (name !== 'read_tool_output' && name !== 'todo_list' && (await saveToolOutput(callId, output))) {
+            savedToolOutputIds.add(callId)
+          }
           if (name === 'write_file' || name === 'edit_file') {
             const targetPath = typeof args.path === 'string' ? args.path : ''
             if (targetPath) {
@@ -1352,6 +1355,10 @@ function registerIpc(): void {
         {
           fetcher: providerFetch,
           workingDir: agentEnabled ? workingDir : undefined,
+          resolveToolOutputId: (meta) => {
+            const id = resolveCallId(meta.round ?? 0, meta.index ?? 0, meta.id)
+            return savedToolOutputIds.has(id) ? id : undefined
+          },
           tools: tools.length ? tools : undefined,
           isReadOnlyTool: (name) => isReadOnlyTool(name, mcpManager.getReadOnlyHint(name)),
           getToolConcurrency: (name, args) => classifyToolConcurrency(name, args, mcpManager.getReadOnlyHint(name)),
