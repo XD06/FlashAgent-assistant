@@ -36,9 +36,11 @@ describe('getTurnProcessFold', () => {
     const zh = summarizeProcessFold(fold!.prefix, true)
     expect(zh.toolCount).toBe(3)
     expect(zh.thinkingCount).toBe(2)
+    expect(zh.failedCount).toBe(0)
     expect(zh.label).toBe('已完成 · 3 项操作 · 2 轮思考')
 
     const en = summarizeProcessFold(fold!.prefix, false)
+    expect(en.failedCount).toBe(0)
     expect(en.label).toBe('Done · 3 actions · 2 thoughts')
   })
 
@@ -58,10 +60,28 @@ describe('getTurnProcessFold', () => {
 
     const summary = summarizeProcessFold(fold!.prefix, false)
     expect(summary.toolCount).toBe(2)
+    expect(summary.failedCount).toBe(0)
     expect(summary.diff).toEqual({ added: 2, removed: 1 })
   })
 
-  it('does not fold while pending, errored, or on simple 1-step turns', () => {
+  it('folds thinking plus multi-call batch while leaving a single 1-tool step unwrapped', () => {
+    const singleGroup: TurnBlock[] = [
+      { kind: 'tools', events: [makeTool({ callId: 'c1' }), makeTool({ callId: 'c2' })] },
+      { kind: 'text', text: 'Done.' }
+    ]
+    expect(getTurnProcessFold(singleGroup, false, false)).toBeNull()
+
+    const thinkingAndParallelCalls: TurnBlock[] = [
+      { kind: 'thinking', text: 'Inspect files first.' },
+      { kind: 'tools', events: [makeTool({ callId: 'c1' }), makeTool({ callId: 'c2' })] },
+      { kind: 'text', text: 'Checked both files.' }
+    ]
+    const fold = getTurnProcessFold(thinkingAndParallelCalls, false, false)
+    expect(fold).not.toBeNull()
+    expect(summarizeProcessFold(fold!.prefix, true).label).toBe('已完成 · 2 项操作 · 1 轮思考')
+  })
+
+  it('does not fold while pending, errored at turn level, or on simple 1-step turns', () => {
     const multi: TurnBlock[] = [
       { kind: 'tools', events: [makeTool({ callId: 'c1' })] },
       { kind: 'tools', events: [makeTool({ callId: 'c2' })] },
@@ -78,20 +98,42 @@ describe('getTurnProcessFold', () => {
     expect(getTurnProcessFold(singleStep, false, false)).toBeNull()
   })
 
-  it('does not fold turns containing errors, rejections, approvals, injected notes, or no final text', () => {
+  it('folds settled turns that recovered from intermediate tool errors or rejections with failure count', () => {
     const withError: TurnBlock[] = [
-      { kind: 'tools', events: [makeTool({ callId: 'c1' })] },
-      { kind: 'tools', events: [makeTool({ callId: 'c2', state: 'error', result: 'boom' })] },
-      { kind: 'text', text: 'Sorry, command failed.' }
+      { kind: 'thinking', text: 'Initial probe.' },
+      { kind: 'tools', events: [makeTool({ callId: 'c1', state: 'error', result: 'timeout' })] },
+      { kind: 'thinking', text: 'Retry with narrower scope.' },
+      { kind: 'tools', events: [makeTool({ callId: 'c2' }), makeTool({ callId: 'c3' })] },
+      { kind: 'text', text: 'Cleanup finished.' }
     ]
-    expect(getTurnProcessFold(withError, false, false)).toBeNull()
+    const errFold = getTurnProcessFold(withError, false, false)
+    expect(errFold).not.toBeNull()
+    expect(errFold?.prefix).toHaveLength(4)
+    expect(summarizeProcessFold(errFold!.prefix, true)).toMatchObject({
+      toolCount: 3,
+      thinkingCount: 2,
+      failedCount: 1,
+      label: '已完成 · 3 项操作 · 2 轮思考 · 1 失败'
+    })
+    expect(summarizeProcessFold(errFold!.prefix, false).label).toBe('Done · 3 actions · 2 thoughts · 1 failed')
 
     const withRejected: TurnBlock[] = [
       { kind: 'tools', events: [makeTool({ callId: 'c1' })] },
       { kind: 'tools', events: [makeTool({ callId: 'c2', state: 'rejected' })] },
-      { kind: 'text', text: 'Aborted.' }
+      { kind: 'text', text: 'Skipped unsafe step.' }
     ]
-    expect(getTurnProcessFold(withRejected, false, false)).toBeNull()
+    const rejFold = getTurnProcessFold(withRejected, false, false)
+    expect(rejFold).not.toBeNull()
+    expect(summarizeProcessFold(rejFold!.prefix, false).failedCount).toBe(1)
+  })
+
+  it('does not fold turns with live/blocked states, injected notes, or no visible final text', () => {
+    const withRunning: TurnBlock[] = [
+      { kind: 'tools', events: [makeTool({ callId: 'c1' })] },
+      { kind: 'tools', events: [makeTool({ callId: 'c2', state: 'running' })] },
+      { kind: 'text', text: 'Still running.' }
+    ]
+    expect(getTurnProcessFold(withRunning, false, false)).toBeNull()
 
     const withAwaitingInput: TurnBlock[] = [
       { kind: 'tools', events: [makeTool({ callId: 'c1' })] },
@@ -120,6 +162,15 @@ describe('getTurnProcessFold', () => {
       { kind: 'tools', events: [makeTool({ callId: 'c2' })] }
     ]
     expect(getTurnProcessFold(toolsOnly, false, false)).toBeNull()
+
+    const strippedTail: TurnBlock[] = [
+      { kind: 'tools', events: [makeTool({ callId: 'c1' })] },
+      { kind: 'tools', events: [makeTool({ callId: 'c2' })] },
+      { kind: 'text', text: '[forged recap only]' }
+    ]
+    expect(
+      getTurnProcessFold(strippedTail, false, false, (s) => (s === '[forged recap only]' ? '' : s))
+    ).toBeNull()
   })
 })
 

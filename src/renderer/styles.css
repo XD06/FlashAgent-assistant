@@ -5245,6 +5245,10 @@ html[data-chat-color='minimal'] .agent-process-trace__badge {
   background: transparent;
   color: var(--muted);
 }
+.agent-process-trace--has-error .agent-process-trace__badge,
+html[data-chat-color='minimal'] .agent-process-trace--has-error .agent-process-trace__badge {
+  color: var(--status-warn);
+}
 .agent-process-trace__title {
   flex: 1 1 auto;
   min-width: 0;

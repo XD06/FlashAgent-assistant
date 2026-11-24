@@ -1074,7 +1074,11 @@ function TurnProcessTrace({
   const [open, setOpen] = React.useState(false)
   const summary = React.useMemo(() => summarizeProcessFold(prefix, isZh), [prefix, isZh])
   return (
-    <div className={`agent-process-trace${open ? ' agent-process-trace--open' : ''}`}>
+    <div
+      className={`agent-process-trace${open ? ' agent-process-trace--open' : ''}${
+        summary.failedCount > 0 ? ' agent-process-trace--has-error' : ''
+      }`}
+    >
       <button
         type="button"
         className="agent-process-trace__header"
@@ -1145,7 +1149,7 @@ const AssistantTurnBody = React.memo(function AssistantTurnBody({
     : turn.text
       ? [{ kind: 'text' as const, text: turn.text }]
       : []
-  const fold = getTurnProcessFold(blocks, !!turn.pending, !!turn.error)
+  const fold = getTurnProcessFold(blocks, !!turn.pending, !!turn.error, stripForgedRecap)
 
   const renderBlock = (block: TurnBlock, blockIndex: number, blockList: readonly TurnBlock[]) => {
     if (block.kind === 'text') {
