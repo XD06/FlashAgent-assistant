@@ -227,11 +227,6 @@ export interface ActionPayload {
   sessionId?: string
 }
 
-export interface OpenNewWindowOptions {
-  mode?: 'action' | 'translate'
-  action?: ActionItem
-}
-
 /** One settled tool call from an earlier turn, replayed cross-turn. Kept
  * embedded in its assistant AiMessageInput (instead of separate messages)
  * so truncation and merging can never split a call from its result — the

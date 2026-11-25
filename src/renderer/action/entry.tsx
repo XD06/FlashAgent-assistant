@@ -63,7 +63,6 @@ function Titlebar({
   pinned,
   togglePin,
   t,
-  onNewWindow,
   extra
 }: {
   icon: string
@@ -71,7 +70,6 @@ function Titlebar({
   pinned: boolean
   togglePin: () => void
   t: Translator
-  onNewWindow?: () => void
   extra?: React.ReactNode
 }) {
   return (
@@ -79,11 +77,6 @@ function Titlebar({
       <Icon name={icon} />
       <strong>{title}</strong>
       {extra}
-      {onNewWindow && (
-        <button className="icon" title={t('openNewWindow')} onClick={onNewWindow}>
-          <Icon name="plus" size={14} />
-        </button>
-      )}
       <button className={pinned ? 'icon icon--active' : 'icon'} title={pinned ? t('unpin') : t('pin')} onClick={togglePin}>
         <Icon name={pinned ? 'pin-off' : 'pin'} />
       </button>
@@ -590,6 +583,7 @@ function SelectionResult({ payload, settings, settingsLoaded, t, pinned, toggleP
   const askInputRef = React.useRef<HTMLTextAreaElement>(null)
   const contentRef = React.useRef<HTMLDivElement>(null)
   const copiedTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
+  const speakingRef = React.useRef(false)
   const stick = useAutoScroll(contentRef, chat)
   // settings.visionModel can load after first paint; keep a ref so the initial
   // vision request always uses the configured override (same fix as old preview).
@@ -599,8 +593,13 @@ function SelectionResult({ payload, settings, settingsLoaded, t, pinned, toggleP
   }, [settings.visionModel])
 
   React.useEffect(() => {
+    speakingRef.current = speaking
+  }, [speaking])
+
+  React.useEffect(() => {
     return () => {
       if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current)
+      if (speakingRef.current) void window.assistantLite.tts.stopPlayback()
     }
   }, [])
 
@@ -699,7 +698,6 @@ function SelectionResult({ payload, settings, settingsLoaded, t, pinned, toggleP
         pinned={pinned}
         togglePin={togglePin}
         t={t}
-        onNewWindow={() => void window.assistantLite.windowControls.openNew({ mode: 'action', action: liveAction })}
         extra={
           isVision ? (
             <button
@@ -730,7 +728,7 @@ function SelectionResult({ payload, settings, settingsLoaded, t, pinned, toggleP
         )}
         {chat.length === 0 && showThinking && <div className="thinking-indicator">{t('preparing')}</div>}
         <ChatTurns chat={turnsForView} t={t} isZh={isZh} showThinking={showThinking} />
-        {(hasResult || loading) && (
+        {!loading && chat.length > 0 && (
           <ResultUtilityBar
             text={lastReplyText}
             loading={loading}
@@ -771,18 +769,24 @@ function InputResult({ payload, settings, t, pinned, togglePin }: ResultProps) {
     [settings.actions, payload.action]
   )
   const showThinking = (liveAction.reasoning ?? 'on') !== 'off'
-  const { chat, setChat, send, stop, loading, hasResult } = useActionStream(liveAction, t)
+  const { chat, setChat, send, stop, loading } = useActionStream(liveAction, t)
   const [input, setInput] = React.useState('')
   const [copied, setCopied] = React.useState(false)
   const [speaking, setSpeaking] = React.useState(false)
   const inputRef = React.useRef<HTMLTextAreaElement>(null)
   const contentRef = React.useRef<HTMLDivElement>(null)
   const copiedTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
+  const speakingRef = React.useRef(false)
   const stick = useAutoScroll(contentRef, chat)
+
+  React.useEffect(() => {
+    speakingRef.current = speaking
+  }, [speaking])
 
   React.useEffect(() => {
     return () => {
       if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current)
+      if (speakingRef.current) void window.assistantLite.tts.stopPlayback()
     }
   }, [])
 
@@ -873,7 +877,6 @@ function InputResult({ payload, settings, t, pinned, togglePin }: ResultProps) {
         pinned={pinned}
         togglePin={togglePin}
         t={t}
-        onNewWindow={() => void window.assistantLite.windowControls.openNew({ mode: 'action', action: liveAction })}
       />
 
       <div className="content" ref={contentRef}>
@@ -894,7 +897,7 @@ function InputResult({ payload, settings, t, pinned, togglePin }: ResultProps) {
         ) : (
           <>
             <ChatTurns chat={chat} t={t} isZh={isZh} showThinking={showThinking} />
-            {(hasResult || loading) && (
+            {!loading && chat.length > 0 && (
               <ResultUtilityBar
                 text={lastReplyText}
                 loading={loading}

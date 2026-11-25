@@ -9,7 +9,7 @@ import { defaultPrimaryColor } from '@shared/defaults'
 import { deriveThemeCssVars, normalizeSystemAccentColor, type ResolvedThemeMode } from '@shared/theme'
 import { IPC } from '@shared/ipc'
 import { APP_ICON_DATA_URL, APP_TRAY_DATA_URL } from '@shared/brand'
-import type { AgentToolEvent, AiJudgeCompactRequest, AiJudgeCompactResult, AiStreamRequest, AiSummarizeRequest, AiSummarizeResult, AskUserAnswer, OpenNewWindowOptions, SettingsPatch, TopicMetaPatch } from '@shared/types'
+import type { AgentToolEvent, AiJudgeCompactRequest, AiJudgeCompactResult, AiStreamRequest, AiSummarizeRequest, AiSummarizeResult, AskUserAnswer, SettingsPatch, TopicMetaPatch } from '@shared/types'
 import { listModels, streamChatMessages, testModel, type ProviderFetch } from './ai/OpenAICompatibleClient'
 import { judgeCompactionWithFallback, resolveAuxModelCandidates, summarizeWithFallback } from './ai/auxModelFallback'
 import { extractPartialProperty, parseStreamingToolArgs } from './ai/streamingArgsParser'
@@ -542,7 +542,7 @@ function scheduleTranslateIdleDestroy(win: BrowserWindow): void {
   translateIdleTimers.set(win, timer)
 }
 
-function openTranslateWindow(forceNew = false): void {
+function openTranslateWindow(): void {
   const candidates = Array.from(translateWindows)
     .filter((win) => !win.isDestroyed())
     .map((win) => ({
@@ -550,7 +550,7 @@ function openTranslateWindow(forceNew = false): void {
       visible: win.isVisible(),
       pinned: win.isAlwaysOnTop()
     }))
-  const existing = pickReusableSubWindow(candidates, forceNew)
+  const existing = pickReusableSubWindow(candidates)
   if (existing) {
     cancelTranslateIdleDestroy(existing)
     if (existing.isMinimized()) existing.restore()
@@ -623,7 +623,7 @@ function openTranslateWindow(forceNew = false): void {
     if (!win.isDestroyed()) {
       win.setAlwaysOnTop(false)
       win.webContents.send(IPC.SelectionReset)
-      if (win.isVisible()) win.hide()
+      if (win.isVisible() || win.isMinimized()) win.hide()
       scheduleTranslateIdleDestroy(win)
     }
   })
@@ -912,14 +912,6 @@ function registerIpc(): void {
   ipcMain.on(IPC.WindowAdjustHeight, (event, contentHeight: number) => {
     adjustWindowHeight(event.sender, contentHeight)
     event.returnValue = undefined
-  })
-
-  ipcMain.handle(IPC.WindowOpenNew, (_event, options?: OpenNewWindowOptions) => {
-    if (options?.mode === 'translate') {
-      openTranslateWindow(true)
-      return
-    }
-    selectionService.openNewActionWindow(options?.action)
   })
 
   // Typing in the proxy input fires one settings update per keystroke —

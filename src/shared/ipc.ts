@@ -82,7 +82,6 @@ export const IPC = {
   WindowClose: 'window:close',
   WindowMinimize: 'window:minimize',
   WindowPin: 'window:pin',
-  WindowOpenNew: 'window:open-new',
   /** Resize the window to fit its content (quick-translate height-to-content). */
   WindowAdjustHeight: 'window:adjust-height',
   OpenExternal: 'app:open-external',

@@ -14,7 +14,6 @@ import type {
   OcrEngineProgress,
   OcrEngineStatusPayload,
   McpServerStatus,
-  OpenNewWindowOptions,
   SelectedTextPayload,
   SettingsPatch,
   SkillInfo,
@@ -219,7 +218,6 @@ const api = {
     close: (): Promise<void> => ipcRenderer.invoke(IPC.WindowClose),
     minimize: (): Promise<void> => ipcRenderer.invoke(IPC.WindowMinimize),
     pin: (pinned: boolean): Promise<void> => ipcRenderer.invoke(IPC.WindowPin, pinned),
-    openNew: (options?: OpenNewWindowOptions): Promise<void> => ipcRenderer.invoke(IPC.WindowOpenNew, options),
     /** Grow/shrink the window to the given content height (main clamps it). */
     adjustHeight: (contentHeight: number): Promise<void> => {
       ipcRenderer.sendSync(IPC.WindowAdjustHeight, contentHeight)

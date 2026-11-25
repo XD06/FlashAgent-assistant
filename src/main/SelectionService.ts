@@ -307,32 +307,14 @@ export class SelectionService {
 
   // Open a type-in window for an action (triggered by its global shortcut),
   // independent of the selection toolbar.
-  openActionInput(action: ActionItem, forceNew = false): void {
+  openActionInput(action: ActionItem): void {
     const settings = this.getSettings()
     const payload: ActionPayload = { action, selectedText: '', mode: 'input' }
-    this.openActionWindow(
-      payload,
-      (win, siblingCount) => {
-        if (win.isMinimized()) win.restore()
-        this.positionActionWindowCenter(win, settings, siblingCount)
-        this.presentActionWindow(win, !!settings.autoPin)
-      },
-      forceNew
-    )
-  }
-
-  openNewActionWindow(action?: ActionItem): void {
-    const settings = this.getSettings()
-    const fallback =
-      settings.actions.find((item) => item.enabled && item.type === 'prompt') ??
-      settings.actions[0]
-    const target = action ? resolveLiveActionItem(settings.actions, action) : fallback
-    const resolved =
-      target && settings.actions.some((item) => item.id === target.id)
-        ? target
-        : (fallback ?? target)
-    if (!resolved) return
-    this.openActionInput(resolved, true)
+    this.openActionWindow(payload, (win, siblingCount) => {
+      if (win.isMinimized()) win.restore()
+      this.positionActionWindowCenter(win, settings, siblingCount)
+      this.presentActionWindow(win, !!settings.autoPin)
+    })
   }
 
   syncWindowSizeFromSettings(settings: AppSettings): void {
@@ -346,11 +328,10 @@ export class SelectionService {
   // A hidden window (close turned into hide, see createActionWindow) is reused
   // the same way — its renderer is warm, so reopening is instant instead of a
   // full reload. Pinned windows are never overwritten so reference results stay
-  // intact, and `forceNew` spawns an independent sibling window.
+  // intact, spawning a cascaded sibling window if needed.
   private openActionWindow(
     payload: ActionPayload,
-    show: (win: BrowserWindow, siblingCount: number) => void,
-    forceNew = false
+    show: (win: BrowserWindow, siblingCount: number) => void
   ): void {
     const settings = this.getSettings()
     const nextPayload: ActionPayload = {
@@ -366,7 +347,7 @@ export class SelectionService {
         pinned: win.isAlwaysOnTop()
       }))
     const visibleSiblings = candidates.filter((c) => c.visible).length
-    const existing = pickReusableSubWindow(candidates, forceNew)
+    const existing = pickReusableSubWindow(candidates)
     if (existing) {
       this.cancelActionIdleDestroy(existing)
       if (existing.isMinimized()) existing.restore()
@@ -374,8 +355,9 @@ export class SelectionService {
         this.pendingInitialPayload.set(existing.webContents.id, nextPayload)
         return
       }
+      const wasVisible = existing.isVisible()
       existing.webContents.send(IPC.SelectionProcessAction, nextPayload)
-      show(existing, 0)
+      show(existing, wasVisible ? 0 : visibleSiblings)
       return
     }
     const win = this.createActionWindow()
@@ -533,26 +515,31 @@ export class SelectionService {
     const wcId = win.webContents.id
     win.on('close', (event) => {
       // Quitting/disabled teardown uses destroy() and never lands here; a
-      // user/OS close hides for fast reuse instead of destroying the renderer
-      // (close → full reload was the reported open/close jank). Reset the
-      // renderer first so active streams abort cleanly and reopening never
-      // reveals the previous session's answer or draft text.
+      // user/OS close resets and hides up to one pooled window for instant
+      // fresh reopening instead of full renderer reload (extra closed siblings
+      // destroy immediately). Reset the renderer first so active streams abort
+      // cleanly and reopening always starts a fresh session.
       if (this.quitting) return
+      if (!win.isDestroyed() && this.getSettings().rememberWindowSize) {
+        const bounds = win.getBounds()
+        this.lastActionSize = {
+          width: Math.max(320, bounds.width - ACTION_SHADOW_PADDING * 2),
+          height: Math.max(240, bounds.height - ACTION_SHADOW_PADDING * 2)
+        }
+        void this.updateSettings({
+          actionWindowWidth: this.lastActionSize.width,
+          actionWindowHeight: this.lastActionSize.height
+        })
+      }
+      const hasOtherHidden = Array.from(this.actionWindows).some(
+        (other) => other !== win && !other.isDestroyed() && !other.isVisible()
+      )
+      if (hasOtherHidden) return
       event.preventDefault()
       if (!win.isDestroyed()) {
-        if (this.getSettings().rememberWindowSize) {
-          const bounds = win.getBounds()
-          this.lastActionSize = {
-            width: Math.max(320, bounds.width - ACTION_SHADOW_PADDING * 2),
-            height: Math.max(240, bounds.height - ACTION_SHADOW_PADDING * 2)
-          }
-          void this.updateSettings({
-            actionWindowWidth: this.lastActionSize.width,
-            actionWindowHeight: this.lastActionSize.height
-          })
-        }
+        win.setAlwaysOnTop(false)
         win.webContents.send(IPC.SelectionReset)
-        if (win.isVisible()) win.hide()
+        if (win.isVisible() || win.isMinimized()) win.hide()
       }
       this.scheduleActionIdleDestroy(win)
     })

@@ -778,12 +778,6 @@ function TranslateWindow() {
         <strong>{t('trTitle')}</strong>
         {notice && <span className="tr-notice">{notice}</span>}
         <div className="titlebar__spacer" />
-        <button
-          className="icon"
-          title={t('openNewWindow')}
-          onClick={() => void window.assistantLite.windowControls.openNew({ mode: 'translate' })}>
-          <Icon name="plus" size={14} />
-        </button>
         <button className={pinned ? 'icon icon--active' : 'icon'} title={pinned ? t('unpin') : t('pin')} onClick={togglePin}>
           <Icon name={pinned ? 'pin-off' : 'pin'} />
         </button>
