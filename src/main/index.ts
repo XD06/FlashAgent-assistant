@@ -360,6 +360,37 @@ function applySettingsWindowTheme(win: BrowserWindow | null = settingsWindow): v
   }
 }
 
+/** Reveal a `show: false` BrowserWindow on `ready-to-show`, with a post-load
+ * fallback timer because Chromium on Windows occasionally omits `ready-to-show`
+ * after `did-finish-load` completes. Cancels automatically if shown early
+ * (e.g. via tray click) or closed before reveal. */
+function revealOnFirstReady(win: BrowserWindow, reveal: () => void, fallbackMs = 300): void {
+  let revealed = false
+  let fallbackTimer: NodeJS.Timeout | null = null
+  const clearFallback = (): void => {
+    if (fallbackTimer) {
+      clearTimeout(fallbackTimer)
+      fallbackTimer = null
+    }
+  }
+  const run = (): void => {
+    if (revealed || win.isDestroyed()) return
+    revealed = true
+    clearFallback()
+    reveal()
+  }
+  win.once('ready-to-show', run)
+  win.webContents.once('did-finish-load', () => {
+    if (revealed || win.isDestroyed()) return
+    fallbackTimer = setTimeout(run, fallbackMs)
+  })
+  win.once('show', () => {
+    revealed = true
+    clearFallback()
+  })
+  win.once('closed', clearFallback)
+}
+
 function createSettingsWindow(): BrowserWindow {
   if (settingsWindow && !settingsWindow.isDestroyed()) {
     if (settingsWindow.isMinimized()) settingsWindow.restore()
@@ -402,7 +433,8 @@ function createSettingsWindow(): BrowserWindow {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      backgroundThrottling: true
+      // Hidden initial paint stalls on Windows if Chromium throttles the renderer.
+      backgroundThrottling: false
     }
   })
   const win = settingsWindow
@@ -420,8 +452,7 @@ function createSettingsWindow(): BrowserWindow {
   win.on('closed', () => {
     if (settingsWindow === win) settingsWindow = null
   })
-  win.once('ready-to-show', () => {
-    if (win.isDestroyed()) return
+  revealOnFirstReady(win, () => {
     app.dock?.show()
     applySettingsWindowTheme(win)
     win.show()
@@ -472,7 +503,7 @@ function openChatWindow(): void {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      backgroundThrottling: true
+      backgroundThrottling: false
     }
   })
   const win = chatWindow
@@ -508,7 +539,7 @@ function openChatWindow(): void {
       })
     }, 200)
   })
-  win.once('ready-to-show', () => {
+  revealOnFirstReady(win, () => {
     win.show()
     win.focus()
   })
@@ -639,7 +670,7 @@ function openTranslateWindow(): void {
     if (resizeTimer) clearTimeout(resizeTimer)
     resizeTimer = setTimeout(saveBounds, 200)
   })
-  win.once('ready-to-show', () => {
+  revealOnFirstReady(win, () => {
     if (settings.autoPin) win.setAlwaysOnTop(true)
     win.show()
     win.focus()
